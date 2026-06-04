@@ -1,0 +1,20 @@
+{
+  "name": "query-engine",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build:wasm": "asc src/wasm/assembly/filter.ts src/wasm/assembly/hash-probe.ts src/wasm/assembly/aggregate.ts --outFile build/wasm/core.wasm --optimize --enable simd",
+    "start": "node src/cli/index.js"
+  },
+  "devDependencies": {
+    "assemblyscript": "^0.27.0",
+    "vitest": "^3.2.1"
+  },
+  "dependencies": {
+    "@assemblyscript/loader": "^0.27.0",
+    "cli-highlight": "^2.1.11",
+    "csv-parser": "^3.2.1"
+  }
+}
