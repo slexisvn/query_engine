@@ -5,7 +5,6 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "build:wasm": "asc src/wasm/assembly/filter.ts src/wasm/assembly/hash-probe.ts src/wasm/assembly/aggregate.ts --outFile build/wasm/core.wasm --optimize --enable simd",
     "start": "node src/cli/index.js"
   },
   "devDependencies": {
