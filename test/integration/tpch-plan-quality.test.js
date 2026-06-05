@@ -1,13 +1,20 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { QueryEngine } from '../../src/index.js';
 import { generateTPCHData } from '../fixtures/tpch-gen.js';
 import { PlanNodeType, JoinType, PhysicalStrategy, getChildren } from '../../src/planner/logical-plan.js';
 import { BoundExprKind } from '../../src/binder/expression-binder.js';
 
 let engine;
+let tempManager;
 
 beforeAll(async () => {
-  engine = new QueryEngine((await generateTPCHData()).catalog);
+  const data = await generateTPCHData();
+  engine = new QueryEngine(data.catalog);
+  tempManager = data.tempManager;
+});
+
+afterAll(() => {
+  tempManager?.cleanup();
 });
 
 function collectNodes(node, type) {
@@ -149,7 +156,7 @@ describe('TPC-H plan quality regressions', () => {
     expect(aggregate.physicalStrategy).toBe(PhysicalStrategy.PERFECT_HASH);
   });
 
-  it('uses perfect hash aggregate for small derived group keys', async () => {
+  it('uses hash aggregate for derived group keys without base-table statistics', async () => {
     const queries = [
       `SELECT c_count, COUNT(*) AS custdist
        FROM (
@@ -186,7 +193,9 @@ describe('TPC-H plan quality regressions', () => {
     for (const sql of queries) {
       const { plan } = await engine.compile(sql);
       const aggregates = collectNodes(plan, PlanNodeType.AGGREGATE);
-      expect(aggregates.some(a => a.physicalStrategy === PhysicalStrategy.PERFECT_HASH)).toBe(true);
+      expect(aggregates.every(a =>
+        a.physicalStrategy === PhysicalStrategy.HASH || a.physicalStrategy === PhysicalStrategy.UNGROUPED
+      )).toBe(true);
     }
   });
 
@@ -210,7 +219,7 @@ describe('TPC-H plan quality regressions', () => {
       (a.groupBy || []).some(g => g.kind === BoundExprKind.COLUMN_REF && g.columnName === 'L_ORDERKEY')
     );
     expect(aggregate).toBeDefined();
-    expect(aggregate.physicalStrategy).toBe(PhysicalStrategy.PERFECT_HASH);
+    expect(aggregate.physicalStrategy).toBe(PhysicalStrategy.HASH);
   });
 
   it('pushes Q13 right-side LEFT JOIN predicate into the right input', async () => {
@@ -304,7 +313,7 @@ describe('TPC-H plan quality regressions', () => {
     expect(describeExpr(join.condition)).toBe('PART.P_PARTKEY = LINEITEM.L_PARTKEY');
   });
 
-  it('uses nested-loop strategy for TPCH scalar inequality joins', async () => {
+  it('uses hash strategy for TPCH scalar inequality joins', async () => {
     const queries = [
       `SELECT ps_partkey, SUM(ps_supplycost * ps_availqty) AS value
        FROM partsupp, supplier, nation
@@ -335,7 +344,7 @@ describe('TPC-H plan quality regressions', () => {
     for (const sql of queries) {
       const { plan } = await engine.compile(sql);
       const joins = collectNodes(plan, PlanNodeType.JOIN);
-      expect(joins.some(j => j.physicalStrategy === PhysicalStrategy.NESTED_LOOP)).toBe(true);
+      expect(joins.every(j => j.physicalStrategy === PhysicalStrategy.HASH)).toBe(true);
     }
   });
 
@@ -400,7 +409,7 @@ describe('TPC-H plan quality regressions', () => {
       (a.groupBy || []).some(g => g.kind === BoundExprKind.COLUMN_REF && g.columnName === 'L_PARTKEY')
     );
     expect(aggregate).toBeDefined();
-    expect(aggregate.physicalStrategy).toBe(PhysicalStrategy.PERFECT_HASH);
+    expect(aggregate.physicalStrategy).toBe(PhysicalStrategy.HASH);
 
     const scans = collectNodes(aggregate, PlanNodeType.SCAN).filter(s => s.table === 'LINEITEM');
     expect(scans).toHaveLength(1);

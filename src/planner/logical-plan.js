@@ -13,6 +13,8 @@ export const PlanNodeType = {
   DEPENDENT_JOIN: 'DependentJoin',
   MATERIALIZE: 'Materialize',
   EMPTY: 'Empty',
+  TOP_N: 'TopN',
+  INDEX_SCAN: 'IndexScan',
 };
 
 export const JoinType = {
@@ -33,7 +35,6 @@ export const PhysicalStrategy = {
   STREAM: 'STREAM',
   UNGROUPED: 'UNGROUPED',
   PERFECT_HASH: 'PERFECT_HASH',
-  NESTED_LOOP: 'NESTED_LOOP',
 };
 
 export const SortDirection = {
@@ -112,6 +113,19 @@ export function LogicalDependentJoin(child, subquery, correlatedColumns, subquer
   };
 }
 
+export function LogicalTopN(orderKeys, count, offset, child) {
+  return { type: PlanNodeType.TOP_N, orderKeys, count, offset: offset || 0, children: [child] };
+}
+
+export function LogicalIndexScan(table, alias, indexName, columnName, scanType, scanKey, scanLow, scanHigh, lowInc, highInc, columns) {
+  return {
+    type: PlanNodeType.INDEX_SCAN,
+    table, alias: alias || table, indexName, columnName,
+    scanType, scanKey, scanLow, scanHigh, lowInc, highInc,
+    columns,
+  };
+}
+
 export function LogicalMaterialize(child) {
   return { type: PlanNodeType.MATERIALIZE, children: [child] };
 }
@@ -146,6 +160,12 @@ export function planToString(node, indent = 0) {
       break;
     case PlanNodeType.DEPENDENT_JOIN:
       str += `(${node.subqueryType})`;
+      break;
+    case PlanNodeType.TOP_N:
+      str += `(${node.count}${node.offset ? `, offset=${node.offset}` : ''})`;
+      break;
+    case PlanNodeType.INDEX_SCAN:
+      str += `(${node.table} using ${node.indexName})`;
       break;
   }
 

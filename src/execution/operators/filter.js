@@ -1,9 +1,10 @@
 import { DataChunk } from '../../storage/chunk.js';
 
 export class FilterOperator {
-  constructor(predicate, evaluator) {
+  constructor(predicate, evaluator, columnMapping) {
     this.predicate = predicate;
     this.evaluator = evaluator;
+    this.columnMapping = columnMapping || null;
   }
 
   async init() {}
@@ -31,13 +32,8 @@ export class FilterOperator {
       }
     }
 
-    if (count === 0) {
-      return new DataChunk(chunk.columns, 0);
-    }
-
-    if (count === size) {
-      return chunk;
-    }
+    if (count === 0) return new DataChunk(chunk.columns, 0);
+    if (count === size) return chunk;
 
     const result = new DataChunk(chunk.columns, count);
     if (count > 64) {

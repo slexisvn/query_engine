@@ -1,17 +1,24 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { QueryEngine } from '../../src/index.js';
 import { generateTPCHData } from '../fixtures/tpch-gen.js';
 import { Catalog } from '../../src/catalog/catalog.js';
 import { DataType } from '../../src/storage/data-type.js';
 import { Table } from '../../src/storage/table.js';
+import { TempDirectoryManager } from '../../src/storage/temp-directory-manager.js';
 
 let engine;
 let tables;
+let tempManager;
 
 beforeAll(async () => {
   const data = await generateTPCHData();
   engine = new QueryEngine(data.catalog);
   tables = data.tables;
+  tempManager = data.tempManager;
+});
+
+afterAll(() => {
+  tempManager?.cleanup();
 });
 
 describe('Basic Execution', () => {
@@ -110,8 +117,8 @@ describe('Basic Execution', () => {
   it('executes NOT IN with SQL NULL semantics', async () => {
     const catalog = new Catalog();
     const schema = [{ name: 'ID', dataType: DataType.INT32 }];
-    const left = new Table('left_t', schema);
-    const right = new Table('right_t', schema);
+    const left = new Table('left_t', schema, tempManager.allocate('buffer', 'left_t'));
+    const right = new Table('right_t', schema, tempManager.allocate('buffer', 'right_t'));
     await left.insertRows([[1], [2], [3]]);
     await right.insertRows([[2], [null]]);
     catalog.registerTable('left_t', schema);

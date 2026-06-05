@@ -3,6 +3,7 @@ import { generateTPCHData } from '../fixtures/tpch-gen.js';
 
 const data = await generateTPCHData();
 const engine = new QueryEngine(data.catalog);
+const tempManager = data.tempManager;
 
 const queries = {
   Q1: `SELECT l_returnflag, l_linestatus, SUM(l_quantity) AS sum_qty, SUM(l_extendedprice) AS sum_base_price,
@@ -55,4 +56,4 @@ async function bench() {
   }
 }
 
-bench().catch(console.error);
+bench().catch(console.error).finally(() => tempManager.cleanup());

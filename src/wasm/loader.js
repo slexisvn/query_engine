@@ -31,9 +31,17 @@ export class WasmLoader {
     const wasmPath = join(WASM_DIR, `${name}.wasm`);
     const buffer = await readFile(wasmPath);
     const module = await WebAssembly.compile(buffer);
+
+    const imports = WebAssembly.Module.imports(module);
+    const needsMemoryImport = imports.some(i => i.name === 'memory');
+
     const instance = await WebAssembly.instantiate(module, {
-      env: { memory: this.memory },
+      env: needsMemoryImport ? { memory: this.memory } : {},
     });
+
+    if (!needsMemoryImport && instance.exports.memory) {
+      this.memory = instance.exports.memory;
+    }
 
     this.instances.set(name, instance);
     return instance;
@@ -72,8 +80,16 @@ export class WasmLoader {
     return new Int32Array(this.memory.buffer.slice(ptr, ptr + length * 4));
   }
 
+  readF64Array(ptr, length) {
+    return new Float64Array(this.memory.buffer.slice(ptr, ptr + length * 8));
+  }
+
   readF64(ptr) {
     return new Float64Array(this.memory.buffer, ptr, 1)[0];
+  }
+
+  readU32Array(ptr, length) {
+    return new Uint32Array(this.memory.buffer.slice(ptr, ptr + length * 4));
   }
 }
 

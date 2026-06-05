@@ -1,24 +1,17 @@
 {
   "targets": {
     "release": {
-      "outFile": "../../../build/wasm/filter.wasm",
-      "textFile": "../../../build/wasm/filter.wat",
+      "outFile": "../../../build/wasm/core.wasm",
+      "textFile": "../../../build/wasm/core.wat",
       "sourceMap": false,
       "optimizeLevel": 3,
       "shrinkLevel": 1,
       "noAssert": true,
-      "enable": ["simd"]
-    },
-    "debug": {
-      "outFile": "../../../build/wasm/filter.debug.wasm",
-      "textFile": "../../../build/wasm/filter.debug.wat",
-      "sourceMap": true,
-      "debug": true,
       "enable": ["simd"]
     }
   },
   "options": {
     "runtime": "stub"
   },
-  "entries": ["./filter.ts"]
+  "entries": ["./filter.ts", "./filter-f64.ts", "./aggregate.ts", "./arithmetic.ts"]
 }

@@ -1,16 +1,16 @@
 import { getGlobalLoader } from '../loader.js';
 
-let _filterInstance = null;
+let _coreInstance = null;
 
-async function getFilterInstance() {
-  if (_filterInstance) return _filterInstance;
+async function getCoreInstance() {
+  if (_coreInstance) return _coreInstance;
   const loader = await getGlobalLoader();
-  _filterInstance = { loader, instance: await loader.loadModule('filter') };
-  return _filterInstance;
+  _coreInstance = { loader, instance: await loader.loadModule('core') };
+  return _coreInstance;
 }
 
 export async function wasmFilterEqI32(data, value) {
-  const { loader, instance } = await getFilterInstance();
+  const { loader, instance } = await getCoreInstance();
   loader.reset();
 
   const count = data.length;
@@ -28,7 +28,7 @@ export async function wasmFilterEqI32(data, value) {
 }
 
 export async function wasmFilterLtI32(data, value) {
-  const { loader, instance } = await getFilterInstance();
+  const { loader, instance } = await getCoreInstance();
   loader.reset();
 
   const count = data.length;
@@ -46,7 +46,7 @@ export async function wasmFilterLtI32(data, value) {
 }
 
 export async function wasmFilterGtI32(data, value) {
-  const { loader, instance } = await getFilterInstance();
+  const { loader, instance } = await getCoreInstance();
   loader.reset();
 
   const count = data.length;
@@ -64,7 +64,7 @@ export async function wasmFilterGtI32(data, value) {
 }
 
 export async function wasmFilterBetweenI32(data, low, high) {
-  const { loader, instance } = await getFilterInstance();
+  const { loader, instance } = await getCoreInstance();
   loader.reset();
 
   const count = data.length;
@@ -82,7 +82,7 @@ export async function wasmFilterBetweenI32(data, low, high) {
 }
 
 export async function wasmSumF64(data) {
-  const { loader, instance } = await getFilterInstance();
+  const { loader, instance } = await getCoreInstance();
   loader.reset();
 
   const count = data.length;

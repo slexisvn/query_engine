@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { QueryEngine } from '../../src/index.js';
 import { generateTPCHData } from '../fixtures/tpch-gen.js';
 import { parse } from '../../src/parser/parser.js';
@@ -47,11 +47,13 @@ const Q2_SQL = `
 let engine;
 let catalog;
 let statistics;
+let tempManager;
 
 beforeAll(async () => {
   const data = await generateTPCHData();
   engine = new QueryEngine(data.catalog);
   catalog = data.catalog;
+  tempManager = data.tempManager;
 
   statistics = new Map();
   for (const name of catalog.listTables()) {
@@ -60,6 +62,10 @@ beforeAll(async () => {
       statistics.set(name.toUpperCase(), StatisticsCollector.collect(storage));
     }
   }
+});
+
+afterAll(() => {
+  tempManager?.cleanup();
 });
 
 

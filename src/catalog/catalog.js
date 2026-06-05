@@ -2,6 +2,7 @@ export class Catalog {
   constructor() {
     this.tables = new Map();
     this.tableStorage = new Map();
+    this.indexes = new Map();
   }
 
   registerTable(name, schema, options = {}) {
@@ -46,5 +47,25 @@ export class Catalog {
 
   listTables() {
     return Array.from(this.tables.keys());
+  }
+
+  registerIndex(tableName, columnName, btree) {
+    const key = `${tableName.toUpperCase()}.${columnName.toUpperCase()}`;
+    this.indexes.set(key, { tableName: tableName.toUpperCase(), columnName: columnName.toUpperCase(), btree });
+  }
+
+  getIndexForColumn(tableName, columnName) {
+    const key = `${tableName.toUpperCase()}.${columnName.toUpperCase()}`;
+    const entry = this.indexes.get(key);
+    return entry ? entry.btree : null;
+  }
+
+  getIndexesForTable(tableName) {
+    const upper = tableName.toUpperCase();
+    const result = [];
+    for (const entry of this.indexes.values()) {
+      if (entry.tableName === upper) result.push(entry);
+    }
+    return result;
   }
 }

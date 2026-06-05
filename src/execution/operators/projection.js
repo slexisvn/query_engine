@@ -1,6 +1,21 @@
 import { Column } from '../../storage/column.js';
 import { DataChunk } from '../../storage/chunk.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
+import { isVectorizableExpr, evalVectorized } from '../wasm-expr-eval.js';
+import { Config } from '../../config.js';
+
+async function tryWasmProject(expr, chunk, columnMapping) {
+  if (!isVectorizableExpr(expr)) return null;
+  if (chunk.size < Config.wasmMinChunkSize) return null;
+
+  const result = await evalVectorized(expr, chunk, columnMapping, chunk.size);
+  if (result === null || typeof result === 'number') return null;
+
+  const col = new Column('FLOAT64', chunk.size);
+  col.data.set(result);
+  col.length = chunk.size;
+  return col;
+}
 
 export class ProjectionOperator {
   constructor(expressions, evaluators, resultTypes = null, columnMapping = null) {
@@ -9,7 +24,7 @@ export class ProjectionOperator {
     this.resultTypes = resultTypes;
     this.columnMapping = columnMapping;
 
-    this.colRefIndices = expressions.map((expr, i) => {
+    this.colRefIndices = expressions.map((expr) => {
       if (expr?.kind === BoundExprKind.COLUMN_REF) {
         return this._resolveColIdx(expr);
       }
@@ -33,6 +48,14 @@ export class ProjectionOperator {
         const srcCol = chunk.columns[colRefIdx];
         if (srcCol) {
           outputCols.push(srcCol);
+          continue;
+        }
+      }
+
+      if (this.expressions[e]) {
+        const wasmCol = await tryWasmProject(this.expressions[e], chunk, this.columnMapping);
+        if (wasmCol) {
+          outputCols.push(wasmCol);
           continue;
         }
       }

@@ -308,7 +308,7 @@ describe('Physical Design Pass', () => {
     expect(join._dedupeBuild).toBe(true);
   });
 
-  it('selects NESTED_LOOP join for small non-equi joins', () => {
+  it('selects HASH join for small non-equi joins', () => {
     const stats = new Map();
     stats.set('NATION', { rowCount: 25, columnStats: new Map() });
     stats.set('REGION', { rowCount: 5, columnStats: new Map() });
@@ -319,7 +319,7 @@ describe('Physical Design Pass', () => {
     );
     const join = findNode(plan, PlanNodeType.JOIN);
     expect(join).toBeDefined();
-    expect(join.physicalStrategy).toBe(PhysicalStrategy.NESTED_LOOP);
+    expect(join.physicalStrategy).toBe(PhysicalStrategy.HASH);
   });
 
   it('selects STREAM aggregate if child is sorted by group by keys', () => {
@@ -352,12 +352,12 @@ describe('Physical Design Pass', () => {
     expect(agg.physicalStrategy).toBe(PhysicalStrategy.UNGROUPED);
   });
 
-  it('selects PERFECT_HASH aggregate for low-NDV group keys with statistics', () => {
+  it('selects PERFECT_HASH aggregate for compact integer domain group keys', () => {
     const stats = new Map();
     stats.set('NATION', {
       rowCount: 25,
       columnStats: new Map([
-        ['N_REGIONKEY', { ndv: 5 }],
+        ['N_REGIONKEY', { ndv: 5, min: 0, max: 4 }],
       ]),
     });
 

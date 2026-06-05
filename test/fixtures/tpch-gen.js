@@ -1,6 +1,7 @@
 import { DataType, dateToEpochDays, DECIMAL_SCALE } from '../../src/storage/data-type.js';
 import { Table } from '../../src/storage/table.js';
 import { createTPCHCatalog, TPCH_TABLES } from '../../src/catalog/tpch-schema.js';
+import { TempDirectoryManager } from '../../src/storage/temp-directory-manager.js';
 
 const SF = 0.01;
 
@@ -58,20 +59,21 @@ function dec(val) {
 export async function generateTPCHData() {
   _seed = 42;
   const catalog = createTPCHCatalog();
+  const tempManager = new TempDirectoryManager();
   const tables = {};
 
-  const regionTable = createTable('REGION', catalog);
+  const regionTable = createTable('REGION', catalog, tempManager);
   const regionRows = REGIONS.map((name, i) => [i, name, randString(40)]);
   await regionTable.insertRows(regionRows);
   tables.REGION = regionTable;
 
-  const nationTable = createTable('NATION', catalog);
+  const nationTable = createTable('NATION', catalog, tempManager);
   const nationRows = NATIONS.map(([name, regionKey], i) => [i, name, regionKey, randString(60)]);
   await nationTable.insertRows(nationRows);
   tables.NATION = nationTable;
 
   const supplierCount = Math.max(10, Math.round(10000 * SF));
-  const supplierTable = createTable('SUPPLIER', catalog);
+  const supplierTable = createTable('SUPPLIER', catalog, tempManager);
   const supplierRows = [];
   for (let i = 1; i <= supplierCount; i++) {
     supplierRows.push([
@@ -83,7 +85,7 @@ export async function generateTPCHData() {
   tables.SUPPLIER = supplierTable;
 
   const partCount = Math.max(20, Math.round(200000 * SF));
-  const partTable = createTable('PART', catalog);
+  const partTable = createTable('PART', catalog, tempManager);
   const partRows = [];
   for (let i = 1; i <= partCount; i++) {
     partRows.push([
@@ -96,7 +98,7 @@ export async function generateTPCHData() {
   await partTable.insertRows(partRows);
   tables.PART = partTable;
 
-  const partsuppTable = createTable('PARTSUPP', catalog);
+  const partsuppTable = createTable('PARTSUPP', catalog, tempManager);
   const partsuppRows = [];
   for (let p = 1; p <= partCount; p++) {
     for (let s = 0; s < 4; s++) {
@@ -108,7 +110,7 @@ export async function generateTPCHData() {
   tables.PARTSUPP = partsuppTable;
 
   const customerCount = Math.max(15, Math.round(150000 * SF));
-  const customerTable = createTable('CUSTOMER', catalog);
+  const customerTable = createTable('CUSTOMER', catalog, tempManager);
   const customerRows = [];
   for (let i = 1; i <= customerCount; i++) {
     customerRows.push([
@@ -120,7 +122,7 @@ export async function generateTPCHData() {
   tables.CUSTOMER = customerTable;
 
   const orderCount = Math.max(60, Math.round(1500000 * SF));
-  const ordersTable = createTable('ORDERS', catalog);
+  const ordersTable = createTable('ORDERS', catalog, tempManager);
   const ordersRows = [];
   for (let i = 1; i <= orderCount; i++) {
     const custKey = (((i - 1) * 3) % customerCount) + 1;
@@ -134,7 +136,7 @@ export async function generateTPCHData() {
   await ordersTable.insertRows(ordersRows);
   tables.ORDERS = ordersTable;
 
-  const lineitemTable = createTable('LINEITEM', catalog);
+  const lineitemTable = createTable('LINEITEM', catalog, tempManager);
   const lineitemRows = [];
   for (let o = 1; o <= orderCount; o++) {
     const lineCount = randInt(1, 7);
@@ -165,10 +167,11 @@ export async function generateTPCHData() {
     catalog.registerTableStorage(name, table);
   }
 
-  return { catalog, tables };
+  return { catalog, tables, tempManager };
 }
 
-function createTable(name, catalog) {
+function createTable(name, catalog, tempManager) {
   const tableDef = catalog.getTable(name);
-  return new Table(name, tableDef.columns);
+  const bufferPath = tempManager.allocate('buffer', name);
+  return new Table(name, tableDef.columns, bufferPath);
 }

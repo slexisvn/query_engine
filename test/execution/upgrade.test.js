@@ -1,13 +1,19 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { QueryEngine } from '../../src/index.js';
 import { generateTPCHData } from '../fixtures/tpch-gen.js';
 import { dateToEpochDays } from '../../src/storage/data-type.js';
 
 let engine;
+let tempManager;
 
 beforeAll(async () => {
   const data = await generateTPCHData();
   engine = new QueryEngine(data.catalog);
+  tempManager = data.tempManager;
+});
+
+afterAll(() => {
+  tempManager?.cleanup();
 });
 
 describe('CTE Execution', () => {

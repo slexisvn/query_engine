@@ -1,19 +1,22 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { QueryEngine } from '../../src/index.js';
 import { Catalog } from '../../src/catalog/catalog.js';
 import { Table } from '../../src/storage/table.js';
 import { Column } from '../../src/storage/column.js';
+import { TempDirectoryManager } from '../../src/storage/temp-directory-manager.js';
 
 describe('EXPLAIN Support', () => {
   let engine;
+  let tempManager;
 
   beforeEach(() => {
+    tempManager = new TempDirectoryManager();
     const catalog = new Catalog();
     const schema = [
       { name: 'id', dataType: 'INT32' },
       { name: 'val', dataType: 'INT32' }
     ];
-    const tStorage = new Table('t', schema);
+    const tStorage = new Table('t', schema, tempManager.allocate('buffer', 't'));
     catalog.registerTable('t', schema);
     catalog.registerTableStorage('t', tStorage);
 
@@ -27,6 +30,10 @@ describe('EXPLAIN Support', () => {
     // We don't even need to add data because EXPLAIN shouldn't execute anything!
     
     engine = new QueryEngine(catalog);
+  });
+
+  afterEach(() => {
+    tempManager.cleanup();
   });
 
   it('should format a basic SELECT query plan', async () => {

@@ -1,6 +1,8 @@
 import { Column } from '../../storage/column.js';
 import { DataChunk, DEFAULT_CHUNK_SIZE } from '../../storage/chunk.js';
 import { DataType } from '../../storage/data-type.js';
+import { globalDispatch } from '../../wasm/dispatch.js';
+import { isVectorizableExpr, evalVectorized } from '../wasm-expr-eval.js';
 
 export class HashAggregateOperator {
   constructor(groupByExtractors, groupByTypes, aggregateDefs) {
@@ -9,12 +11,19 @@ export class HashAggregateOperator {
     this.aggregateDefs = aggregateDefs;
     this.hasCachedValues = aggregateDefs.some(def => def.valueKey);
     this.groups = new Map();
-    this.groupKeys = []; 
+    this.groupKeys = [];
   }
 
   async init() {}
 
   async consume(chunk) {
+    if (globalDispatch && globalDispatch.kernels.size > 0
+        && this.groupByExtractors.length === 0
+        && chunk.size > 0) {
+      const wasmHandled = await this._tryWasmUngrouped(chunk);
+      if (wasmHandled) return;
+    }
+
     const size = chunk.size;
     const hasSv = !!chunk.selectionVector;
     const sv = chunk.selectionVector;
@@ -83,6 +92,129 @@ export class HashAggregateOperator {
         group.accumulators[a].add(aggVals[a][i]);
       }
     }
+  }
+
+  _resolveWasmAggKernel(def) {
+    const name = def.name?.toUpperCase();
+    if (!name) return null;
+
+    if (name === 'SUM' && def.resultType === 'FLOAT64') {
+      if (globalDispatch.has('sumF64', 'FLOAT64')) return { kernelKey: 'sumF64', dataType: 'FLOAT64', kind: 'SUM' };
+      if (globalDispatch.has('sumI32', 'INT32')) return { kernelKey: 'sumI32', dataType: 'INT32', kind: 'SUM' };
+    }
+    if (name === 'MIN') {
+      if (def.resultType === 'FLOAT64' && globalDispatch.has('minF64', 'FLOAT64')) return { kernelKey: 'minF64', dataType: 'FLOAT64', kind: 'MIN' };
+      if (def.resultType === 'INT32' && globalDispatch.has('minI32', 'INT32')) return { kernelKey: 'minI32', dataType: 'INT32', kind: 'MIN' };
+    }
+    if (name === 'MAX') {
+      if (def.resultType === 'FLOAT64' && globalDispatch.has('maxF64', 'FLOAT64')) return { kernelKey: 'maxF64', dataType: 'FLOAT64', kind: 'MAX' };
+      if (def.resultType === 'INT32' && globalDispatch.has('maxI32', 'INT32')) return { kernelKey: 'maxI32', dataType: 'INT32', kind: 'MAX' };
+    }
+    if (name === 'COUNT') {
+      return { kernelKey: 'countBits', dataType: 'UINT8', kind: 'COUNT' };
+    }
+    if (name === 'COUNT_STAR') {
+      return { kernelKey: null, dataType: null, kind: 'COUNT_STAR' };
+    }
+    if (name === 'AVG' && def.resultType === 'FLOAT64') {
+      if (globalDispatch.has('sumF64', 'FLOAT64')) return { kernelKey: 'sumF64', dataType: 'FLOAT64', kind: 'AVG' };
+    }
+    return null;
+  }
+
+  async _tryWasmUngrouped(chunk) {
+    const key = '__ALL__';
+    let group = this.groups.get(key);
+    if (!group) {
+      group = {
+        groupValues: [],
+        accumulators: this.aggregateDefs.map(def => def.createAccumulator()),
+      };
+      this.groups.set(key, group);
+    }
+
+    for (let a = 0; a < this.aggregateDefs.length; a++) {
+      const def = this.aggregateDefs[a];
+      const resolved = this._resolveWasmAggKernel(def);
+      if (!resolved) return false;
+
+      const acc = group.accumulators[a];
+
+      if (resolved.kind === 'COUNT_STAR') {
+        acc.count += chunk.size;
+        continue;
+      }
+
+      if (resolved.kind === 'COUNT') {
+        if (!def._wasmColIndex && def._wasmColIndex !== 0) return false;
+        const column = chunk.columns[def._wasmColIndex];
+        if (!column) return false;
+        if (!column.hasNulls) {
+          acc.count += chunk.size;
+        } else {
+          const kernel = globalDispatch.lookup('countBits', 'UINT8');
+          if (!kernel) return false;
+          const nonNullCount = await kernel(column.nullBitmap, chunk.size);
+          acc.count += nonNullCount;
+        }
+        continue;
+      }
+
+      if (resolved.kind === 'AVG') {
+        let avgData = null;
+
+        if (def._wasmColIndex !== undefined && def._wasmColIndex !== null) {
+          const column = chunk.columns[def._wasmColIndex];
+          if (column && column.data && column.dataType === 'FLOAT64') {
+            avgData = column.data.subarray(0, chunk.size);
+          }
+        }
+
+        if (!avgData && def._sourceExpr && isVectorizableExpr(def._sourceExpr)) {
+          const vectorResult = await evalVectorized(def._sourceExpr, chunk, def._columnMapping, chunk.size);
+          if (vectorResult instanceof Float64Array) avgData = vectorResult;
+        }
+
+        if (!avgData) return false;
+
+        const kernel = globalDispatch.lookup(resolved.kernelKey, resolved.dataType);
+        if (!kernel) return false;
+        acc.sum += await kernel(avgData);
+        acc.count += chunk.size;
+        continue;
+      }
+
+      let rawData = null;
+
+      if (def._wasmColIndex !== undefined && def._wasmColIndex !== null) {
+        const column = chunk.columns[def._wasmColIndex];
+        if (column && column.data) {
+          const colType = column.dataType;
+          if (resolved.dataType === 'FLOAT64' && colType === 'FLOAT64') {
+            rawData = column.data.subarray(0, chunk.size);
+          } else if (resolved.dataType === 'INT32' && (colType === 'INT32' || colType === 'DATE')) {
+            rawData = column.data.subarray(0, chunk.size);
+          }
+        }
+      }
+
+      if (!rawData && def._sourceExpr && isVectorizableExpr(def._sourceExpr)) {
+        const vectorResult = await evalVectorized(def._sourceExpr, chunk, def._columnMapping, chunk.size);
+        if (vectorResult instanceof Float64Array) {
+          rawData = vectorResult;
+        }
+      }
+
+      if (!rawData) return false;
+
+      const kernel = globalDispatch.lookup(resolved.kernelKey, resolved.dataType);
+      if (!kernel) return false;
+      const result = await kernel(rawData);
+
+      acc.add(result);
+    }
+
+    return true;
   }
 
   async finalize() {

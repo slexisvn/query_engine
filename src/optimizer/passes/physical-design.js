@@ -59,10 +59,6 @@ class PhysicalDesignRewriter extends PlanRewriter {
             return newNode;
           }
         }
-      } else if (this.canUseNestedLoopJoin(newNode, left, right)) {
-        newNode.physicalStrategy = PhysicalStrategy.NESTED_LOOP;
-        newNode._sortedBy = [];
-        return newNode;
       }
     }
 
@@ -258,38 +254,27 @@ class PhysicalDesignRewriter extends PlanRewriter {
   canUsePerfectHashAggregate(node, child) {
     if (!node.groupBy || node.groupBy.length === 0) return false;
     if (!node.groupBy.every(expr => expr.kind === BoundExprKind.COLUMN_REF)) return false;
-    const childCard = child._cardinality || 1000;
-    const estimatedGroups = this.cardEstimator.estimateAggregate(childCard, node.groupBy.length, node.groupBy);
     const keyStats = node.groupBy.map(expr => this.cardEstimator.getColumnStats?.(expr) || null);
-    if (node.groupBy.length === 1 && keyStats[0] && this.hasCompactIntegerDomain(keyStats[0])) return true;
-    if (estimatedGroups > 4096) return false;
-    if (keyStats.every(Boolean)) {
-      return keyStats.every(stats => stats.ndv && stats.ndv <= 256);
+    if (!keyStats.every(Boolean)) return false;
+    let totalGroups = 1;
+    for (const s of keyStats) {
+      if (!s.ndv || s.ndv <= 0) return false;
+      totalGroups *= s.ndv;
     }
-    return child.type !== PlanNodeType.SCAN && node.groupBy.length === 1 && childCard <= 4096;
+    if (totalGroups > 256) return false;
+    return keyStats.every(s => this.hasCompactDomain(s));
   }
 
-  hasCompactIntegerDomain(stats) {
+  hasCompactDomain(stats) {
+    const ndv = stats.ndv || 0;
+    if (ndv <= 0 || ndv > 256) return false;
     const min = toNumber(stats.min);
     const max = toNumber(stats.max);
-    if (min === null || max === null) return false;
-    if (!Number.isInteger(min) || !Number.isInteger(max)) return false;
-    const domainSize = max - min + 1;
-    if (domainSize <= 0 || domainSize > 65536) return false;
-    if (domainSize <= 4096) return true;
-    const ndv = stats.ndv || 0;
-    if (ndv <= 0) return false;
-    return ndv / domainSize >= 0.5;
-  }
-
-  canUseNestedLoopJoin(node, left, right) {
-    if (node.joinType !== JoinType.INNER) return false;
-    if (!node.condition) return false;
-    const leftCard = left._cardinality || 1000;
-    const rightCard = right._cardinality || 1000;
-    const nestedCost = this.costModel.nestedLoopJoinCost(leftCard, rightCard);
-    const hashCost = this.costModel.hashJoinCost(Math.min(leftCard, rightCard), Math.max(leftCard, rightCard));
-    return leftCard * rightCard <= 10000 && nestedCost <= hashCost * 4;
+    if (min !== null && max !== null && Number.isInteger(min) && Number.isInteger(max)) {
+      const domainSize = max - min + 1;
+      return domainSize > 0 && domainSize <= 4096;
+    }
+    return ndv <= 4;
   }
 
   isPureEquiJoin(condition) {

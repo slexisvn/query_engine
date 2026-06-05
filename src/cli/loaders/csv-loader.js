@@ -3,33 +3,49 @@ import csv from 'csv-parser';
 import path from 'path';
 import { DataType } from '../../storage/data-type.js';
 import { Table } from '../../storage/table.js';
+import { DEFAULT_CHUNK_SIZE } from '../../storage/chunk.js';
 import { DataLoader } from './data-loader.js';
 
 export class CSVLoader extends DataLoader {
   async load(engine, filePath) {
     return new Promise((resolve, reject) => {
       const tableName = path.basename(filePath, path.extname(filePath)).toUpperCase();
-      const rows = [];
       let schema = null;
       let table = null;
+      let batch = [];
 
-      fs.createReadStream(filePath)
-        .pipe(csv())
-        .on('data', (data) => {
-          if (!schema) {
-            schema = this.inferSchema(data);
-            table = new Table(tableName, schema);
-            this.registerToCatalog(engine, tableName, schema, table);
-          }
-          rows.push(this.convertRow(data, schema));
-        })
-        .on('end', async () => {
-          if (table && rows.length > 0) {
-            await table.insertRows(rows);
-          }
+      const flushBatch = async () => {
+        if (batch.length === 0) return;
+        await table.insertRows(batch);
+        batch = [];
+      };
+
+      const stream = fs.createReadStream(filePath).pipe(csv());
+
+      stream.on('data', (data) => {
+        if (!schema) {
+          schema = this.inferSchema(data);
+          const bufferPath = engine.tempManager.allocate('buffer', tableName);
+          table = new Table(tableName, schema, bufferPath);
+          this.registerToCatalog(engine, tableName, schema, table);
+        }
+        batch.push(this.convertRow(data, schema));
+        if (batch.length >= DEFAULT_CHUNK_SIZE) {
+          stream.pause();
+          flushBatch().then(() => stream.resume()).catch(reject);
+        }
+      });
+
+      stream.on('end', async () => {
+        try {
+          await flushBatch();
           resolve(tableName);
-        })
-        .on('error', reject);
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+      stream.on('error', reject);
     });
   }
 
@@ -42,11 +58,7 @@ export class CSVLoader extends DataLoader {
         if (/^(true|false)$/i.test(trimmed)) {
           type = DataType.BOOLEAN;
         } else if (!isNaN(Number(trimmed))) {
-          if (Number.isInteger(Number(trimmed))) {
-            type = DataType.INT32;
-          } else {
-            type = DataType.FLOAT64;
-          }
+          type = Number.isInteger(Number(trimmed)) ? DataType.INT32 : DataType.FLOAT64;
         }
       }
       schema.push({ name: key, dataType: type });
@@ -55,22 +67,33 @@ export class CSVLoader extends DataLoader {
   }
 
   convertRow(rowObj, schema) {
-    return schema.map(col => {
-      const val = rowObj[col.name];
-      if (val === undefined || val === null || val.trim() === '') {
-        return null;
+    const row = new Array(schema.length);
+    for (let i = 0; i < schema.length; i++) {
+      const val = rowObj[schema[i].name];
+      if (val === undefined || val === null || val === '') {
+        row[i] = null;
+        continue;
       }
-      const trimmed = val.trim();
-      switch (col.dataType) {
+      const trimmed = typeof val === 'string' ? val.trim() : val;
+      if (trimmed === '') {
+        row[i] = null;
+        continue;
+      }
+      switch (schema[i].dataType) {
         case DataType.BOOLEAN:
-          return trimmed.toLowerCase() === 'true';
+          row[i] = trimmed.toLowerCase() === 'true';
+          break;
         case DataType.INT32:
-          return parseInt(trimmed, 10);
+          row[i] = parseInt(trimmed, 10);
+          break;
         case DataType.FLOAT64:
-          return parseFloat(trimmed);
+          row[i] = parseFloat(trimmed);
+          break;
         default:
-          return val;
+          row[i] = val;
+          break;
       }
-    });
+    }
+    return row;
   }
 }

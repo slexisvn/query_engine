@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { QueryEngine } from '../../src/index.js';
 import { generateTPCHData } from '../fixtures/tpch-gen.js';
 import { PlanNodeType, JoinType, PhysicalStrategy, getChildren, planToString } from '../../src/planner/logical-plan.js';
@@ -24,11 +24,17 @@ const Q2_SQL = `
 
 let engine;
 let tables;
+let tempManager;
 
 beforeAll(async () => {
   const data = await generateTPCHData();
   engine = new QueryEngine(data.catalog);
   tables = data.tables;
+  tempManager = data.tempManager;
+});
+
+afterAll(() => {
+  tempManager?.cleanup();
 });
 
 function collectNodes(node, type) {

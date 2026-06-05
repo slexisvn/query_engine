@@ -1,15 +1,17 @@
 import { Column } from './column.js';
 import { DataChunk, DEFAULT_CHUNK_SIZE } from './chunk.js';
 import { BufferPoolManager } from './buffer-pool.js';
+import { Config } from '../config.js';
 
 export class Table {
-  constructor(name, schema) {
+  constructor(name, schema, bufferBasePath) {
     this.name = name;
     this.schema = schema;
     this.pageIds = [];
     this._rowCount = 0;
-    this.bufferPool = new BufferPoolManager(50);
+    this.bufferPool = new BufferPoolManager(Config.bufferPoolPages, bufferBasePath);
     this.activeChunk = null;
+    this.indexes = [];
   }
 
   getSchema() {
@@ -29,11 +31,24 @@ export class Table {
     return this._rowCount + (this.activeChunk ? this.activeChunk.size : 0);
   }
 
+  registerIndex(columnIndex, btree) {
+    this.indexes.push({ columnIndex, btree });
+  }
+
   async addChunk(chunk) {
     const pageId = `${this.name}_page_${this.pageIds.length}`;
     this.pageIds.push(pageId);
     this._rowCount += chunk.size;
     await this.bufferPool.writePage(pageId, chunk);
+
+    for (const idx of this.indexes) {
+      for (let r = 0; r < chunk.size; r++) {
+        const key = chunk.columns[idx.columnIndex].get(r);
+        if (key !== null && key !== undefined) {
+          idx.btree.insert(key, { pageId, rowIndex: r });
+        }
+      }
+    }
   }
 
   async insertRows(rows) {

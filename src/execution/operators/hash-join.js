@@ -2,9 +2,7 @@ import { Column } from '../../storage/column.js';
 import { DataChunk } from '../../storage/chunk.js';
 import { JoinType } from '../../planner/logical-plan.js';
 import { SpillManager } from '../../storage/spill-manager.js';
-
-const NUM_PARTITIONS = 16;
-const MAX_ROWS_IN_RAM = parseInt(process.env.MAX_ROWS_IN_RAM || '200000');
+import { Config } from '../../config.js';
 
 function hashString(str) {
   let hash = 0;
@@ -16,21 +14,21 @@ function hashString(str) {
 }
 
 function getPartition(keyStr) {
-  return hashString(keyStr) % NUM_PARTITIONS;
+  return hashString(keyStr) % Config.hashJoinPartitions;
 }
 
 export class HashJoinBuild {
-  constructor(keyExtractors, joinType = JoinType.INNER, uniqueKeys = false) {
+  constructor(keyExtractors, joinType, uniqueKeys, spillBasePath) {
     this.keyExtractors = keyExtractors;
-    this.joinType = joinType;
-    this.uniqueKeys = uniqueKeys;
+    this.joinType = joinType || JoinType.INNER;
+    this.uniqueKeys = !!uniqueKeys;
     this.hashTable = new Map();
     this.buildSchema = null;
     this.hasNullKey = false;
-    
-    this.spillManager = new SpillManager();
-    this.partitions = Array.from({ length: NUM_PARTITIONS }, () => ({
-      rows: [], 
+
+    this.spillManager = new SpillManager(spillBasePath);
+    this.partitions = Array.from({ length: Config.hashJoinPartitions }, () => ({
+      rows: [],
       spilled: false
     }));
     this.totalRowsInRAM = 0;
@@ -69,15 +67,15 @@ export class HashJoinBuild {
         this.totalRowsInRAM++;
       }
 
-      if (part.spilled && part.rows.length >= 2048) {
+      if (part.spilled && part.rows.length >= Config.flushBatchSize) {
         await this.flushPartition(pIdx);
       }
     }
 
-    if (this.totalRowsInRAM > MAX_ROWS_IN_RAM) {
+    if (this.totalRowsInRAM > Config.memoryLimit) {
       let maxPart = -1;
       let maxRows = 0;
-      for (let i = 0; i < NUM_PARTITIONS; i++) {
+      for (let i = 0; i < Config.hashJoinPartitions; i++) {
         if (!this.partitions[i].spilled && this.partitions[i].rows.length > maxRows) {
           maxRows = this.partitions[i].rows.length;
           maxPart = i;
@@ -116,7 +114,7 @@ export class HashJoinBuild {
   }
 
   async finalize() {
-    for (let i = 0; i < NUM_PARTITIONS; i++) {
+    for (let i = 0; i < Config.hashJoinPartitions; i++) {
       const part = this.partitions[i];
       if (part.spilled && part.rows.length > 0) {
         await this.flushPartition(i);
@@ -142,7 +140,7 @@ export class HashJoinBuild {
 
   emitUnmatched(probeColCount) {
     const rows = [];
-    for (let i = 0; i < NUM_PARTITIONS; i++) {
+    for (let i = 0; i < Config.hashJoinPartitions; i++) {
       const part = this.partitions[i];
       if (!part.spilled) {
         for (let r = 0; r < part.rows.length; r++) {
@@ -185,7 +183,7 @@ export class HashJoinProbe {
     this.joinType = joinType;
     this.conditionEvaluator = conditionEvaluator;
     
-    this.spillBuffers = Array.from({ length: NUM_PARTITIONS }, () => []);
+    this.spillBuffers = Array.from({ length: Config.hashJoinPartitions }, () => []);
     this.probeSchema = null;
   }
 
@@ -214,7 +212,7 @@ export class HashJoinProbe {
       const pIdx = getPartition(key);
       if (this.buildSide.partitions[pIdx].spilled) {
         this.spillBuffers[pIdx].push({ row, key });
-        if (this.spillBuffers[pIdx].length >= 2048) {
+        if (this.spillBuffers[pIdx].length >= Config.flushBatchSize) {
           await this.flushProbePartition(pIdx);
         }
       } else {
@@ -318,13 +316,13 @@ export class HashJoinProbe {
   }
 
   async finalize(sink) {
-    for (let i = 0; i < NUM_PARTITIONS; i++) {
+    for (let i = 0; i < Config.hashJoinPartitions; i++) {
       if (this.spillBuffers[i].length > 0) {
         await this.flushProbePartition(i);
       }
     }
 
-    for (let i = 0; i < NUM_PARTITIONS; i++) {
+    for (let i = 0; i < Config.hashJoinPartitions; i++) {
       const part = this.buildSide.partitions[i];
       if (!part.spilled) continue;
 

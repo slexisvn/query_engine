@@ -1,5 +1,5 @@
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { QueryEngine } from '../../src/index.js';
 import { generateTPCHData } from '../fixtures/tpch-gen.js';
 import { parse } from '../../src/parser/parser.js';
@@ -29,11 +29,17 @@ const Q2_SQL = `
 
 let engine;
 let catalog;
+let tempManager;
 
 beforeAll(async () => {
   const data = await generateTPCHData();
   engine = new QueryEngine(data.catalog);
   catalog = data.catalog;
+  tempManager = data.tempManager;
+});
+
+afterAll(() => {
+  tempManager?.cleanup();
 });
 
 function collectNodes(node, type) {

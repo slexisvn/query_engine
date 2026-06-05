@@ -1,21 +1,19 @@
 import { Column } from '../../storage/column.js';
 import { DataChunk } from '../../storage/chunk.js';
-
 import { SpillManager } from '../../storage/spill-manager.js';
 import { PriorityQueue } from '../../utils/priority-queue.js';
-
-const MAX_ROWS_IN_RAM = parseInt(process.env.MAX_ROWS_IN_RAM || '200000');
+import { Config } from '../../config.js';
 
 export class SortOperator {
-  constructor(keyExtractors, limit = null, offset = 0) {
-    this.keyExtractors = keyExtractors; 
-    this.limit = limit;
+  constructor(keyExtractors, limit, offset, spillBasePath) {
+    this.keyExtractors = keyExtractors;
+    this.limit = limit ?? null;
     this.offset = offset || 0;
-    this.topN = limit !== null && limit !== undefined ? limit + this.offset : null;
+    this.topN = this.limit !== null ? this.limit + this.offset : null;
     this.rows = [];
     this.schema = null;
-    
-    this.spillManager = new SpillManager();
+
+    this.spillManager = new SpillManager(spillBasePath);
     this.runCount = 0;
   }
 
@@ -47,7 +45,7 @@ export class SortOperator {
       this.rows.length = this.topN;
     }
 
-    if (this.rows.length >= MAX_ROWS_IN_RAM) {
+    if (this.rows.length >= Config.memoryLimit) {
       await this.spillCurrentRun();
     }
   }
@@ -71,6 +69,9 @@ export class SortOperator {
       this.rows.sort((a, b) => this.compareRows(a, b));
       if (this.topN) {
         this.rows.length = Math.min(this.rows.length, this.topN);
+      }
+      if (this.offset > 0) {
+        this.rows = this.rows.slice(this.offset);
       }
       if (this.rows.length === 0) return [];
       const chunk = this.rowsToChunk(this.rows);
@@ -108,15 +109,21 @@ export class SortOperator {
     const resultChunks = [];
     let outRows = [];
     let count = 0;
+    let skipped = 0;
 
     while (!pq.isEmpty()) {
       if (this.topN && count >= this.topN) break;
 
       const { item, runIndex } = pq.pop();
-      outRows.push(item);
       count++;
 
-      if (outRows.length >= 2048) {
+      if (skipped < this.offset) {
+        skipped++;
+      } else {
+        outRows.push(item);
+      }
+
+      if (outRows.length >= Config.flushBatchSize) {
         resultChunks.push(this.rowsToChunk(outRows));
         outRows = [];
       }

@@ -49,7 +49,6 @@ function formatNode(node) {
       let physicalPrefix = '';
       if (node.physicalStrategy === 'HASH') physicalPrefix = 'Hash ';
       else if (node.physicalStrategy === 'MERGE') physicalPrefix = 'Merge ';
-      else if (node.physicalStrategy === 'NESTED_LOOP') physicalPrefix = 'Nested Loop ';
       
       let joinStr = `${physicalPrefix}${joinTypeStr}Join`;
       if (node.condition) joinStr += ` (condition: ${formatExpression(node.condition)})`;
@@ -76,6 +75,10 @@ function formatNode(node) {
       return `Sort (${sorts})`;
     case PlanNodeType.LIMIT:
       return `Limit (count: ${node.count}${node.offset ? ', offset: ' + node.offset : ''})`;
+    case PlanNodeType.TOP_N: {
+      const topNSorts = node.orderKeys.map(k => `${formatExpression(k.expr)} ${k.direction || 'ASC'}`).join(', ');
+      return `Top-N (count: ${node.count}${node.offset ? ', offset: ' + node.offset : ''}, order: ${topNSorts})`;
+    }
     case PlanNodeType.DISTINCT:
       return `Distinct`;
     case PlanNodeType.UNION:
@@ -88,6 +91,13 @@ function formatNode(node) {
       return `Materialize`;
     case PlanNodeType.DEPENDENT_JOIN:
       return `Dependent Join (${node.subqueryType})`;
+    case PlanNodeType.INDEX_SCAN: {
+      let desc = `Index Scan using ${node.indexName} on ${node.table}`;
+      if (node.alias !== node.table) desc += ` as ${node.alias}`;
+      if (node.scanType === 'point') desc += ` (key: ${node.scanKey})`;
+      else desc += ` (range: ${node.scanLow ?? '-∞'} to ${node.scanHigh ?? '∞'})`;
+      return desc;
+    }
     case PlanNodeType.EMPTY:
       return `Empty (short-circuit)`;
     default:

@@ -2,24 +2,17 @@ import { promises as fsPromises } from 'fs';
 import fs from 'fs';
 import path from 'path';
 import { ChunkSerializer } from './serializer.js';
+import { LRUCache } from '../utils/lru-cache.js';
 
 export class BufferPoolManager {
-  constructor(maxPages = 100) {
+  constructor(maxPages, basePath) {
     this.maxPages = maxPages;
-    this.pages = new Map();
-    this.lru = [];
-    
-    const uniqueId = Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
-    this.storageDir = path.join(process.cwd(), '.query_engine_tmp', uniqueId);
-    
-    if (!fs.existsSync(this.storageDir)) {
-      fs.mkdirSync(this.storageDir, { recursive: true });
-    }
+    this.cache = new LRUCache(maxPages);
+    this.storageDir = basePath;
   }
 
   clear() {
-    this.pages.clear();
-    this.lru = [];
+    this.cache.clear();
     if (fs.existsSync(this.storageDir)) {
       fs.rmSync(this.storageDir, { recursive: true, force: true });
     }
@@ -30,37 +23,28 @@ export class BufferPoolManager {
   }
 
   async writePage(pageId, chunk) {
-    const jsonStr = ChunkSerializer.serialize(chunk);
-    await fsPromises.writeFile(this.getPagePath(pageId), jsonStr, 'utf8');
+    const data = ChunkSerializer.serialize(chunk);
+    await fsPromises.writeFile(this.getPagePath(pageId), data);
   }
 
   async readPage(pageId) {
-    const jsonStr = await fsPromises.readFile(this.getPagePath(pageId), 'utf8');
-    return ChunkSerializer.deserialize(jsonStr);
+    const data = await fsPromises.readFile(this.getPagePath(pageId));
+    return ChunkSerializer.deserialize(data);
   }
 
   async fetchPage(pageId, bypassCache = false) {
-    if (this.pages.has(pageId)) {
-      if (!bypassCache) {
-        this.lru = this.lru.filter(id => id !== pageId);
-        this.lru.push(pageId);
-      }
-      return this.pages.get(pageId);
+    const cached = this.cache.get(pageId);
+    if (cached !== undefined) {
+      return cached;
     }
 
     const chunk = await this.readPage(pageId);
-    
+
     if (bypassCache) {
       return chunk;
     }
 
-    if (this.pages.size >= this.maxPages) {
-      const evictId = this.lru.shift();
-      this.pages.delete(evictId);
-    }
-
-    this.pages.set(pageId, chunk);
-    this.lru.push(pageId);
+    this.cache.set(pageId, chunk);
     return chunk;
   }
 }

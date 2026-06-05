@@ -1,17 +1,11 @@
 import fs from 'fs';
 import { promises as fsPromises } from 'fs';
 import path from 'path';
-import readline from 'readline';
 import { ChunkSerializer } from './serializer.js';
 
 export class SpillManager {
-  constructor() {
-    const uniqueId = Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
-    this.storageDir = path.join(process.cwd(), '.query_engine_tmp', 'spills', uniqueId);
-    
-    if (!fs.existsSync(this.storageDir)) {
-      fs.mkdirSync(this.storageDir, { recursive: true });
-    }
+  constructor(basePath) {
+    this.storageDir = basePath;
   }
 
   getFilePath(partitionId) {
@@ -20,8 +14,10 @@ export class SpillManager {
 
   async appendChunk(partitionId, chunk) {
     if (!chunk || chunk.size === 0) return;
-    const jsonStr = ChunkSerializer.serialize(chunk);
-    await fsPromises.appendFile(this.getFilePath(partitionId), jsonStr + '\n', 'utf8');
+    const data = ChunkSerializer.serialize(chunk);
+    const header = Buffer.allocUnsafe(4);
+    header.writeUInt32LE(data.length, 0);
+    await fsPromises.appendFile(this.getFilePath(partitionId), Buffer.concat([header, data]));
   }
 
   async *readChunks(partitionId) {
@@ -30,15 +26,15 @@ export class SpillManager {
       return;
     }
 
-    const fileStream = fs.createReadStream(filePath, { encoding: 'utf8' });
-    const rl = readline.createInterface({
-      input: fileStream,
-      crlfDelay: Infinity
-    });
+    const fileBuffer = await fsPromises.readFile(filePath);
+    let offset = 0;
 
-    for await (const line of rl) {
-      if (!line.trim()) continue;
-      yield ChunkSerializer.deserialize(line);
+    while (offset < fileBuffer.length) {
+      const chunkLength = fileBuffer.readUInt32LE(offset);
+      offset += 4;
+      const chunkData = fileBuffer.subarray(offset, offset + chunkLength);
+      yield ChunkSerializer.deserialize(chunkData);
+      offset += chunkLength;
     }
   }
 

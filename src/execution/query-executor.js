@@ -11,6 +11,7 @@ import { SortOperator, LimitOperator } from './operators/sort.js';
 import { DistinctOperator } from './operators/distinct.js';
 import { UnionOperator } from './operators/union.js';
 import { DependentJoinOperator } from './operators/dependent-join.js';
+import { IndexScanOperator } from './operators/index-scan.js';
 import { extractJoinKeys } from './join-utils.js';
 import { ResultSink } from './result-sink.js';
 import { BoundExprKind } from '../binder/expression-binder.js';
@@ -20,40 +21,51 @@ import { PipelineGraph, CancelToken } from './pipeline.js';
 import { TaskScheduler } from './scheduler.js';
 
 export class QueryExecutor {
-  constructor(catalog) {
+  constructor(catalog, tempManager) {
     this.catalog = catalog;
+    this.tempManager = tempManager;
     this.cteResults = new Map();
     this.cteDefinitions = new Map();
   }
 
-  async execute(logicalPlan, outputColumns) {
-    const resultSink = await this.executePlan(logicalPlan);
-
-        const columnNames = outputColumns.map(c => c.name);
-    return { rows: resultSink.toObjects(columnNames), columns: columnNames };
+  async execute(logicalPlan, outputColumns, streaming = false) {
+    const sink = await this.executePlan(logicalPlan, streaming);
+    const columnNames = outputColumns.map(c => c.name);
+    return { sink, columnNames };
   }
 
-  async executePlan(logicalPlan) {
+  async executeStreaming(logicalPlan, outputColumns) {
+    return this.execute(logicalPlan, outputColumns, true);
+  }
+
+  async executePlan(logicalPlan, streaming = false) {
     this.cteResults.clear();
     const graph = new PipelineGraph();
-    const resultSink = new ResultSink();
+    const resultSink = new ResultSink(streaming);
     await resultSink.init();
 
-        const rootPipelineId = graph.createPipeline(resultSink);
+    const rootPipelineId = graph.createPipeline(resultSink);
 
     const compiledRoot = await this.buildPipeline(logicalPlan);
 
     compiledRoot.register(graph, rootPipelineId, resultSink);
 
     const scheduler = new TaskScheduler();
-    await scheduler.schedule(graph);
 
-        return resultSink;
+    if (streaming) {
+      const pipelinePromise = scheduler.schedule(graph);
+      pipelinePromise.catch(err => resultSink.error(err));
+      return resultSink;
+    }
+
+    await scheduler.schedule(graph);
+    return resultSink;
   }
 
   async buildPipeline(node) {
     switch (node.type) {
       case PlanNodeType.SCAN: return this.buildScan(node);
+      case PlanNodeType.INDEX_SCAN: return this.buildIndexScan(node);
       case PlanNodeType.FILTER: return this.buildFilter(node);
       case PlanNodeType.PROJECT: return this.buildProject(node);
       case PlanNodeType.JOIN: return this.buildJoin(node);
@@ -66,6 +78,7 @@ export class QueryExecutor {
       case PlanNodeType.CTE_SCAN: return this.buildCTEScan(node);
       case PlanNodeType.MATERIALIZE: return this.buildMaterialize(node);
       case PlanNodeType.DEPENDENT_JOIN: return this.buildDependentJoin(node);
+      case PlanNodeType.TOP_N: return this.buildTopN(node);
       case PlanNodeType.EMPTY: return this.buildEmpty(node);
       default:
         throw new Error(`Unsupported plan node: ${node.type}`);
@@ -113,6 +126,40 @@ export class QueryExecutor {
     };
   }
 
+  async buildIndexScan(node) {
+    const storage = this.catalog.getTableStorage(node.table);
+    if (!storage) throw new Error(`No storage for table: ${node.table}`);
+
+    const btree = this.catalog.getIndexForColumn(node.table, node.columnName);
+    if (!btree) throw new Error(`No index for ${node.table}.${node.columnName}`);
+
+    const schema = storage.getSchema();
+    const projectedColumns = this.resolveProjectedColumnIndexes(schema, node.columns);
+    const outputSchema = projectedColumns ? projectedColumns.map(i => schema[i]) : schema;
+    const finalSchema = outputSchema.map(c => ({ ...c, tableAlias: node.alias || node.table }));
+    const columnMapping = this.buildSchemaMapping(finalSchema, node.alias || node.table);
+
+    return {
+      schema: finalSchema,
+      columnMapping,
+      register: (graph, currentPipelineId, currentSink) => {
+        const scanOp = new IndexScanOperator(
+          btree, storage, node.scanType, node.scanKey,
+          node.scanLow, node.scanHigh, node.lowInc, node.highInc,
+          projectedColumns
+        );
+        graph.setSource(currentPipelineId, async function* () {
+          for await (const chunk of scanOp.scan()) {
+            if (currentSink.cancelToken?.isCancelled) break;
+            await currentSink.consume(chunk);
+            yield chunk;
+          }
+          if (currentSink.finalize) await currentSink.finalize();
+        });
+      }
+    };
+  }
+
   resolveProjectedColumnIndexes(storageSchema, planColumns) {
     if (!planColumns || planColumns.length === 0 || planColumns.length >= storageSchema.length) {
       return null;
@@ -135,7 +182,7 @@ export class QueryExecutor {
       schema: child.schema,
       columnMapping: child.columnMapping,
       register: (graph, currentPipelineId, currentSink) => {
-        const filterOp = new FilterOperator(node.condition, evalFn);
+        const filterOp = new FilterOperator(node.condition, evalFn, child.columnMapping);
         const childSink = {
           get cancelToken() { return currentSink.cancelToken; },
           async consume(chunk) {
@@ -293,56 +340,7 @@ export class QueryExecutor {
       };
     }
 
-    if (node.physicalStrategy === PhysicalStrategy.NESTED_LOOP) {
-      return {
-        schema: resultSchema,
-        columnMapping: resultMapping,
-        register: (graph, currentPipelineId, currentSink) => {
-          const buildChunks = [];
-          const probeChunks = [];
-          const buildSink = {
-            consume: async c => buildChunks.push(c),
-            finalize: async () => {}
-          };
-          const probeSink = {
-            consume: async c => probeChunks.push(c),
-            finalize: async () => {}
-          };
-          const buildPipelineId = graph.createPipeline(buildSink);
-          const probePipelineId = graph.createPipeline(probeSink);
-          buildInput.register(graph, buildPipelineId, buildSink);
-          probeInput.register(graph, probePipelineId, probeSink);
-          graph.addDependency(currentPipelineId, buildPipelineId);
-          graph.addDependency(currentPipelineId, probePipelineId);
-          graph.setSource(currentPipelineId, async function* () {
-            const rows = [];
-            const adapter = createRowAdapter(combinedSchema.length);
-            for (const buildChunk of buildChunks) {
-              for (let bi = 0; bi < buildChunk.size; bi++) {
-                const buildIdx = buildChunk.activeRowIndex(bi);
-                for (const probeChunk of probeChunks) {
-                  for (let pi = 0; pi < probeChunk.size; pi++) {
-                    const probeIdx = probeChunk.activeRowIndex(pi);
-                    const row = [];
-                    for (const col of buildChunk.columns) row.push(col.get(buildIdx));
-                    for (const col of probeChunk.columns) row.push(col.get(probeIdx));
-                    adapter.setRow(row);
-                    if (!conditionEvaluator || conditionEvaluator(adapter, 0)) rows.push(row);
-                  }
-                }
-              }
-            }
-            const chunk = rowsToChunk(rows, combinedSchema);
-            if (chunk.size > 0) {
-              await currentSink.consume(chunk);
-              yield chunk;
-            }
-            if (currentSink.finalize) await currentSink.finalize();
-          });
-        }
-      };
-    }
-
+    const joinSpillPath = this.tempManager.allocate('spill', 'join');
     return {
       schema: resultSchema,
       columnMapping: resultMapping,
@@ -351,6 +349,7 @@ export class QueryExecutor {
           buildKeys.map(k => compileExpression(k, buildInput.columnMapping)),
           node.joinType,
           !!node._dedupeBuild && !conditionEvaluator,
+          joinSpillPath,
         );
 
         const buildSink = {
@@ -421,6 +420,16 @@ export class QueryExecutor {
         : () => 1;
       const valueKey = agg.args.length > 0 ? expressionCacheKey(agg.args[0]) : null;
 
+      let wasmColIndex = undefined;
+      if (agg.args.length > 0 && agg.args[0].kind === BoundExprKind.COLUMN_REF) {
+        const colExpr = agg.args[0];
+        const colKey = colExpr.tableAlias
+          ? `${colExpr.tableAlias}.${colExpr.columnName}`.toUpperCase()
+          : colExpr.columnName.toUpperCase();
+        const resolved = child.columnMapping.get(colKey) ?? child.columnMapping.get(colExpr.columnName.toUpperCase());
+        if (resolved !== undefined) wasmColIndex = resolved;
+      }
+
       return {
         name: agg.name,
         valueKey: valueKey && valueKeyCounts.get(valueKey) > 1 ? valueKey : null,
@@ -430,6 +439,9 @@ export class QueryExecutor {
           const val = valueExtractor(chunk, rowIdx);
           return typeof val === 'bigint' ? Number(val) : val;
         },
+        _wasmColIndex: wasmColIndex,
+        _sourceExpr: agg.args.length > 0 ? agg.args[0] : null,
+        _columnMapping: child.columnMapping,
       };
     });
 
@@ -524,7 +536,8 @@ export class QueryExecutor {
       schema: child.schema,
       columnMapping: child.columnMapping,
       register: (graph, currentPipelineId, currentSink) => {
-        const sortOp = new SortOperator(keyExtractors, node.limit, node.offset || 0);
+        const spillPath = this.tempManager.allocate('spill', 'sort');
+        const sortOp = new SortOperator(keyExtractors, node.limit, node.offset || 0, spillPath);
         const sortSink = {
           async consume(chunk) { await sortOp.consume(chunk); },
           async finalize() {}
@@ -535,6 +548,40 @@ export class QueryExecutor {
                 graph.addDependency(currentPipelineId, childPipelineId);
 
                 graph.setSource(currentPipelineId, async function* () {
+          const resultChunks = await sortOp.finalize();
+          for (const chunk of resultChunks) {
+            await currentSink.consume(chunk);
+            yield chunk;
+          }
+          if (currentSink.finalize) await currentSink.finalize();
+        });
+      }
+    };
+  }
+
+  async buildTopN(node) {
+    const child = await this.buildPipeline(node.children[0]);
+    const keyExtractors = node.orderKeys.map(ok => ({
+      eval: compileExpression(ok.expr, child.columnMapping),
+      direction: ok.direction || 'ASC',
+    }));
+
+    return {
+      schema: child.schema,
+      columnMapping: child.columnMapping,
+      register: (graph, currentPipelineId, currentSink) => {
+        const spillPath = this.tempManager.allocate('spill', 'topn');
+        const sortOp = new SortOperator(keyExtractors, node.count, node.offset || 0, spillPath);
+        const sortSink = {
+          async consume(chunk) { await sortOp.consume(chunk); },
+          async finalize() {}
+        };
+        const childPipelineId = graph.createPipeline(sortSink);
+        child.register(graph, childPipelineId, sortSink);
+
+        graph.addDependency(currentPipelineId, childPipelineId);
+
+        graph.setSource(currentPipelineId, async function* () {
           const resultChunks = await sortOp.finalize();
           for (const chunk of resultChunks) {
             await currentSink.consume(chunk);
@@ -697,8 +744,11 @@ export class QueryExecutor {
         graph.setSource(currentPipelineId, async function* () {
           let stored = self.cteResults.get(node.cteName.toUpperCase());
           if (!stored) {
-            const cteSink = new ResultSink();
-            await cteSink.init();
+            const cteChunks = [];
+            const cteSink = {
+              async consume(c) { cteChunks.push(c); },
+              async finalize() {}
+            };
             const cteGraph = new PipelineGraph();
             const ctePipelineId = cteGraph.createPipeline(cteSink);
             compiledCTE.register(cteGraph, ctePipelineId, cteSink);
@@ -706,7 +756,7 @@ export class QueryExecutor {
             await scheduler.schedule(cteGraph);
 
             stored = {
-              chunks: cteSink.chunks,
+              chunks: cteChunks,
               schema: compiledCTE.schema,
               columnMapping: compiledCTE.columnMapping,
             };
@@ -835,28 +885,3 @@ function expressionCacheKey(expr) {
   }
 }
 
-function createRowAdapter(columnCount) {
-  const columns = new Array(columnCount);
-  const adapter = {
-    row: null,
-    columns,
-    setRow(row) {
-      this.row = row;
-    }
-  };
-  for (let i = 0; i < columnCount; i++) {
-    columns[i] = { get: () => adapter.row[i] };
-  }
-  return adapter;
-}
-
-function rowsToChunk(rows, schema) {
-  const columns = schema.map(col => new Column(col.dataType || 'VARCHAR', rows.length));
-  for (let r = 0; r < rows.length; r++) {
-    for (let c = 0; c < columns.length; c++) {
-      columns[c].set(r, rows[r][c]);
-    }
-  }
-  for (const col of columns) col.length = rows.length;
-  return new DataChunk(columns, rows.length);
-}

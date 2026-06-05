@@ -1,9 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { DataType, dateToEpochDays, epochDaysToDate, DECIMAL_SCALE } from '../../src/storage/data-type.js';
 import { Column } from '../../src/storage/column.js';
 import { DataChunk, DEFAULT_CHUNK_SIZE } from '../../src/storage/chunk.js';
 import { Table } from '../../src/storage/table.js';
 import { createBitmap, setBit, clearBit, testBit, popcount, andBitmaps, orBitmaps, notBitmap } from '../../src/utils/bitmap.js';
+import { TempDirectoryManager } from '../../src/storage/temp-directory-manager.js';
 
 describe('Bitmap', () => {
   it('sets and tests bits', async () => {
@@ -226,12 +227,22 @@ describe('DataChunk', () => {
 });
 
 describe('Table', () => {
+  let tempManager;
+
+  beforeEach(() => {
+    tempManager = new TempDirectoryManager();
+  });
+
+  afterEach(() => {
+    tempManager.cleanup();
+  });
+
   it('stores and scans rows', async () => {
     const schema = [
       { name: 'id', dataType: DataType.INT32 },
       { name: 'name', dataType: DataType.VARCHAR },
     ];
-    const table = new Table('test', schema);
+    const table = new Table('test', schema, tempManager.allocate('buffer', 'test'));
     await table.insertRows([[1, 'alice'], [2, 'bob']]);
     expect(table.rowCount()).toBe(2);
 
@@ -244,7 +255,7 @@ describe('Table', () => {
 
   it('splits into multiple chunks when exceeding chunk size', async () => {
     const schema = [{ name: 'x', dataType: DataType.INT32 }];
-    const table = new Table('test', schema);
+    const table = new Table('test', schema, tempManager.allocate('buffer', 'test'));
     const rows = Array.from({ length: DEFAULT_CHUNK_SIZE + 100 }, (_, i) => [i]);
     await table.insertRows(rows);
     expect(table.rowCount()).toBe(DEFAULT_CHUNK_SIZE + 100);
@@ -261,7 +272,7 @@ describe('Table', () => {
       { name: 'ID', dataType: DataType.INT32 },
       { name: 'NAME', dataType: DataType.VARCHAR },
     ];
-    const table = new Table('test', schema);
+    const table = new Table('test', schema, tempManager.allocate('buffer', 'test'));
     expect(table.getColumnIndex('id')).toBe(0);
     expect(table.getColumnIndex('name')).toBe(1);
     expect(table.getColumnIndex('missing')).toBe(-1);
