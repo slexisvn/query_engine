@@ -22,6 +22,7 @@ class SimplifierRewriter extends PlanRewriter {
     }
 
         if (simplifiedCond.kind === BoundExprKind.LITERAL && simplifiedCond.value === false) {
+      return { type: PlanNodeType.EMPTY, children: [child] };
     }
 
         if (simplifiedCond !== node.condition || child !== node.children[0]) {
@@ -172,7 +173,20 @@ export function simplifyExpression(expr) {
     }
     case BoundExprKind.CAST: {
       const inner = simplifyExpression(expr.expr);
+      if (inner.kind === BoundExprKind.LITERAL && inner.value !== null) {
+        const folded = foldCast(inner.value, expr.targetType);
+        if (folded !== undefined) return BoundLiteral(folded, expr.targetType);
+      }
       if (inner !== expr.expr) return { ...expr, expr: inner };
+      return expr;
+    }
+    case BoundExprKind.EXTRACT: {
+      const source = simplifyExpression(expr.source);
+      if (source.kind === BoundExprKind.LITERAL && source.value instanceof Date) {
+        const extracted = extractFromDate(source.value, expr.field);
+        if (extracted !== null) return BoundLiteral(extracted, 'INT32');
+      }
+      if (source !== expr.source) return { ...expr, source };
       return expr;
     }
   }
@@ -249,6 +263,28 @@ function combineConjuncts(exprs) {
     right: expr,
     resultType: 'BOOLEAN',
   }) : expr, null);
+}
+
+function foldCast(value, targetType) {
+  const type = (targetType || '').toUpperCase();
+  try {
+    if (type.includes('INT')) return Math.trunc(Number(value));
+    if (type.includes('FLOAT') || type.includes('DOUBLE') || type.includes('DECIMAL') || type.includes('NUMERIC')) return Number(value);
+    if (type.includes('VARCHAR') || type.includes('TEXT') || type.includes('CHAR')) return String(value);
+    if (type.includes('BOOL')) return Boolean(value);
+  } catch (_) {}
+  return undefined;
+}
+
+function extractFromDate(date, field) {
+  const f = (field || '').toUpperCase();
+  if (f === 'YEAR') return date.getFullYear();
+  if (f === 'MONTH') return date.getMonth() + 1;
+  if (f === 'DAY') return date.getDate();
+  if (f === 'HOUR') return date.getHours();
+  if (f === 'MINUTE') return date.getMinutes();
+  if (f === 'SECOND') return date.getSeconds();
+  return null;
 }
 
 function exprKey(expr) {

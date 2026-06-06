@@ -1,7 +1,6 @@
 import { Column } from '../../storage/column.js';
 import { DataChunk } from '../../storage/chunk.js';
 import { JoinType } from '../../planner/logical-plan.js';
-import { SpillManager } from '../../storage/spill-manager.js';
 import { Config } from '../../config.js';
 
 function hashString(str) {
@@ -18,7 +17,7 @@ function getPartition(keyStr) {
 }
 
 export class HashJoinBuild {
-  constructor(keyExtractors, joinType, uniqueKeys, spillBasePath) {
+  constructor(keyExtractors, joinType, uniqueKeys, spillManager) {
     this.keyExtractors = keyExtractors;
     this.joinType = joinType || JoinType.INNER;
     this.uniqueKeys = !!uniqueKeys;
@@ -26,7 +25,7 @@ export class HashJoinBuild {
     this.buildSchema = null;
     this.hasNullKey = false;
 
-    this.spillManager = new SpillManager(spillBasePath);
+    this.spillManager = spillManager;
     this.partitions = Array.from({ length: Config.hashJoinPartitions }, () => ({
       rows: [],
       spilled: false

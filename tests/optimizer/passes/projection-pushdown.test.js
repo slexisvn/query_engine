@@ -1,0 +1,259 @@
+import { describe, it, expect } from 'vitest';
+import { ProjectionPushdown } from '../../../src/optimizer/passes/projection-pushdown.js';
+import {
+  PlanNodeType,
+  JoinType,
+  LogicalScan,
+  LogicalFilter,
+  LogicalProject,
+  LogicalJoin,
+  LogicalAggregate,
+  LogicalSort,
+  LogicalLimit,
+} from '../../../src/planner/logical-plan.js';
+import { BoundExprKind } from '../../../src/binder/expression-binder.js';
+
+const pass = new ProjectionPushdown();
+
+function colRef(table, col) {
+  return { kind: BoundExprKind.COLUMN_REF, tableAlias: table, columnName: col };
+}
+
+function lit(v) {
+  return { kind: BoundExprKind.LITERAL, value: v };
+}
+
+function bin(left, op, right) {
+  return { kind: BoundExprKind.BINARY, op, left, right, resultType: 'BOOLEAN' };
+}
+
+function scanWith(name, cols) {
+  return LogicalScan(name, cols.map(c => ({ name: c, columnName: c })), name);
+}
+
+describe('ProjectionPushdown', () => {
+  describe('scan pruning', () => {
+    it('removes unused columns from scan when project only uses subset', () => {
+      const s = scanWith('t', ['id', 'name', 'age', 'email']);
+      const plan = LogicalProject(
+        [colRef('t', 'id'), colRef('t', 'name')],
+        s
+      );
+
+      const result = pass.apply(plan);
+
+      const scanNode = result.children[0];
+      expect(scanNode.columns.length).toBeLessThan(4);
+      const colNames = scanNode.columns.map(c => c.name || c.columnName);
+      expect(colNames).toContain('id');
+      expect(colNames).toContain('name');
+    });
+
+    it('keeps all columns when all are referenced', () => {
+      const s = scanWith('t', ['id', 'val']);
+      const plan = LogicalProject(
+        [colRef('t', 'id'), colRef('t', 'val')],
+        s
+      );
+
+      const result = pass.apply(plan);
+
+      const scanNode = result.children[0];
+      expect(scanNode.columns.length).toBe(2);
+    });
+  });
+
+  describe('filter column tracking', () => {
+    it('includes filter-referenced columns in required set', () => {
+      const s = scanWith('t', ['id', 'name', 'age', 'email']);
+      const filter = LogicalFilter(
+        bin(colRef('t', 'age'), '>', lit(18)),
+        s
+      );
+      const plan = LogicalProject(
+        [colRef('t', 'id')],
+        filter
+      );
+
+      const result = pass.apply(plan);
+
+      function findScan(n) {
+        if (!n) return null;
+        if (n.type === PlanNodeType.SCAN) return n;
+        for (const c of n.children || []) {
+          const found = findScan(c);
+          if (found) return found;
+        }
+        return null;
+      }
+      const scanNode = findScan(result);
+      const colNames = scanNode.columns.map(c => c.name || c.columnName);
+      expect(colNames).toContain('id');
+      expect(colNames).toContain('age');
+    });
+  });
+
+  describe('join column splitting', () => {
+    it('pushes required columns to correct side of join', () => {
+      const left = scanWith('a', ['id', 'name', 'extra']);
+      const right = scanWith('b', ['id', 'val', 'unused']);
+      const join = LogicalJoin(
+        JoinType.INNER,
+        bin(colRef('a', 'id'), '=', colRef('b', 'id')),
+        left,
+        right
+      );
+      const plan = LogicalProject(
+        [colRef('a', 'name'), colRef('b', 'val')],
+        join
+      );
+
+      const result = pass.apply(plan);
+
+      function findScans(n) {
+        const scans = [];
+        if (!n) return scans;
+        if (n.type === PlanNodeType.SCAN) scans.push(n);
+        for (const c of n.children || []) scans.push(...findScans(c));
+        return scans;
+      }
+      const scans = findScans(result);
+      const leftScan = scans.find(s => s.table === 'a');
+      const rightScan = scans.find(s => s.table === 'b');
+
+      const leftCols = leftScan.columns.map(c => c.name || c.columnName);
+      const rightCols = rightScan.columns.map(c => c.name || c.columnName);
+
+      expect(leftCols).toContain('id');
+      expect(leftCols).toContain('name');
+      expect(rightCols).toContain('id');
+      expect(rightCols).toContain('val');
+    });
+  });
+
+  describe('aggregate column tracking', () => {
+    it('only requires group-by and aggregate argument columns from child', () => {
+      const s = scanWith('t', ['id', 'status', 'amount', 'extra']);
+      const plan = LogicalAggregate(
+        [colRef('t', 'status')],
+        [{ fn: 'SUM', args: [colRef('t', 'amount')] }],
+        s
+      );
+
+      const result = pass.apply(plan);
+
+      const scanNode = result.children[0];
+      const colNames = scanNode.columns.map(c => c.name || c.columnName);
+      expect(colNames).toContain('status');
+      expect(colNames).toContain('amount');
+      expect(colNames).not.toContain('extra');
+    });
+  });
+
+  describe('sort column tracking', () => {
+    it('includes sort key columns in required set', () => {
+      const s = scanWith('t', ['id', 'name', 'age', 'extra']);
+      const sort = LogicalSort(
+        [{ expr: colRef('t', 'age'), direction: 'ASC' }],
+        s
+      );
+      const plan = LogicalProject(
+        [colRef('t', 'id')],
+        sort
+      );
+
+      const result = pass.apply(plan);
+
+      function findScan(n) {
+        if (!n) return null;
+        if (n.type === PlanNodeType.SCAN) return n;
+        for (const c of n.children || []) {
+          const found = findScan(c);
+          if (found) return found;
+        }
+        return null;
+      }
+      const scanNode = findScan(result);
+      const colNames = scanNode.columns.map(c => c.name || c.columnName);
+      expect(colNames).toContain('id');
+      expect(colNames).toContain('age');
+    });
+  });
+
+  describe('limit passthrough', () => {
+    it('pushes required columns through LIMIT unchanged', () => {
+      const s = scanWith('t', ['id', 'name', 'extra']);
+      const limit = LogicalLimit(10, 0, s);
+      const plan = LogicalProject(
+        [colRef('t', 'id')],
+        limit
+      );
+
+      const result = pass.apply(plan);
+
+      function findScan(n) {
+        if (!n) return null;
+        if (n.type === PlanNodeType.SCAN) return n;
+        for (const c of n.children || []) {
+          const found = findScan(c);
+          if (found) return found;
+        }
+        return null;
+      }
+      const scanNode = findScan(result);
+      const colNames = scanNode.columns.map(c => c.name || c.columnName);
+      expect(colNames).toContain('id');
+      expect(colNames).not.toContain('extra');
+    });
+  });
+
+  describe('no pruning when all columns needed', () => {
+    it('returns same plan when scan has no extra columns', () => {
+      const s = scanWith('t', ['id']);
+      const plan = LogicalProject([colRef('t', 'id')], s);
+
+      const result = pass.apply(plan);
+
+      expect(result.children[0].columns.length).toBe(1);
+    });
+  });
+
+  describe('deeply nested pruning', () => {
+    it('prunes through filter+join+sort chain', () => {
+      const left = scanWith('a', ['id', 'name', 'extra1', 'extra2']);
+      const right = scanWith('b', ['id', 'val']);
+      const join = LogicalJoin(
+        JoinType.INNER,
+        bin(colRef('a', 'id'), '=', colRef('b', 'id')),
+        left,
+        right
+      );
+      const filter = LogicalFilter(
+        bin(colRef('b', 'val'), '>', lit(0)),
+        join
+      );
+      const sort = LogicalSort(
+        [{ expr: colRef('a', 'name'), direction: 'ASC' }],
+        filter
+      );
+      const plan = LogicalProject(
+        [colRef('a', 'name'), colRef('b', 'val')],
+        sort
+      );
+
+      const result = pass.apply(plan);
+
+      function findScans(n) {
+        const scans = [];
+        if (!n) return scans;
+        if (n.type === PlanNodeType.SCAN) scans.push(n);
+        for (const c of n.children || []) scans.push(...findScans(c));
+        return scans;
+      }
+      const leftScan = findScans(result).find(s => s.table === 'a');
+      const leftCols = leftScan.columns.map(c => c.name || c.columnName);
+      expect(leftCols).not.toContain('extra1');
+      expect(leftCols).not.toContain('extra2');
+    });
+  });
+});

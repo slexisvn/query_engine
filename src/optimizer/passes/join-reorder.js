@@ -31,6 +31,17 @@ class JoinReorderRewriter extends PlanRewriter {
     this.cardEstimator = cardEstimator;
   }
 
+  rewriteJoin(node) {
+    const rewritten = this.rewriteChildren(node);
+    if (this.isInnerJoinTree(rewritten)) {
+      return this.reorderJoinTree(rewritten);
+    }
+    if (this.isNonInnerJoin(rewritten)) {
+      return this.reorderNonInnerJoin(rewritten);
+    }
+    return rewritten;
+  }
+
   rewriteDefault(node) {
     const rewritten = this.rewriteChildren(node);
     if (this.isInnerJoinTree(rewritten)) {
@@ -43,6 +54,52 @@ class JoinReorderRewriter extends PlanRewriter {
     if (node.type !== PlanNodeType.JOIN) return false;
     if (node.joinType !== JoinType.INNER && node.joinType !== JoinType.CROSS) return false;
     return true;
+  }
+
+  isNonInnerJoin(node) {
+    if (node.type !== PlanNodeType.JOIN) return false;
+    return node.joinType === JoinType.SEMI
+      || node.joinType === JoinType.ANTI
+      || node.joinType === JoinType.LEFT
+      || node.joinType === JoinType.MARK;
+  }
+
+  reorderNonInnerJoin(node) {
+    let left = node.children[0];
+    let right = node.children[1];
+
+    if (this.isInnerJoinTree(left)) left = this.reorderJoinTree(left);
+    if (this.isInnerJoinTree(right)) right = this.reorderJoinTree(right);
+
+    const result = { ...node, children: [left, right] };
+
+    if (this.canSwapChildren(node.joinType)) {
+      return this.pickCheaperChildOrder(result);
+    }
+
+    return result;
+  }
+
+  canSwapChildren(joinType) {
+    return joinType === JoinType.SEMI
+      || joinType === JoinType.ANTI
+      || joinType === JoinType.MARK;
+  }
+
+  pickCheaperChildOrder(node) {
+    const left = node.children[0];
+    const right = node.children[1];
+
+    const leftCard = this.cardEstimator.estimatePlan(left);
+    const rightCard = this.cardEstimator.estimatePlan(right);
+
+    const normalCost = this.costModel.hashJoinCost(rightCard, leftCard);
+    const swappedCost = this.costModel.hashJoinCost(leftCard, rightCard);
+
+    if (swappedCost < normalCost) {
+      return { ...node, children: [right, left] };
+    }
+    return node;
   }
 
   reorderJoinTree(root) {

@@ -42,7 +42,12 @@ class LimitPushdownRewriter extends PlanRewriter {
       return { ...node, children: [newSort] };
     }
 
-        if (child !== node.children[0]) {
+    if (child.type === PlanNodeType.AGGREGATE && child.groupBy && child.groupBy.length > 0) {
+      const newAgg = { ...child, _limitHint: node.count + (node.offset || 0) };
+      return { ...node, children: [newAgg] };
+    }
+
+    if (child !== node.children[0]) {
       return { ...node, children: [child] };
     }
 

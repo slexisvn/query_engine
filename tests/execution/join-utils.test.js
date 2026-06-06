@@ -1,0 +1,189 @@
+import { describe, it, expect } from 'vitest';
+import { extractJoinKeys, splitAnd, findCommonEquiJoinKeys } from '../../src/execution/join-utils.js';
+import { BoundExprKind } from '../../src/binder/expression-binder.js';
+
+function colRef(tableAlias, columnName) {
+  return { kind: BoundExprKind.COLUMN_REF, tableAlias, columnName };
+}
+
+function lit(value) {
+  return { kind: BoundExprKind.LITERAL, value };
+}
+
+function eq(left, right) {
+  return { kind: BoundExprKind.BINARY, op: '=', left, right };
+}
+
+function gt(left, right) {
+  return { kind: BoundExprKind.BINARY, op: '>', left, right };
+}
+
+function and(left, right) {
+  return { kind: BoundExprKind.BINARY, op: 'AND', left, right };
+}
+
+function or(left, right) {
+  return { kind: BoundExprKind.BINARY, op: 'OR', left, right };
+}
+
+const leftMapping = new Map([['L.ID', 0], ['ID', 0], ['L.NAME', 1], ['NAME', 1]]);
+const rightMapping = new Map([['R.KEY', 0], ['KEY', 0], ['R.VAL', 1], ['VAL', 1]]);
+
+describe('splitAnd', () => {
+  it('returns empty for null', () => {
+    expect(splitAnd(null)).toEqual([]);
+  });
+
+  it('returns single predicate as-is', () => {
+    const pred = eq(colRef('L', 'ID'), lit(1));
+    expect(splitAnd(pred)).toEqual([pred]);
+  });
+
+  it('splits AND into flat list', () => {
+    const p1 = eq(colRef('L', 'ID'), lit(1));
+    const p2 = gt(colRef('L', 'NAME'), lit('a'));
+    const result = splitAnd(and(p1, p2));
+    expect(result).toEqual([p1, p2]);
+  });
+
+  it('recursively flattens nested ANDs', () => {
+    const p1 = eq(colRef('L', 'ID'), lit(1));
+    const p2 = eq(colRef('L', 'ID'), lit(2));
+    const p3 = eq(colRef('L', 'ID'), lit(3));
+    const result = splitAnd(and(and(p1, p2), p3));
+    expect(result).toEqual([p1, p2, p3]);
+  });
+
+  it('does not split OR', () => {
+    const expr = or(eq(colRef('L', 'ID'), lit(1)), eq(colRef('L', 'ID'), lit(2)));
+    expect(splitAnd(expr)).toEqual([expr]);
+  });
+});
+
+describe('extractJoinKeys', () => {
+  it('extracts single equi-join key pair', () => {
+    const cond = eq(colRef('L', 'ID'), colRef('R', 'KEY'));
+    const { buildKeys, probeKeys, residualCondition } = extractJoinKeys(cond, leftMapping, rightMapping);
+
+    expect(buildKeys.length).toBe(1);
+    expect(buildKeys[0].columnName).toBe('ID');
+    expect(probeKeys[0].columnName).toBe('KEY');
+    expect(residualCondition).toBeNull();
+  });
+
+  it('extracts multiple equi-join keys from AND', () => {
+    const cond = and(
+      eq(colRef('L', 'ID'), colRef('R', 'KEY')),
+      eq(colRef('L', 'NAME'), colRef('R', 'VAL'))
+    );
+    const { buildKeys, probeKeys } = extractJoinKeys(cond, leftMapping, rightMapping);
+
+    expect(buildKeys.length).toBe(2);
+    expect(buildKeys[0].columnName).toBe('ID');
+    expect(buildKeys[1].columnName).toBe('NAME');
+  });
+
+  it('handles reversed column order (right = left)', () => {
+    const cond = eq(colRef('R', 'KEY'), colRef('L', 'ID'));
+    const { buildKeys, probeKeys } = extractJoinKeys(cond, leftMapping, rightMapping);
+
+    expect(buildKeys[0].columnName).toBe('ID');
+    expect(probeKeys[0].columnName).toBe('KEY');
+  });
+
+  it('separates non-equi predicates into residual', () => {
+    const cond = and(
+      eq(colRef('L', 'ID'), colRef('R', 'KEY')),
+      gt(colRef('L', 'NAME'), colRef('R', 'VAL'))
+    );
+    const { buildKeys, residualCondition } = extractJoinKeys(cond, leftMapping, rightMapping);
+
+    expect(buildKeys.length).toBe(1);
+    expect(residualCondition).not.toBeNull();
+    expect(residualCondition.op).toBe('>');
+  });
+
+  it('falls back to literal keys when no equi-join found', () => {
+    const cond = gt(colRef('L', 'ID'), colRef('R', 'KEY'));
+    const { buildKeys, probeKeys } = extractJoinKeys(cond, leftMapping, rightMapping);
+
+    expect(buildKeys[0].kind).toBe(BoundExprKind.LITERAL);
+    expect(probeKeys[0].kind).toBe(BoundExprKind.LITERAL);
+  });
+
+  it('returns empty keys for null condition', () => {
+    const { buildKeys, probeKeys, residualCondition } = extractJoinKeys(null, leftMapping, rightMapping);
+
+    expect(buildKeys.length).toBe(0);
+    expect(probeKeys.length).toBe(0);
+    expect(residualCondition).toBeNull();
+  });
+
+  it('handles mixed equi + residual in triple AND', () => {
+    const cond = and(
+      and(
+        eq(colRef('L', 'ID'), colRef('R', 'KEY')),
+        gt(colRef('L', 'ID'), lit(5))
+      ),
+      eq(colRef('L', 'NAME'), colRef('R', 'VAL'))
+    );
+    const { buildKeys, probeKeys, residualCondition } = extractJoinKeys(cond, leftMapping, rightMapping);
+
+    expect(buildKeys.length).toBe(2);
+    expect(residualCondition).not.toBeNull();
+  });
+});
+
+describe('findCommonEquiJoinKeys', () => {
+  it('finds equi-join key from simple equality', () => {
+    const cond = eq(colRef('L', 'ID'), colRef('R', 'KEY'));
+    const result = findCommonEquiJoinKeys(cond, leftMapping, rightMapping);
+
+    expect(result).not.toBeNull();
+    expect(result.buildKey.columnName).toBe('ID');
+    expect(result.probeKey.columnName).toBe('KEY');
+  });
+
+  it('finds common key across OR branches', () => {
+    const cond = or(
+      eq(colRef('L', 'ID'), colRef('R', 'KEY')),
+      eq(colRef('L', 'ID'), colRef('R', 'KEY'))
+    );
+    const result = findCommonEquiJoinKeys(cond, leftMapping, rightMapping);
+
+    expect(result).not.toBeNull();
+    expect(result.buildKey.columnName).toBe('ID');
+  });
+
+  it('returns null when OR branches have different keys', () => {
+    const cond = or(
+      eq(colRef('L', 'ID'), colRef('R', 'KEY')),
+      eq(colRef('L', 'NAME'), colRef('R', 'VAL'))
+    );
+    const result = findCommonEquiJoinKeys(cond, leftMapping, rightMapping);
+
+    expect(result).toBeNull();
+  });
+
+  it('finds key from AND (returns first found)', () => {
+    const cond = and(
+      gt(colRef('L', 'ID'), lit(5)),
+      eq(colRef('L', 'ID'), colRef('R', 'KEY'))
+    );
+    const result = findCommonEquiJoinKeys(cond, leftMapping, rightMapping);
+
+    expect(result).not.toBeNull();
+    expect(result.buildKey.columnName).toBe('ID');
+  });
+
+  it('returns null for non-equi condition', () => {
+    const cond = gt(colRef('L', 'ID'), colRef('R', 'KEY'));
+    const result = findCommonEquiJoinKeys(cond, leftMapping, rightMapping);
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null for null input', () => {
+    expect(findCommonEquiJoinKeys(null, leftMapping, rightMapping)).toBeNull();
+  });
+});

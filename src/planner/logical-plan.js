@@ -32,6 +32,7 @@ export const JoinType = {
 export const PhysicalStrategy = {
   HASH: 'HASH',
   MERGE: 'MERGE',
+  NESTED_LOOP: 'NESTED_LOOP',
   STREAM: 'STREAM',
   UNGROUPED: 'UNGROUPED',
   PERFECT_HASH: 'PERFECT_HASH',

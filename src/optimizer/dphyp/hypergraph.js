@@ -18,6 +18,7 @@ export class HyperGraph {
 
   addRelation(name, plan, cardinality) {
     const id = this.relations.length;
+    if (id >= 30) return -1;
     const mask = 1 << id;
     this.relations.push({ id, name, plan, cardinality, mask });
     this.relationIndex.set(name.toUpperCase(), id);
@@ -81,17 +82,17 @@ export class HyperGraph {
 
   findJoinPredicates(leftMask, rightMask) {
     const preds = [];
+    const seen = new Set();
     for (const edge of this.edges) {
       const edgeFull = edge.leftMask | edge.rightMask;
       const combined = leftMask | rightMask;
-      if ((edgeFull & combined) === edgeFull
-          && (edge.leftMask & leftMask) !== 0
-          && (edge.rightMask & rightMask) !== 0) {
-        preds.push(edge.predicate);
-      }
-      if ((edgeFull & combined) === edgeFull
-          && (edge.leftMask & rightMask) !== 0
-          && (edge.rightMask & leftMask) !== 0) {
+      if ((edgeFull & combined) !== edgeFull) continue;
+      const matchNormal = (edge.leftMask & leftMask) !== 0
+        && (edge.rightMask & rightMask) !== 0;
+      const matchFlipped = (edge.leftMask & rightMask) !== 0
+        && (edge.rightMask & leftMask) !== 0;
+      if ((matchNormal || matchFlipped) && !seen.has(edge)) {
+        seen.add(edge);
         preds.push(edge.predicate);
       }
     }
@@ -114,7 +115,8 @@ export function buildHyperGraph(relations, joinPredicates, cardinalityEstimator)
     const card = cardinalityEstimator.estimatePlan
       ? cardinalityEstimator.estimatePlan(rel.plan)
       : cardinalityEstimator.estimateScan(rel.name);
-    graph.addRelation(rel.alias || rel.name, rel.plan, card);
+    const id = graph.addRelation(rel.alias || rel.name, rel.plan, card);
+    if (id === -1) return graph;
   }
 
   for (const pred of joinPredicates) {

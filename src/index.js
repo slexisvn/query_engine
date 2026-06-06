@@ -27,6 +27,9 @@ import { TopNFusion } from './optimizer/passes/topn-fusion.js';
 import { IndexSelection } from './optimizer/passes/index-selection.js';
 import { BTreeIndex } from './storage/btree.js';
 import { TempDirectoryManager } from './storage/temp-directory-manager.js';
+import { FilterOrdering } from './optimizer/passes/filter-ordering.js';
+import { AggregatePushdown } from './optimizer/passes/aggregate-pushdown.js';
+import { StatisticsCache } from './catalog/statistics-cache.js';
 
 export class QueryEngine {
   constructor(catalog, options = {}) {
@@ -37,6 +40,7 @@ export class QueryEngine {
     this.wasmEnabled = false;
 
     this.precomputedStats = options.statistics || null;
+    this.statsCache = new StatisticsCache(catalog);
     this.optimizer = this.createOptimizer(this.precomputedStats);
   }
 
@@ -45,17 +49,13 @@ export class QueryEngine {
   }
 
   async collectStatistics() {
-    const stats = new Map();
-    for (const name of this.catalog.listTables()) {
-      const storage = this.catalog.getTableStorage(name);
-      if (storage) {
-        stats.set(name.toUpperCase(), await StatisticsCollector.collect(storage));
-      }
-    }
-    return stats.size > 0 ? stats : null;
+    await this.statsCache.ensureAll();
+    const map = this.statsCache.toMap();
+    return map.size > 0 ? map : null;
   }
 
   createOptimizer(statistics) {
+    const statsMap = statistics || new Map();
     const optimizer = new Optimizer();
     optimizer.registerPass(new ExpressionSimplifier());
     optimizer.registerPass(new SubqueryUnnesting());
@@ -66,6 +66,7 @@ export class QueryEngine {
     optimizer.registerPass(new PredicatePushdown());
     optimizer.registerPass(new OuterToInnerJoin());
     optimizer.registerPass(new PredicatePushdown());
+    optimizer.registerPass(new AggregatePushdown());
 
     if (statistics) {
       optimizer.registerPass(new JoinReorder(statistics));
@@ -78,9 +79,10 @@ export class QueryEngine {
     optimizer.registerPass(new EmptyPropagation());
     optimizer.registerPass(new NodeMerge());
     optimizer.registerPass(new PredicateDedup());
+    optimizer.registerPass(new FilterOrdering(statsMap));
     optimizer.registerPass(new IndexSelection(this.catalog, statistics));
     optimizer.registerPass(new JoinResidualSplit());
-    optimizer.registerPass(new PhysicalDesign(statistics || new Map()));
+    optimizer.registerPass(new PhysicalDesign(statsMap));
     optimizer.registerPass(new SortElimination());
     optimizer.registerPass(new TopNFusion());
 
@@ -118,10 +120,12 @@ export class QueryEngine {
     const logicalPlan = this.plan(bound);
     let cteMap = logicalPlan._cteMap || new Map();
     
-    let currentStats = this.precomputedStats;
-    if (!currentStats) {
-      currentStats = await this.collectStatistics();
-      this.optimizer = this.createOptimizer(currentStats);
+    if (!this.precomputedStats && !this._statsCollected) {
+      const collected = await this.collectStatistics();
+      if (collected) {
+        this.optimizer = this.createOptimizer(collected);
+        this._statsCollected = true;
+      }
     }
     
     const optimized = this.optimize(logicalPlan);

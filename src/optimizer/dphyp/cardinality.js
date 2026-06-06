@@ -3,6 +3,9 @@ import { BoundExprKind } from '../../binder/expression-binder.js';
 import { PlanNodeType, JoinType } from '../../planner/logical-plan.js';
 
 const MIN_SELECTIVITY = 0.0001;
+const DEFAULT_CORRELATION = 0.5;
+const DEFAULT_NDV = 100;
+const DEFAULT_SCAN_ROWS = 1000;
 
 export class DefaultCardinalityEstimator {
   constructor(statisticsProvider) {
@@ -11,11 +14,11 @@ export class DefaultCardinalityEstimator {
 
   estimateScan(tableName) {
     const tableStats = this.stats.get(tableName.toUpperCase());
-    return tableStats ? tableStats.rowCount : 1000;
+    return tableStats ? tableStats.rowCount : DEFAULT_SCAN_ROWS;
   }
 
   estimatePlan(node) {
-    if (!node) return 1000;
+    if (!node) return DEFAULT_SCAN_ROWS;
 
     switch (node.type) {
       case PlanNodeType.SCAN:
@@ -46,7 +49,7 @@ export class DefaultCardinalityEstimator {
       case PlanNodeType.EMPTY:
         return 0;
       default:
-        return node.children?.length ? this.estimatePlan(node.children[0]) : 1000;
+        return node.children?.length ? this.estimatePlan(node.children[0]) : DEFAULT_SCAN_ROWS;
     }
   }
 
@@ -66,22 +69,24 @@ export class DefaultCardinalityEstimator {
       return Math.max(1, Math.round(leftCard * rightCard * sel));
     }
 
-    let card = leftCard * rightCard;
-    let appliedCount = 0;
+    const leftNdvs = [];
+    const rightNdvs = [];
     for (const pred of equiPreds) {
-      const leftNdv = this.getColumnNdv(pred.left);
-      const rightNdv = this.getColumnNdv(pred.right);
-      const maxNdv = Math.max(leftNdv, rightNdv, 1);
-
-      if (appliedCount === 0) {
-        card = card / maxNdv;
-      } else {
-        card = card / Math.sqrt(maxNdv);
-      }
-      appliedCount++;
+      leftNdvs.push(this.getColumnNdv(pred.left));
+      rightNdvs.push(this.getColumnNdv(pred.right));
     }
 
-    return Math.max(1, Math.round(card));
+    const combinedLeftNdv = Math.min(
+      leftNdvs.reduce((acc, n) => acc * n, 1),
+      leftCard
+    );
+    const combinedRightNdv = Math.min(
+      rightNdvs.reduce((acc, n) => acc * n, 1),
+      rightCard
+    );
+    const divisor = Math.max(combinedLeftNdv, combinedRightNdv, 1);
+
+    return Math.max(1, Math.round((leftCard * rightCard) / divisor));
   }
 
   estimateLeftJoin(leftCard, rightCard, condition) {
@@ -141,7 +146,9 @@ export class DefaultCardinalityEstimator {
           const sr = this.estimateSelectivity(predicate.right);
           const independent = sl * sr;
           const correlated = Math.min(sl, sr);
-          return Math.max(MIN_SELECTIVITY, Math.min(correlated, independent * 0.7 + correlated * 0.3));
+          const correlation = this.lookupCorrelation(predicate.left, predicate.right);
+          const blended = independent * (1 - correlation) + correlated * correlation;
+          return Math.max(MIN_SELECTIVITY, Math.min(correlated, blended));
         }
         if (predicate.op === 'OR') {
           const sl = this.estimateSelectivity(predicate.left);
@@ -201,7 +208,7 @@ export class DefaultCardinalityEstimator {
       }
     }
 
-    const ndv = stats.ndv || 100;
+    const ndv = stats.ndv || DEFAULT_NDV;
     const nullFrac = stats.nullFraction || 0;
     return Math.max(MIN_SELECTIVITY, (1.0 - nullFrac) / ndv);
   }
@@ -298,34 +305,93 @@ export class DefaultCardinalityEstimator {
 
   estimateLikeSelectivity(predicate) {
     const pattern = predicate.pattern?.value;
-    if (typeof pattern !== 'string') return 0.1;
+    if (typeof pattern !== 'string') return this.likeFallback('unknown');
+
+    const ndv = this.getColumnNdv(predicate.expr);
+    const stats = this.getColumnStats(predicate.expr);
+    const avgLen = stats?.avgLength;
 
     if (!pattern.includes('%') && !pattern.includes('_')) {
-      const ndv = this.getColumnNdv(predicate.expr);
-      return ndv > 0 ? 1 / ndv : 0.1;
+      return ndv > 0 ? 1 / ndv : this.likeFallback('exact');
     }
 
-    if (pattern.endsWith('%') && !pattern.slice(0, -1).includes('%') && !pattern.includes('_')) {
+    if (this.isPrefixPattern(pattern)) {
       const prefixLen = pattern.length - 1;
-      return Math.max(MIN_SELECTIVITY, 0.1 / Math.max(1, prefixLen / 3));
+      if (avgLen && avgLen > 0) {
+        const exponent = Math.min(prefixLen / avgLen, 1);
+        return Math.max(MIN_SELECTIVITY, Math.pow(ndv, -exponent));
+      }
+      return Math.max(MIN_SELECTIVITY, 1 / Math.pow(ndv, Math.min(1, prefixLen / 4)));
     }
 
-    if (pattern.startsWith('%') && !pattern.slice(1).includes('%')) {
-      return 0.05;
+    if (this.isContainsPattern(pattern)) {
+      const inner = pattern.slice(1, -1);
+      if (avgLen && avgLen > 0) {
+        const coverageRatio = Math.min(1, inner.length / avgLen);
+        const baseSelectivity = 1 / Math.max(Math.sqrt(ndv), 1);
+        return Math.max(MIN_SELECTIVITY, baseSelectivity * (1 - coverageRatio * 0.5));
+      }
+      return Math.max(MIN_SELECTIVITY, 1 / Math.max(Math.sqrt(ndv), 1));
     }
 
-    if (pattern.startsWith('%') && pattern.endsWith('%')) {
-      return 0.1;
+    if (this.isSuffixPattern(pattern)) {
+      const suffixLen = pattern.length - 1;
+      if (avgLen && avgLen > 0) {
+        return Math.max(MIN_SELECTIVITY, 1 / Math.pow(ndv, Math.min(1, suffixLen / avgLen)));
+      }
+      return Math.max(MIN_SELECTIVITY, 1 / Math.max(Math.sqrt(ndv), 1));
     }
 
-    return 0.15;
+    return this.likeFallback('complex');
+  }
+
+  isPrefixPattern(pattern) {
+    return pattern.endsWith('%') && !pattern.slice(0, -1).includes('%') && !pattern.includes('_');
+  }
+
+  isContainsPattern(pattern) {
+    return pattern.startsWith('%') && pattern.endsWith('%') && !pattern.slice(1, -1).includes('%');
+  }
+
+  isSuffixPattern(pattern) {
+    return pattern.startsWith('%') && !pattern.slice(1).includes('%') && !pattern.includes('_');
+  }
+
+  likeFallback(type) {
+    const fallbacks = { exact: 0.1, unknown: 0.1, complex: 0.15 };
+    return fallbacks[type] ?? 0.1;
   }
 
 
+  lookupCorrelation(leftPred, rightPred) {
+    const leftCol = this.extractSingleColumn(leftPred);
+    const rightCol = this.extractSingleColumn(rightPred);
+    if (!leftCol || !rightCol) return DEFAULT_CORRELATION;
+    if (leftCol.tableAlias?.toUpperCase() !== rightCol.tableAlias?.toUpperCase()) return DEFAULT_CORRELATION;
+
+    const tableStats = this.stats.get(leftCol.tableAlias.toUpperCase());
+    if (!tableStats?.getCorrelation) return DEFAULT_CORRELATION;
+
+    const corr = tableStats.getCorrelation(leftCol.columnName, rightCol.columnName);
+    return corr !== null ? Math.abs(corr) : DEFAULT_CORRELATION;
+  }
+
+  extractSingleColumn(pred) {
+    if (pred?.kind === BoundExprKind.COLUMN_REF) return pred;
+    if (pred?.kind === BoundExprKind.BINARY && ['=', '<', '>', '<=', '>=', '<>'].includes(pred.op)) {
+      if (pred.left?.kind === BoundExprKind.COLUMN_REF) return pred.left;
+      if (pred.right?.kind === BoundExprKind.COLUMN_REF) return pred.right;
+    }
+    if (pred?.kind === BoundExprKind.BETWEEN && pred.expr?.kind === BoundExprKind.COLUMN_REF) return pred.expr;
+    if (pred?.kind === BoundExprKind.LIKE && pred.expr?.kind === BoundExprKind.COLUMN_REF) return pred.expr;
+    if (pred?.kind === BoundExprKind.IN_LIST && pred.expr?.kind === BoundExprKind.COLUMN_REF) return pred.expr;
+    return null;
+  }
+
   getColumnNdv(expr) {
-    if (expr?.kind !== BoundExprKind.COLUMN_REF) return 100;
+    if (expr?.kind !== BoundExprKind.COLUMN_REF) return DEFAULT_NDV;
     const colStats = this.getColumnStats(expr);
-    return colStats?.ndv || 100;
+    return colStats?.ndv || DEFAULT_NDV;
   }
 
   getColumnStats(expr) {

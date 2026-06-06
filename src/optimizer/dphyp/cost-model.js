@@ -2,12 +2,14 @@ export class DefaultCostModel {
   constructor(options = {}) {
     this.C_HASH_BUILD = options.hashBuildCost ?? 1.5;  
     this.C_HASH_PROBE = options.hashProbeCost ?? 1.0;  
-    this.C_COMPARE = options.compareCost ?? 0.5;       
+    this.C_COMPARE = options.compareCost ?? 0.3;
     this.C_SCAN = options.scanCost ?? 0.1;             
     this.C_FILTER = options.filterCost ?? 0.2;         
     this.C_OUTPUT = options.outputCost ?? 0.3;         
 
     this.C_MEMORY = options.memoryCost ?? 0.05;
+    this.C_IO = options.ioCost ?? 5.0;
+    this.SPILL_THRESHOLD = options.spillThreshold ?? 200000;
 
     this.C_CROSS = options.crossJoinPenalty ?? 1000;
   }
@@ -16,7 +18,10 @@ export class DefaultCostModel {
     const cpu = buildCard * this.C_HASH_BUILD + probeCard * this.C_HASH_PROBE;
     const mem = buildCard * this.C_MEMORY;
     const out = (outputCard || Math.max(buildCard, probeCard)) * this.C_OUTPUT;
-    return cpu + mem + out;
+    const spill = buildCard > this.SPILL_THRESHOLD
+      ? (buildCard + probeCard) * this.C_IO
+      : 0;
+    return cpu + mem + out + spill;
   }
 
   mergeJoinCost(leftCard, rightCard, outputCard = null) {
@@ -70,21 +75,21 @@ export class DefaultCostModel {
     return card * this.C_SCAN;
   }
 
-  totalJoinCost(buildPlan, probePlan, buildCard, probeCard) {
-    const joinCard = Math.max(1, Math.round(buildCard * probeCard * 0.1)); 
+  totalJoinCost(buildPlan, probePlan, buildCard, probeCard, outputCard) {
     return buildPlan.totalCost + probePlan.totalCost +
-           this.hashJoinCost(buildCard, probeCard, joinCard);
+           this.hashJoinCost(buildCard, probeCard, outputCard);
   }
 
-  cheaperJoinCost(leftCard, rightCard, leftSorted, rightSorted, outputCard) {
-    const hashCost = this.hashJoinCost(
-      Math.min(leftCard, rightCard),
-      Math.max(leftCard, rightCard),
-      outputCard
-    );
-    const mergeCost = (leftSorted && rightSorted)
-      ? this.mergeJoinCost(leftCard, rightCard, outputCard)
-      : this.sortMergeJoinCost(leftCard, rightCard, outputCard);
+  cheaperJoinCost(leftCard, rightCard, leftSorted, rightSorted, outputCard, downstreamSortSaving = 0) {
+    const buildCard = Math.min(leftCard, rightCard);
+    const probeCard = Math.max(leftCard, rightCard);
+    const hashCost = this.hashJoinCost(buildCard, probeCard, outputCard);
+
+    const leftSortCost = leftSorted ? 0 : this.sortCost(leftCard);
+    const rightSortCost = rightSorted ? 0 : this.sortCost(rightCard);
+    const mergeCost = leftSortCost + rightSortCost
+      + this.mergeJoinCost(leftCard, rightCard, outputCard)
+      - downstreamSortSaving;
 
     return { hashCost, mergeCost, preferMerge: mergeCost < hashCost };
   }

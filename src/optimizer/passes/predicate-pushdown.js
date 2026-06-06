@@ -86,6 +86,31 @@ function pushPredicates(predicates, target) {
     return pushPredicates(allPreds, child);
   }
 
+  if (target.type === PlanNodeType.AGGREGATE && target.groupBy && target.groupBy.length > 0) {
+    const groupByRefs = new Set();
+    for (const gb of target.groupBy) {
+      if (gb.kind === BoundExprKind.COLUMN_REF) {
+        groupByRefs.add(`${(gb.tableAlias || '').toUpperCase()}.${(gb.columnName || '').toUpperCase()}`);
+      }
+    }
+    const pushable = [];
+    const remaining = [];
+    for (const pred of predicates) {
+      const refs = collectTableRefs(pred);
+      if (refs.length > 0 && refs.every(r => groupByRefs.has(`${r.tableAlias}.${r.columnName}`))) {
+        pushable.push(pred);
+      } else {
+        remaining.push(pred);
+      }
+    }
+    if (pushable.length > 0) {
+      const newChild = pushPredicates(pushable, target.children[0]);
+      const newAgg = { ...target, children: [newChild] };
+      if (remaining.length === 0) return newAgg;
+      return LogicalFilter(combineConjuncts(remaining), newAgg);
+    }
+  }
+
   if (target.type === PlanNodeType.PROJECT) {
     const pushable = [];
     const remaining = [];

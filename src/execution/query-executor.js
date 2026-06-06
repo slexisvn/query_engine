@@ -5,6 +5,7 @@ import { FilterOperator } from './operators/filter.js';
 import { ProjectionOperator } from './operators/projection.js';
 import { HashJoinBuild, HashJoinProbe } from './operators/hash-join.js';
 import { MergeJoinOperator } from './operators/merge-join.js';
+import { NestedLoopJoinOperator } from './operators/nested-loop-join.js';
 import { HashAggregateOperator, getAccumulatorFactory } from './operators/hash-aggregate.js';
 import { StreamAggregateOperator } from './operators/stream-aggregate.js';
 import { SortOperator, LimitOperator } from './operators/sort.js';
@@ -13,6 +14,7 @@ import { UnionOperator } from './operators/union.js';
 import { DependentJoinOperator } from './operators/dependent-join.js';
 import { IndexScanOperator } from './operators/index-scan.js';
 import { extractJoinKeys } from './join-utils.js';
+import { SpillManager, FsStorage } from '../storage/spill-manager.js';
 import { ResultSink } from './result-sink.js';
 import { BoundExprKind } from '../binder/expression-binder.js';
 import { DataChunk } from '../storage/chunk.js';
@@ -340,6 +342,38 @@ export class QueryExecutor {
       };
     }
 
+    if (node.physicalStrategy === PhysicalStrategy.NESTED_LOOP) {
+      return {
+        schema: resultSchema,
+        columnMapping: resultMapping,
+        register: (graph, currentPipelineId, currentSink) => {
+          const buildChunks = [];
+          const probeChunks = [];
+          const buildSink = { consume: async (c) => buildChunks.push(c), finalize: async () => {} };
+          const probeSink = { consume: async (c) => probeChunks.push(c), finalize: async () => {} };
+          const buildPipelineId = graph.createPipeline(buildSink);
+          const probePipelineId = graph.createPipeline(probeSink);
+          buildInput.register(graph, buildPipelineId, buildSink);
+          probeInput.register(graph, probePipelineId, probeSink);
+          graph.addDependency(currentPipelineId, buildPipelineId);
+          graph.addDependency(currentPipelineId, probePipelineId);
+          graph.setSource(currentPipelineId, async function* () {
+            const nlJoin = new NestedLoopJoinOperator(
+              buildChunks, probeChunks,
+              buildInput.schema.length, probeInput.schema.length,
+              node.joinType, conditionEvaluator
+            );
+            const resultChunks = await nlJoin.execute();
+            for (const chunk of resultChunks) {
+              await currentSink.consume(chunk);
+              yield chunk;
+            }
+            if (currentSink.finalize) await currentSink.finalize();
+          });
+        }
+      };
+    }
+
     const joinSpillPath = this.tempManager.allocate('spill', 'join');
     return {
       schema: resultSchema,
@@ -349,7 +383,7 @@ export class QueryExecutor {
           buildKeys.map(k => compileExpression(k, buildInput.columnMapping)),
           node.joinType,
           !!node._dedupeBuild && !conditionEvaluator,
-          joinSpillPath,
+          new SpillManager(new FsStorage(joinSpillPath)),
         );
 
         const buildSink = {
@@ -537,7 +571,7 @@ export class QueryExecutor {
       columnMapping: child.columnMapping,
       register: (graph, currentPipelineId, currentSink) => {
         const spillPath = this.tempManager.allocate('spill', 'sort');
-        const sortOp = new SortOperator(keyExtractors, node.limit, node.offset || 0, spillPath);
+        const sortOp = new SortOperator(keyExtractors, node.limit, node.offset || 0, new SpillManager(new FsStorage(spillPath)));
         const sortSink = {
           async consume(chunk) { await sortOp.consume(chunk); },
           async finalize() {}
@@ -571,7 +605,7 @@ export class QueryExecutor {
       columnMapping: child.columnMapping,
       register: (graph, currentPipelineId, currentSink) => {
         const spillPath = this.tempManager.allocate('spill', 'topn');
-        const sortOp = new SortOperator(keyExtractors, node.count, node.offset || 0, spillPath);
+        const sortOp = new SortOperator(keyExtractors, node.count, node.offset || 0, new SpillManager(new FsStorage(spillPath)));
         const sortSink = {
           async consume(chunk) { await sortOp.consume(chunk); },
           async finalize() {}

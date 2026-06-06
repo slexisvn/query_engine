@@ -1,11 +1,10 @@
 import { Column } from '../../storage/column.js';
 import { DataChunk } from '../../storage/chunk.js';
-import { SpillManager } from '../../storage/spill-manager.js';
 import { PriorityQueue } from '../../utils/priority-queue.js';
 import { Config } from '../../config.js';
 
 export class SortOperator {
-  constructor(keyExtractors, limit, offset, spillBasePath) {
+  constructor(keyExtractors, limit, offset, spillManager) {
     this.keyExtractors = keyExtractors;
     this.limit = limit ?? null;
     this.offset = offset || 0;
@@ -13,7 +12,7 @@ export class SortOperator {
     this.rows = [];
     this.schema = null;
 
-    this.spillManager = new SpillManager(spillBasePath);
+    this.spillManager = spillManager;
     this.runCount = 0;
   }
 

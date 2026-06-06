@@ -5,6 +5,8 @@ import { DefaultCostModel } from '../dphyp/cost-model.js';
 import { DefaultCardinalityEstimator } from '../dphyp/cardinality.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 
+const DEFAULT_CARDINALITY = 1000;
+
 export class PhysicalDesign extends OptimizationPass {
   constructor(statisticsMap = new Map(), costModel = null, cardEstimator = null) {
     super();
@@ -26,6 +28,12 @@ class PhysicalDesignRewriter extends PlanRewriter {
     super();
     this.costModel = costModel;
     this.cardEstimator = cardEstimator;
+    this.parentMap = null;
+  }
+
+  rewrite(plan) {
+    this.parentMap = buildParentMap(plan);
+    return super.rewrite(plan);
   }
 
   rewriteDefault(node) {
@@ -37,44 +45,81 @@ class PhysicalDesignRewriter extends PlanRewriter {
   }
 
   rewriteJoin(node) {
+    const originalNode = node;
     const newNode = this.rewriteChildren(node);
     newNode._cardinality = this.estimateNodeCardinality(newNode);
 
-        const left = newNode.children[0];
+    const left = newNode.children[0];
     const right = newNode.children[1];
+    const leftCard = left._cardinality || DEFAULT_CARDINALITY;
+    const rightCard = right._cardinality || DEFAULT_CARDINALITY;
 
-        if (newNode.joinType !== JoinType.CROSS && newNode.condition) {
+    if (newNode.joinType !== JoinType.CROSS && newNode.condition) {
       const joinKeys = this.extractEquiJoinKeys(newNode.condition);
       if (joinKeys.leftKeys.length > 0 && joinKeys.rightKeys.length > 0) {
         const leftSorted = this.isSortedBy(left._sortedBy, joinKeys.leftKeys);
         const rightSorted = this.isSortedBy(right._sortedBy, joinKeys.rightKeys);
 
-        if (leftSorted && rightSorted) {
-          const hashCost = this.costModel.hashJoinCost(left._cardinality, right._cardinality);
-          const mergeCost = this.costModel.mergeJoinCost(left._cardinality, right._cardinality);
+        const downstreamSortSaving = this.estimateDownstreamSortSaving(
+          originalNode, joinKeys.leftKeys, joinKeys.rightKeys, newNode._cardinality
+        );
 
-                    if (mergeCost <= hashCost) {
-            newNode.physicalStrategy = PhysicalStrategy.MERGE;
-            newNode._sortedBy = [...joinKeys.leftKeys, ...joinKeys.rightKeys];
-            return newNode;
-          }
+        const comparison = this.costModel.cheaperJoinCost(
+          leftCard, rightCard, leftSorted, rightSorted, newNode._cardinality, downstreamSortSaving
+        );
+
+        if (comparison.preferMerge) {
+          newNode.physicalStrategy = PhysicalStrategy.MERGE;
+          newNode._sortedBy = [...joinKeys.leftKeys, ...joinKeys.rightKeys];
+          newNode._requiresSort = { left: !leftSorted, right: !rightSorted };
+          this.assignBuildSide(newNode, leftCard, rightCard);
+          return newNode;
         }
       }
     }
 
-    if (newNode.joinType === JoinType.INNER) {
-      const leftCard = left._cardinality || 1000;
-      const rightCard = right._cardinality || 1000;
-      newNode._buildSide = rightCard < leftCard ? 'right' : 'left';
+    this.assignBuildSide(newNode, leftCard, rightCard);
+    const outerCard = newNode._buildSide === 'left' ? leftCard : rightCard;
+    const innerCard = newNode._buildSide === 'left' ? rightCard : leftCard;
+    const nlCost = this.costModel.nestedLoopJoinCost(outerCard, innerCard);
+    const hashCost = this.costModel.hashJoinCost(outerCard, innerCard, newNode._cardinality);
+    if (nlCost < hashCost) {
+      newNode.physicalStrategy = PhysicalStrategy.NESTED_LOOP;
+      newNode._sortedBy = [];
+      return newNode;
     }
 
-    if ((newNode.joinType === JoinType.SEMI || newNode.joinType === JoinType.ANTI || newNode.joinType === JoinType.MARK) && this.isPureEquiJoin(newNode.condition)) {
+    if (this.isSpecialJoinType(newNode.joinType) && this.isPureEquiJoin(newNode.condition)) {
       newNode._dedupeBuild = true;
     }
 
+    this.assignBuildSide(newNode, leftCard, rightCard);
     newNode.physicalStrategy = PhysicalStrategy.HASH;
     newNode._sortedBy = [];
     return newNode;
+  }
+
+  assignBuildSide(node, leftCard, rightCard) {
+    switch (node.joinType) {
+      case JoinType.LEFT:
+      case JoinType.SEMI:
+      case JoinType.ANTI:
+      case JoinType.MARK:
+        node._buildSide = 'right';
+        break;
+      case JoinType.RIGHT:
+        node._buildSide = 'left';
+        break;
+      case JoinType.INNER:
+        node._buildSide = rightCard < leftCard ? 'right' : 'left';
+        break;
+    }
+  }
+
+  isSpecialJoinType(joinType) {
+    return joinType === JoinType.SEMI
+      || joinType === JoinType.ANTI
+      || joinType === JoinType.MARK;
   }
 
   rewriteAggregate(node) {
@@ -118,7 +163,7 @@ class PhysicalDesignRewriter extends PlanRewriter {
 
   rewriteSort(node) {
     const newNode = this.rewriteChildren(node);
-    const childCard = newNode.children[0]._cardinality || 1000;
+    const childCard = newNode.children[0]._cardinality || DEFAULT_CARDINALITY;
 
     if (newNode.limit) {
       newNode._cardinality = Math.min(newNode.limit, childCard);
@@ -137,7 +182,12 @@ class PhysicalDesignRewriter extends PlanRewriter {
       return node.orderKeys.map(o => this.getColumnKey(o.expr)).filter(Boolean);
     }
 
-        if (node.type === PlanNodeType.FILTER || node.type === PlanNodeType.PROJECT || node.type === PlanNodeType.LIMIT) {
+    if (node.type === PlanNodeType.INDEX_SCAN) {
+      const key = `${(node.alias || node.table || '').toUpperCase()}.${(node.columnName || '').toUpperCase()}`;
+      return [key];
+    }
+
+    if (node.type === PlanNodeType.FILTER || node.type === PlanNodeType.PROJECT || node.type === PlanNodeType.LIMIT) {
       if (node.children && node.children.length > 0) {
         return node.children[0]._sortedBy || [];
       }
@@ -186,16 +236,16 @@ class PhysicalDesignRewriter extends PlanRewriter {
   }
 
   estimateNodeCardinality(node) {
-    if (node.type === PlanNodeType.SCAN) {
+    if (node.type === PlanNodeType.SCAN || node.type === PlanNodeType.INDEX_SCAN) {
       return this.cardEstimator.estimateScan(node.table);
     }
     if (node.type === PlanNodeType.FILTER) {
-      const childCard = node.children[0]._cardinality || 1000;
+      const childCard = node.children[0]._cardinality || DEFAULT_CARDINALITY;
       return this.cardEstimator.estimateFilter(childCard, node.condition);
     }
     if (node.type === PlanNodeType.JOIN) {
-      const leftCard = node.children[0]._cardinality || 1000;
-      const rightCard = node.children[1]._cardinality || 1000;
+      const leftCard = node.children[0]._cardinality || DEFAULT_CARDINALITY;
+      const rightCard = node.children[1]._cardinality || DEFAULT_CARDINALITY;
       if (node.joinType === JoinType.SEMI) return this.cardEstimator.estimateSemiJoin(leftCard, rightCard, node.condition);
       if (node.joinType === JoinType.ANTI) return this.cardEstimator.estimateAntiJoin(leftCard, rightCard, node.condition);
       if (node.joinType === JoinType.MARK) return leftCard;
@@ -208,19 +258,19 @@ class PhysicalDesignRewriter extends PlanRewriter {
       return this.cardEstimator.estimateJoin(leftCard, rightCard, node.condition);
     }
     if (node.type === PlanNodeType.AGGREGATE) {
-      const childCard = node.children[0]._cardinality || 1000;
+      const childCard = node.children[0]._cardinality || DEFAULT_CARDINALITY;
       return this.cardEstimator.estimateAggregate(childCard, node.groupBy?.length || 0, node.groupBy || []);
     }
     if (node.type === PlanNodeType.LIMIT) {
-      const childCard = node.children[0]._cardinality || 1000;
+      const childCard = node.children[0]._cardinality || DEFAULT_CARDINALITY;
       return Math.min(node.count || childCard, childCard);
     }
     if (node.type === PlanNodeType.DISTINCT) {
-      const childCard = node.children[0]._cardinality || 1000;
+      const childCard = node.children[0]._cardinality || DEFAULT_CARDINALITY;
       return Math.max(1, Math.round(Math.sqrt(childCard)));
     }
     if (node.children && node.children.length > 0) {
-      return node.children[0]._cardinality || 1000;
+      return node.children[0]._cardinality || DEFAULT_CARDINALITY;
     }
     return 1000;
   }
@@ -277,6 +327,36 @@ class PhysicalDesignRewriter extends PlanRewriter {
     return ndv <= 4;
   }
 
+  estimateDownstreamSortSaving(originalNode, leftKeys, rightKeys, cardinality) {
+    const parent = this.parentMap?.get(originalNode);
+    if (!parent) return 0;
+
+    const sortNode = this.findDownstreamSort(parent, originalNode);
+    if (!sortNode || !sortNode.orderKeys) return 0;
+
+    const sortKeys = sortNode.orderKeys.map(o => this.getColumnKey(o.expr)).filter(Boolean);
+    if (sortKeys.length === 0) return 0;
+
+    const mergeOutputKeys = [...leftKeys, ...rightKeys];
+    if (!this.isSortedByPrefix(mergeOutputKeys, sortKeys)) return 0;
+
+    const card = cardinality || DEFAULT_CARDINALITY;
+    return sortNode.limit
+      ? this.costModel.topNSortCost(card, sortNode.limit)
+      : this.costModel.sortCost(card);
+  }
+
+  findDownstreamSort(node, from) {
+    if (!node) return null;
+    if (node.type === PlanNodeType.SORT) return node;
+    if (node.type === PlanNodeType.PROJECT || node.type === PlanNodeType.FILTER
+      || node.type === PlanNodeType.LIMIT) {
+      const parent = this.parentMap?.get(node);
+      return parent ? this.findDownstreamSort(parent, node) : null;
+    }
+    return null;
+  }
+
   isPureEquiJoin(condition) {
     if (!condition) return false;
     const preds = this.splitAnd(condition);
@@ -287,6 +367,21 @@ class PhysicalDesignRewriter extends PlanRewriter {
         && pred.right?.kind === BoundExprKind.COLUMN_REF
     );
   }
+}
+
+function buildParentMap(root) {
+  const map = new Map();
+  const queue = [root];
+  while (queue.length > 0) {
+    const node = queue.shift();
+    if (node.children) {
+      for (const child of node.children) {
+        map.set(child, node);
+        queue.push(child);
+      }
+    }
+  }
+  return map;
 }
 
 function toNumber(value) {

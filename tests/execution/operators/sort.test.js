@@ -1,0 +1,283 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { SortOperator, LimitOperator } from '../../../src/execution/operators/sort.js';
+import { SpillManager, MemoryStorage } from '../../../src/storage/spill-manager.js';
+import { Column } from '../../../src/storage/column.js';
+import { DataChunk } from '../../../src/storage/chunk.js';
+import { Config } from '../../../src/config.js';
+
+function makeChunk(colDefs) {
+  const size = colDefs[0].values.length;
+  const cols = colDefs.map(({ type, values }) => {
+    const col = new Column(type, values.length);
+    for (let i = 0; i < values.length; i++) col.set(i, values[i]);
+    col.length = values.length;
+    return col;
+  });
+  return new DataChunk(cols, size);
+}
+
+function memSpill() {
+  return new SpillManager(new MemoryStorage());
+}
+
+function ascKey(colIdx) {
+  return { eval: (chunk, row) => chunk.columns[colIdx].get(row), direction: 'ASC' };
+}
+
+function descKey(colIdx) {
+  return { eval: (chunk, row) => chunk.columns[colIdx].get(row), direction: 'DESC' };
+}
+
+function allRows(chunks) {
+  return chunks.flatMap(c => c.toRows());
+}
+
+describe('SortOperator', () => {
+  describe('in-memory sort', () => {
+    it('sorts ascending by single key', async () => {
+      const op = new SortOperator([ascKey(0)], null, 0, memSpill());
+      await op.consume(makeChunk([
+        { type: 'INT32', values: [30, 10, 20] },
+        { type: 'VARCHAR', values: ['c', 'a', 'b'] },
+      ]));
+
+      const result = allRows(await op.finalize());
+
+      expect(result.map(r => r[0])).toEqual([10, 20, 30]);
+      expect(result.map(r => r[1])).toEqual(['a', 'b', 'c']);
+    });
+
+    it('sorts descending', async () => {
+      const op = new SortOperator([descKey(0)], null, 0, memSpill());
+      await op.consume(makeChunk([{ type: 'INT32', values: [1, 3, 2] }]));
+
+      const result = allRows(await op.finalize());
+
+      expect(result.map(r => r[0])).toEqual([3, 2, 1]);
+    });
+
+    it('sorts by multiple keys (secondary tiebreaker)', async () => {
+      const op = new SortOperator([ascKey(0), descKey(1)], null, 0, memSpill());
+      await op.consume(makeChunk([
+        { type: 'INT32', values: [1, 1, 2] },
+        { type: 'INT32', values: [10, 20, 5] },
+      ]));
+
+      const result = allRows(await op.finalize());
+
+      expect(result[0]).toEqual([1, 20]);
+      expect(result[1]).toEqual([1, 10]);
+      expect(result[2]).toEqual([2, 5]);
+    });
+
+    it('places nulls last in ascending order', async () => {
+      const op = new SortOperator([ascKey(0)], null, 0, memSpill());
+      await op.consume(makeChunk([{ type: 'INT32', values: [3, null, 1, null, 2] }]));
+
+      const result = allRows(await op.finalize());
+
+      expect(result.map(r => r[0])).toEqual([1, 2, 3, null, null]);
+    });
+
+    it('handles string sorting', async () => {
+      const op = new SortOperator([ascKey(0)], null, 0, memSpill());
+      await op.consume(makeChunk([{ type: 'VARCHAR', values: ['banana', 'apple', 'cherry'] }]));
+
+      const result = allRows(await op.finalize());
+
+      expect(result.map(r => r[0])).toEqual(['apple', 'banana', 'cherry']);
+    });
+  });
+
+  describe('topN optimization', () => {
+    it('returns only limit rows', async () => {
+      const op = new SortOperator([ascKey(0)], 3, 0, memSpill());
+      await op.consume(makeChunk([{ type: 'INT32', values: [50, 40, 30, 20, 10] }]));
+
+      const result = allRows(await op.finalize());
+
+      expect(result.length).toBe(3);
+      expect(result.map(r => r[0])).toEqual([10, 20, 30]);
+    });
+
+    it('applies offset before limit', async () => {
+      const op = new SortOperator([ascKey(0)], 2, 2, memSpill());
+      await op.consume(makeChunk([{ type: 'INT32', values: [5, 4, 3, 2, 1] }]));
+
+      const result = allRows(await op.finalize());
+
+      expect(result.length).toBe(2);
+      expect(result.map(r => r[0])).toEqual([3, 4]);
+    });
+
+    it('handles offset beyond data size', async () => {
+      const op = new SortOperator([ascKey(0)], 5, 100, memSpill());
+      await op.consume(makeChunk([{ type: 'INT32', values: [1, 2, 3] }]));
+
+      const result = allRows(await op.finalize());
+
+      expect(result.length).toBe(0);
+    });
+  });
+
+  describe('multi-chunk consume', () => {
+    it('accumulates and sorts across multiple chunks', async () => {
+      const op = new SortOperator([ascKey(0)], null, 0, memSpill());
+      await op.consume(makeChunk([{ type: 'INT32', values: [30, 10] }]));
+      await op.consume(makeChunk([{ type: 'INT32', values: [20, 5] }]));
+
+      const result = allRows(await op.finalize());
+
+      expect(result.map(r => r[0])).toEqual([5, 10, 20, 30]);
+    });
+  });
+
+  describe('spill path (external merge sort)', () => {
+    let savedMemoryLimit;
+
+    beforeEach(() => { savedMemoryLimit = Config.memoryLimit; });
+    afterEach(() => { Config.memoryLimit = savedMemoryLimit; });
+
+    it('produces correctly sorted output after spilling to runs', async () => {
+      Config.memoryLimit = 5;
+
+      const op = new SortOperator([ascKey(0)], null, 0, memSpill());
+      for (let i = 20; i >= 1; i--) {
+        await op.consume(makeChunk([{ type: 'INT32', values: [i] }]));
+      }
+
+      const result = allRows(await op.finalize());
+
+      expect(result.length).toBe(20);
+      for (let i = 0; i < 20; i++) {
+        expect(result[i][0]).toBe(i + 1);
+      }
+    });
+
+    it('spill sort with limit returns correct top rows', async () => {
+      Config.memoryLimit = 5;
+
+      const op = new SortOperator([ascKey(0)], 3, 0, memSpill());
+      for (let i = 15; i >= 1; i--) {
+        await op.consume(makeChunk([{ type: 'INT32', values: [i] }]));
+      }
+
+      const result = allRows(await op.finalize());
+
+      expect(result.length).toBe(3);
+      expect(result.map(r => r[0])).toEqual([1, 2, 3]);
+    });
+
+    it('spill sort with offset skips rows correctly', async () => {
+      Config.memoryLimit = 3;
+
+      const op = new SortOperator([ascKey(0)], 2, 3, memSpill());
+      for (let i = 10; i >= 1; i--) {
+        await op.consume(makeChunk([{ type: 'INT32', values: [i] }]));
+      }
+
+      const result = allRows(await op.finalize());
+
+      expect(result.map(r => r[0])).toEqual([4, 5]);
+    });
+
+    it('merges multiple spill runs preserving sort order', async () => {
+      Config.memoryLimit = 4;
+
+      const op = new SortOperator([descKey(0)], null, 0, memSpill());
+      const values = [3, 7, 1, 9, 5, 2, 8, 4, 6, 10];
+      for (const v of values) {
+        await op.consume(makeChunk([{ type: 'INT32', values: [v] }]));
+      }
+
+      const result = allRows(await op.finalize());
+
+      expect(result.map(r => r[0])).toEqual([10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
+    });
+  });
+
+  describe('empty input', () => {
+    it('returns empty for no consumed chunks', async () => {
+      const op = new SortOperator([ascKey(0)], null, 0, memSpill());
+      const result = await op.finalize();
+      expect(result.length).toBe(0);
+    });
+  });
+});
+
+describe('LimitOperator', () => {
+  it('limits output rows', async () => {
+    const op = new LimitOperator(2);
+    await op.consume(makeChunk([{ type: 'INT32', values: [1, 2, 3, 4, 5] }]));
+
+    const result = allRows(await op.finalize());
+
+    expect(result.length).toBe(2);
+    expect(result[0][0]).toBe(1);
+    expect(result[1][0]).toBe(2);
+  });
+
+  it('skips offset rows before emitting', async () => {
+    const op = new LimitOperator(2, 2);
+    await op.consume(makeChunk([{ type: 'INT32', values: [10, 20, 30, 40, 50] }]));
+
+    const result = allRows(await op.finalize());
+
+    expect(result.length).toBe(2);
+    expect(result[0][0]).toBe(30);
+    expect(result[1][0]).toBe(40);
+  });
+
+  it('handles limit across multiple chunks', async () => {
+    const op = new LimitOperator(3);
+    await op.consume(makeChunk([{ type: 'INT32', values: [1, 2] }]));
+    await op.consume(makeChunk([{ type: 'INT32', values: [3, 4] }]));
+    await op.consume(makeChunk([{ type: 'INT32', values: [5, 6] }]));
+
+    const result = allRows(await op.finalize());
+
+    expect(result.length).toBe(3);
+    expect(result.map(r => r[0])).toEqual([1, 2, 3]);
+  });
+
+  it('handles offset spanning multiple chunks', async () => {
+    const op = new LimitOperator(2, 3);
+    await op.consume(makeChunk([{ type: 'INT32', values: [1, 2] }]));
+    await op.consume(makeChunk([{ type: 'INT32', values: [3, 4] }]));
+    await op.consume(makeChunk([{ type: 'INT32', values: [5, 6] }]));
+
+    const result = allRows(await op.finalize());
+
+    expect(result.length).toBe(2);
+    expect(result.map(r => r[0])).toEqual([4, 5]);
+  });
+
+  it('returns empty when offset exceeds total rows', async () => {
+    const op = new LimitOperator(5, 100);
+    await op.consume(makeChunk([{ type: 'INT32', values: [1, 2, 3] }]));
+
+    const result = await op.finalize();
+
+    expect(allRows(result).length).toBe(0);
+  });
+
+  it('stops consuming after limit is reached', async () => {
+    const op = new LimitOperator(1);
+    await op.consume(makeChunk([{ type: 'INT32', values: [1] }]));
+    expect(op.done).toBe(true);
+
+    await op.consume(makeChunk([{ type: 'INT32', values: [2, 3] }]));
+    const result = allRows(await op.finalize());
+
+    expect(result.length).toBe(1);
+  });
+
+  it('returns all rows when limit exceeds total', async () => {
+    const op = new LimitOperator(100);
+    await op.consume(makeChunk([{ type: 'INT32', values: [1, 2, 3] }]));
+
+    const result = allRows(await op.finalize());
+
+    expect(result.length).toBe(3);
+  });
+});

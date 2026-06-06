@@ -39,7 +39,11 @@ class SortEliminationRewriter extends PlanRewriter {
     let match = true;
     for (let i = 0; i < requiredKeys.length; i++) {
       if (i >= childSorted.length) { match = false; break; }
-      if (!columnMatches(childSorted[i], requiredKeys[i].key)) { match = false; break; }
+      const sortedEntry = childSorted[i];
+      const sortedKey = typeof sortedEntry === 'object' ? sortedEntry.key : sortedEntry;
+      const sortedDir = typeof sortedEntry === 'object' ? (sortedEntry.direction || 'ASC') : 'ASC';
+      if (!columnMatches(sortedKey, requiredKeys[i].key)) { match = false; break; }
+      if (sortedDir.toUpperCase() !== requiredKeys[i].direction.toUpperCase()) { match = false; break; }
     }
 
     if (match) {

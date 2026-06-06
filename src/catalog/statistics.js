@@ -3,21 +3,23 @@ const HISTOGRAM_BUCKETS = 64;
 const MCV_COUNT = 10;
 
 export class ColumnStatistics {
-  constructor({ ndv = 0, min = null, max = null, nullFraction = 0, histogram = null, mcv = null, avgWidth = 8 } = {}) {
+  constructor({ ndv = 0, min = null, max = null, nullFraction = 0, histogram = null, mcv = null, avgWidth = 8, avgLength = null } = {}) {
     this.ndv = ndv;
     this.min = min;
     this.max = max;
     this.nullFraction = nullFraction;
-    this.histogram = histogram;   
-    this.mcv = mcv;               
-    this.avgWidth = avgWidth;      
+    this.histogram = histogram;
+    this.mcv = mcv;
+    this.avgWidth = avgWidth;
+    this.avgLength = avgLength;
   }
 }
 
 export class TableStatistics {
-  constructor(rowCount, columnStats = new Map()) {
+  constructor(rowCount, columnStats = new Map(), correlations = new Map()) {
     this.rowCount = rowCount;
     this.columnStats = columnStats;
+    this.correlations = correlations;
   }
 
   getColumnStats(columnName) {
@@ -26,6 +28,20 @@ export class TableStatistics {
 
   setColumnStats(columnName, stats) {
     this.columnStats.set(columnName.toUpperCase(), stats);
+  }
+
+  _correlationKey(colA, colB) {
+    const a = colA.toUpperCase();
+    const b = colB.toUpperCase();
+    return a < b ? `${a}:${b}` : `${b}:${a}`;
+  }
+
+  getCorrelation(colA, colB) {
+    return this.correlations.get(this._correlationKey(colA, colB)) ?? null;
+  }
+
+  setCorrelation(colA, colB, value) {
+    this.correlations.set(this._correlationKey(colA, colB), value);
   }
 
   get avgRowWidth() {
@@ -89,7 +105,8 @@ export class StatisticsCollector {
       columnStats.set(colDef.name.toUpperCase(), stats);
     }
 
-    return new TableStatistics(rowCount, columnStats);
+    const correlations = await StatisticsCollector._computeCorrelations(table, columnStats);
+    return new TableStatistics(rowCount, columnStats, correlations);
   }
 
   static async _collectColumn(table, colDef, totalRows) {
@@ -99,9 +116,12 @@ export class StatisticsCollector {
     let min = null;
     let max = null;
     let totalWidth = 0;
+    let totalLength = 0;
+    let stringCount = 0;
 
     const colIdx = table.getColumnIndex(colDef.name);
     const isNumeric = ['INT32', 'INT64', 'FLOAT64', 'DECIMAL', 'DATE'].includes(colDef.dataType);
+    const isString = ['VARCHAR', 'TEXT', 'STRING'].includes(colDef.dataType);
 
     for await (const chunk of table.scan()) {
       for (let i = 0; i < chunk.size; i++) {
@@ -120,15 +140,22 @@ export class StatisticsCollector {
         if (min === null || val < min) min = val;
         if (max === null || val > max) max = val;
 
-        if (typeof val === 'string') totalWidth += val.length * 2;
-        else if (typeof val === 'bigint') totalWidth += 8;
-        else totalWidth += 4;
+        if (typeof val === 'string') {
+          totalWidth += val.length * 2;
+          totalLength += val.length;
+          stringCount++;
+        } else if (typeof val === 'bigint') {
+          totalWidth += 8;
+        } else {
+          totalWidth += 4;
+        }
       }
     }
 
     const ndv = new Set(values.map(String)).size;
     const nullFraction = totalRows > 0 ? nullCount / totalRows : 0;
     const avgWidth = values.length > 0 ? Math.ceil(totalWidth / values.length) : 8;
+    const avgLength = stringCount > 0 ? totalLength / stringCount : null;
 
     let histogram = null;
     if (isNumeric && values.length > 0) {
@@ -140,7 +167,7 @@ export class StatisticsCollector {
       mcv = StatisticsCollector._buildMCV(valueCounts, values.length);
     }
 
-    return new ColumnStatistics({ ndv, min, max, nullFraction, histogram, mcv, avgWidth });
+    return new ColumnStatistics({ ndv, min, max, nullFraction, histogram, mcv, avgWidth, avgLength });
   }
 
   static _buildHistogram(values, totalRows) {
@@ -174,6 +201,93 @@ export class StatisticsCollector {
       frequencies: entries.map(e => e[1] / nonNullCount),
     };
   }
+}
+
+const CORRELATION_SAMPLE_SIZE = 1000;
+const CORRELATION_THRESHOLD = 0.3;
+
+StatisticsCollector._computeCorrelations = async function (table, columnStats) {
+  const correlations = new Map();
+  const numericCols = [];
+  const schema = table.getSchema();
+
+  for (const colDef of schema) {
+    if (['INT32', 'INT64', 'FLOAT64', 'DECIMAL'].includes(colDef.dataType)) {
+      numericCols.push({ name: colDef.name.toUpperCase(), idx: table.getColumnIndex(colDef.name) });
+    }
+  }
+
+  if (numericCols.length < 2) return correlations;
+
+  const samples = new Map();
+  for (const col of numericCols) samples.set(col.name, []);
+
+  let rowsSampled = 0;
+  const totalRows = table.rowCount();
+  const sampleRate = Math.min(1.0, CORRELATION_SAMPLE_SIZE / Math.max(totalRows, 1));
+
+  let deterministicCounter = 0;
+  for await (const chunk of table.scan()) {
+    for (let i = 0; i < chunk.size && rowsSampled < CORRELATION_SAMPLE_SIZE; i++) {
+      deterministicCounter++;
+      if (sampleRate < 1.0 && (deterministicCounter * sampleRate) % 1 >= sampleRate) continue;
+
+      let hasNull = false;
+      for (const col of numericCols) {
+        const val = chunk.getValue(i, col.idx);
+        if (val === null || val === undefined) { hasNull = true; break; }
+      }
+      if (hasNull) continue;
+
+      for (const col of numericCols) {
+        const val = chunk.getValue(i, col.idx);
+        samples.get(col.name).push(typeof val === 'bigint' ? Number(val) : val);
+      }
+      rowsSampled++;
+    }
+    if (rowsSampled >= CORRELATION_SAMPLE_SIZE) break;
+  }
+
+  if (rowsSampled < 2) return correlations;
+
+  for (let i = 0; i < numericCols.length; i++) {
+    for (let j = i + 1; j < numericCols.length; j++) {
+      const colA = numericCols[i].name;
+      const colB = numericCols[j].name;
+      const valsA = samples.get(colA);
+      const valsB = samples.get(colB);
+
+      const corr = pearsonCorrelation(valsA, valsB);
+      if (Math.abs(corr) >= CORRELATION_THRESHOLD) {
+        const key = colA < colB ? `${colA}:${colB}` : `${colB}:${colA}`;
+        correlations.set(key, corr);
+      }
+    }
+  }
+
+  return correlations;
+};
+
+function pearsonCorrelation(xs, ys) {
+  const n = xs.length;
+  if (n < 2) return 0;
+
+  let sumX = 0, sumY = 0;
+  for (let i = 0; i < n; i++) { sumX += xs[i]; sumY += ys[i]; }
+  const meanX = sumX / n;
+  const meanY = sumY / n;
+
+  let cov = 0, varX = 0, varY = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - meanX;
+    const dy = ys[i] - meanY;
+    cov += dx * dy;
+    varX += dx * dx;
+    varY += dy * dy;
+  }
+
+  const denom = Math.sqrt(varX * varY);
+  return denom > 0 ? cov / denom : 0;
 }
 
 function toNum(v) {

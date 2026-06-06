@@ -78,7 +78,7 @@ class IndexSelectionRewriter extends PlanRewriter {
             if (bounds.point !== null) {
               selectivity = 1 / colStats.ndv;
             } else {
-              selectivity = Config.indexScanSelectivityThreshold;
+              selectivity = this._estimateRangeSelectivity(colStats, bounds);
             }
             if (selectivity > Config.indexScanSelectivityThreshold) continue;
           }
@@ -128,6 +128,20 @@ class IndexSelectionRewriter extends PlanRewriter {
     return indexScan;
   }
 
+  _estimateRangeSelectivity(colStats, bounds) {
+    const min = toNumber(colStats.min);
+    const max = toNumber(colStats.max);
+    if (min === null || max === null || max <= min) return 0.33;
+
+    let low = bounds.low !== null ? toNumber(bounds.low) : min;
+    let high = bounds.high !== null ? toNumber(bounds.high) : max;
+    if (low === null) low = min;
+    if (high === null) high = max;
+
+    const covered = Math.max(0, Math.min(max, high) - Math.max(min, low));
+    return Math.max(0.0001, covered / (max - min));
+  }
+
   _analyzeConjunct(expr, alias) {
     if (expr.kind !== BoundExprKind.BINARY) return null;
 
@@ -169,4 +183,11 @@ class IndexSelectionRewriter extends PlanRewriter {
 
     return { column, value, type };
   }
+}
+
+function toNumber(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'bigint') return Number(value);
+  if (typeof value === 'number') return value;
+  return null;
 }

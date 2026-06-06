@@ -3,13 +3,74 @@ import { promises as fsPromises } from 'fs';
 import path from 'path';
 import { ChunkSerializer } from './serializer.js';
 
-export class SpillManager {
+export class FsStorage {
   constructor(basePath) {
-    this.storageDir = basePath;
+    this.basePath = basePath;
   }
 
-  getFilePath(partitionId) {
-    return path.join(this.storageDir, `${partitionId}.spill`);
+  filePath(partitionId) {
+    return path.join(this.basePath, `${partitionId}.spill`);
+  }
+
+  async append(partitionId, buffer) {
+    await fsPromises.appendFile(this.filePath(partitionId), buffer);
+  }
+
+  async read(partitionId) {
+    const fp = this.filePath(partitionId);
+    if (!fs.existsSync(fp)) return null;
+    return fsPromises.readFile(fp);
+  }
+
+  exists(partitionId) {
+    return fs.existsSync(this.filePath(partitionId));
+  }
+
+  async remove(partitionId) {
+    const fp = this.filePath(partitionId);
+    if (fs.existsSync(fp)) await fsPromises.unlink(fp);
+  }
+
+  async removeAll() {
+    if (fs.existsSync(this.basePath)) {
+      await fsPromises.rm(this.basePath, { recursive: true, force: true });
+    }
+  }
+}
+
+export class MemoryStorage {
+  constructor() {
+    this.store = new Map();
+  }
+
+  async append(partitionId, buffer) {
+    if (!this.store.has(partitionId)) this.store.set(partitionId, []);
+    this.store.get(partitionId).push(Buffer.from(buffer));
+  }
+
+  async read(partitionId) {
+    const buffers = this.store.get(partitionId);
+    if (!buffers || buffers.length === 0) return null;
+    return Buffer.concat(buffers);
+  }
+
+  exists(partitionId) {
+    const buffers = this.store.get(partitionId);
+    return !!buffers && buffers.length > 0;
+  }
+
+  async remove(partitionId) {
+    this.store.delete(partitionId);
+  }
+
+  async removeAll() {
+    this.store.clear();
+  }
+}
+
+export class SpillManager {
+  constructor(storage) {
+    this.storage = storage;
   }
 
   async appendChunk(partitionId, chunk) {
@@ -17,18 +78,14 @@ export class SpillManager {
     const data = ChunkSerializer.serialize(chunk);
     const header = Buffer.allocUnsafe(4);
     header.writeUInt32LE(data.length, 0);
-    await fsPromises.appendFile(this.getFilePath(partitionId), Buffer.concat([header, data]));
+    await this.storage.append(partitionId, Buffer.concat([header, data]));
   }
 
   async *readChunks(partitionId) {
-    const filePath = this.getFilePath(partitionId);
-    if (!fs.existsSync(filePath)) {
-      return;
-    }
+    const fileBuffer = await this.storage.read(partitionId);
+    if (!fileBuffer) return;
 
-    const fileBuffer = await fsPromises.readFile(filePath);
     let offset = 0;
-
     while (offset < fileBuffer.length) {
       const chunkLength = fileBuffer.readUInt32LE(offset);
       offset += 4;
@@ -39,19 +96,14 @@ export class SpillManager {
   }
 
   async clearPartition(partitionId) {
-    const filePath = this.getFilePath(partitionId);
-    if (fs.existsSync(filePath)) {
-      await fsPromises.unlink(filePath);
-    }
+    await this.storage.remove(partitionId);
   }
 
   async clearAll() {
-    if (fs.existsSync(this.storageDir)) {
-      await fsPromises.rm(this.storageDir, { recursive: true, force: true });
-    }
+    await this.storage.removeAll();
   }
 
   hasSpilled(partitionId) {
-    return fs.existsSync(this.getFilePath(partitionId));
+    return this.storage.exists(partitionId);
   }
 }
