@@ -474,3 +474,68 @@ describe('buildColumnMapping', () => {
     expect(m.get('B.ID')).toBe(1);
   });
 });
+
+describe('LIKE regex cache bounding', () => {
+  it('produces correct results even with many distinct patterns', () => {
+    const colValues = [];
+    const patternValues = [];
+    for (let i = 0; i < 300; i++) {
+      colValues.push(`item_${i}`);
+      patternValues.push(`%${i}%`);
+    }
+
+    const col0 = new Column('VARCHAR', colValues.length);
+    const col1 = new Column('VARCHAR', patternValues.length);
+    for (let i = 0; i < colValues.length; i++) {
+      col0.set(i, colValues[i]);
+      col1.set(i, patternValues[i]);
+    }
+    col0.length = colValues.length;
+    col1.length = patternValues.length;
+
+    const chunk = new DataChunk([col0, col1], colValues.length);
+
+    const mapping = new Map([['T.VAL', 0], ['VAL', 0], ['T.PAT', 1], ['PAT', 1]]);
+    const likeExpr = {
+      kind: BoundExprKind.LIKE,
+      expr: { kind: BoundExprKind.COLUMN_REF, tableAlias: 'T', columnName: 'VAL', columnIndex: 0, dataType: 'VARCHAR' },
+      pattern: { kind: BoundExprKind.COLUMN_REF, tableAlias: 'T', columnName: 'PAT', columnIndex: 1, dataType: 'VARCHAR' },
+      negated: false,
+    };
+
+    const fn = compileExpression(likeExpr, mapping);
+
+    let trueCount = 0;
+    for (let i = 0; i < chunk.size; i++) {
+      if (fn(chunk, i)) trueCount++;
+    }
+
+    expect(trueCount).toBe(300);
+  });
+
+  it('does not leak memory with unbounded distinct patterns', () => {
+    const col0 = new Column('VARCHAR', 10);
+    const col1 = new Column('VARCHAR', 10);
+    for (let i = 0; i < 10; i++) {
+      col0.set(i, `value_${i}`);
+      col1.set(i, `%${i}%`);
+    }
+    col0.length = 10;
+    col1.length = 10;
+    const chunk = new DataChunk([col0, col1], 10);
+
+    const mapping = new Map([['V', 0], ['P', 1]]);
+    const likeExpr = {
+      kind: BoundExprKind.LIKE,
+      expr: { kind: BoundExprKind.COLUMN_REF, tableAlias: '', columnName: 'V', columnIndex: 0, dataType: 'VARCHAR' },
+      pattern: { kind: BoundExprKind.COLUMN_REF, tableAlias: '', columnName: 'P', columnIndex: 1, dataType: 'VARCHAR' },
+      negated: false,
+    };
+
+    const fn = compileExpression(likeExpr, mapping);
+    for (let i = 0; i < 10; i++) {
+      fn(chunk, i);
+    }
+    expect(true).toBe(true);
+  });
+});

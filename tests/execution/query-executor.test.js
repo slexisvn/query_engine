@@ -1,9 +1,16 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { QueryExecutor } from '../../src/execution/query-executor.js';
 import { PlanNodeType, JoinType, PhysicalStrategy } from '../../src/planner/logical-plan.js';
 import { BoundExprKind } from '../../src/binder/expression-binder.js';
 import { Column } from '../../src/storage/column.js';
 import { DataChunk } from '../../src/storage/chunk.js';
+import { Catalog } from '../../src/catalog/catalog.js';
+import { QueryEngine } from '../../src/index.js';
+import { Table } from '../../src/storage/table.js';
+import { DataType, timestampToEpochMs } from '../../src/storage/data-type.js';
 
 function makeChunk(colDefs) {
   const size = colDefs[0].values.length;
@@ -657,5 +664,394 @@ describe('QueryExecutor', () => {
 
       await expect(executeAndCollect(executor, plan, [{ name: 'ID' }])).rejects.toThrow('No storage');
     });
+  });
+});
+
+describe('DDL execution (CREATE/DROP TABLE)', () => {
+  it('CREATE TABLE creates a queryable table', async () => {
+    const catalog = new Catalog();
+    const engine = new QueryEngine(catalog);
+    const createResult = await engine.run('CREATE TABLE items (id INTEGER, name VARCHAR)');
+    expect(createResult.message).toContain('created');
+    expect(catalog.hasTable('ITEMS')).toBe(true);
+    engine.close();
+  });
+
+  it('DROP TABLE removes the table', async () => {
+    const catalog = new Catalog();
+    const engine = new QueryEngine(catalog);
+    await engine.run('CREATE TABLE temp (x INT)');
+    expect(catalog.hasTable('TEMP')).toBe(true);
+    const dropResult = await engine.run('DROP TABLE temp');
+    expect(dropResult.message).toContain('dropped');
+    expect(catalog.hasTable('TEMP')).toBe(false);
+    engine.close();
+  });
+
+  it('CREATE TABLE IF NOT EXISTS does not error on duplicate', async () => {
+    const catalog = new Catalog();
+    const engine = new QueryEngine(catalog);
+    await engine.run('CREATE TABLE t1 (id INT)');
+    const result = await engine.run('CREATE TABLE IF NOT EXISTS t1 (id INT)');
+    expect(result.message).toContain('already exists');
+    engine.close();
+  });
+
+  it('CREATE TABLE without IF NOT EXISTS throws on duplicate', async () => {
+    const catalog = new Catalog();
+    const engine = new QueryEngine(catalog);
+    await engine.run('CREATE TABLE t1 (id INT)');
+    await expect(engine.run('CREATE TABLE t1 (id INT)')).rejects.toThrow('already exists');
+    engine.close();
+  });
+
+  it('DROP TABLE IF EXISTS does not error on missing', async () => {
+    const catalog = new Catalog();
+    const engine = new QueryEngine(catalog);
+    const result = await engine.run('DROP TABLE IF EXISTS nonexistent');
+    expect(result.message).toContain('does not exist');
+    engine.close();
+  });
+
+  it('DROP TABLE without IF EXISTS throws on missing', async () => {
+    const catalog = new Catalog();
+    const engine = new QueryEngine(catalog);
+    await expect(engine.run('DROP TABLE nonexistent')).rejects.toThrow('does not exist');
+    engine.close();
+  });
+});
+
+describe('EXPLAIN ANALYZE execution', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ea_test_'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns plan with execution time and row count', async () => {
+    const catalog = new Catalog();
+    catalog.registerTable('t', [{ name: 'x', dataType: DataType.INT32 }]);
+    const table = new Table('t', [{ name: 'x', dataType: DataType.INT32 }], tmpDir);
+    await table.insertRows([[1], [2], [3]]);
+    catalog.registerTableStorage('t', table);
+
+    const engine = new QueryEngine(catalog);
+    const result = await engine.run('EXPLAIN ANALYZE SELECT x FROM t WHERE x > 1');
+    expect(result.columns).toContain('EXPLAIN_ANALYZE');
+    const plan = result.rows[0]['EXPLAIN_ANALYZE'];
+    expect(plan).toContain('Execution Time');
+    expect(plan).toContain('ms');
+    expect(plan).toContain('Rows Returned');
+    engine.close();
+  });
+
+  it('execution time is a positive number', async () => {
+    const catalog = new Catalog();
+    catalog.registerTable('t', [{ name: 'x', dataType: DataType.INT32 }]);
+    const table = new Table('t', [{ name: 'x', dataType: DataType.INT32 }], tmpDir);
+    await table.insertRows([[1]]);
+    catalog.registerTableStorage('t', table);
+
+    const engine = new QueryEngine(catalog);
+    const result = await engine.run('EXPLAIN ANALYZE SELECT x FROM t');
+    const plan = result.rows[0]['EXPLAIN_ANALYZE'];
+    const match = plan.match(/Execution Time: ([\d.]+) ms/);
+    expect(match).toBeTruthy();
+    expect(parseFloat(match[1])).toBeGreaterThanOrEqual(0);
+    engine.close();
+  });
+});
+
+describe('NATURAL JOIN / USING execution', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nj_test_'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeJoinEngine(dir) {
+    const catalog = new Catalog();
+    catalog.registerTable('users', [
+      { name: 'id', dataType: DataType.INT32 },
+      { name: 'name', dataType: DataType.VARCHAR },
+    ]);
+    catalog.registerTable('profiles', [
+      { name: 'id', dataType: DataType.INT32 },
+      { name: 'bio', dataType: DataType.VARCHAR },
+    ]);
+
+    const usersDir = path.join(dir, 'users');
+    fs.mkdirSync(usersDir, { recursive: true });
+    const users = new Table('users', [
+      { name: 'id', dataType: DataType.INT32 },
+      { name: 'name', dataType: DataType.VARCHAR },
+    ], usersDir);
+    users.insertRows([[1, 'Alice'], [2, 'Bob'], [3, 'Charlie']]);
+    catalog.registerTableStorage('users', users);
+
+    const profilesDir = path.join(dir, 'profiles');
+    fs.mkdirSync(profilesDir, { recursive: true });
+    const profiles = new Table('profiles', [
+      { name: 'id', dataType: DataType.INT32 },
+      { name: 'bio', dataType: DataType.VARCHAR },
+    ], profilesDir);
+    profiles.insertRows([[1, 'Engineer'], [2, 'Designer']]);
+    catalog.registerTableStorage('profiles', profiles);
+
+    return new QueryEngine(catalog);
+  }
+
+  it('NATURAL JOIN matches on common column name (id)', async () => {
+    const engine = makeJoinEngine(tmpDir);
+    const result = await engine.run('SELECT u.name, p.bio FROM users u NATURAL JOIN profiles p');
+    expect(result.rows).toHaveLength(2);
+    const alice = result.rows.find(r => r.name === 'Alice');
+    expect(alice.bio).toBe('Engineer');
+    engine.close();
+  });
+
+  it('JOIN USING matches on specified column', async () => {
+    const engine = makeJoinEngine(tmpDir);
+    const result = await engine.run('SELECT u.name, p.bio FROM users u JOIN profiles p USING (id)');
+    expect(result.rows).toHaveLength(2);
+    engine.close();
+  });
+
+  it('NATURAL LEFT JOIN preserves unmatched rows', async () => {
+    const engine = makeJoinEngine(tmpDir);
+    const result = await engine.run('SELECT u.name, p.bio FROM users u NATURAL LEFT JOIN profiles p');
+    expect(result.rows).toHaveLength(3);
+    const charlie = result.rows.find(r => r.name === 'Charlie');
+    expect(charlie.bio).toBeNull();
+    engine.close();
+  });
+});
+
+describe('window functions execution', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf_test_'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeWindowEngine(dir) {
+    const catalog = new Catalog();
+    catalog.registerTable('employees', [
+      { name: 'id', dataType: DataType.INT32 },
+      { name: 'dept', dataType: DataType.VARCHAR },
+      { name: 'salary', dataType: DataType.INT32 },
+      { name: 'name', dataType: DataType.VARCHAR },
+    ]);
+    const table = new Table('employees', [
+      { name: 'id', dataType: DataType.INT32 },
+      { name: 'dept', dataType: DataType.VARCHAR },
+      { name: 'salary', dataType: DataType.INT32 },
+      { name: 'name', dataType: DataType.VARCHAR },
+    ], dir);
+    table.insertRows([
+      [1, 'eng', 100, 'Alice'],
+      [2, 'eng', 120, 'Bob'],
+      [3, 'eng', 110, 'Charlie'],
+      [4, 'sales', 90, 'Dave'],
+      [5, 'sales', 95, 'Eve'],
+    ]);
+    catalog.registerTableStorage('employees', table);
+    return new QueryEngine(catalog);
+  }
+
+  it('ROW_NUMBER assigns sequential numbers', async () => {
+    const engine = makeWindowEngine(tmpDir);
+    const result = await engine.run('SELECT name, ROW_NUMBER() OVER (ORDER BY id) AS rn FROM employees ORDER BY id');
+    const rns = result.rows.map(r => r.rn);
+    expect(rns).toEqual([1, 2, 3, 4, 5]);
+    engine.close();
+  });
+
+  it('ROW_NUMBER with PARTITION BY resets per partition', async () => {
+    const engine = makeWindowEngine(tmpDir);
+    const result = await engine.run('SELECT name, dept, ROW_NUMBER() OVER (PARTITION BY dept ORDER BY salary) AS rn FROM employees ORDER BY dept, salary');
+    const engRows = result.rows.filter(r => r.dept === 'eng');
+    const salesRows = result.rows.filter(r => r.dept === 'sales');
+    expect(engRows.map(r => r.rn)).toEqual([1, 2, 3]);
+    expect(salesRows.map(r => r.rn)).toEqual([1, 2]);
+    engine.close();
+  });
+
+  it('RANK produces gaps on ties', async () => {
+    const catalog = new Catalog();
+    catalog.registerTable('scores', [
+      { name: 'name', dataType: DataType.VARCHAR },
+      { name: 'score', dataType: DataType.INT32 },
+    ]);
+    const scoresDir = path.join(tmpDir, 'scores');
+    fs.mkdirSync(scoresDir, { recursive: true });
+    const table = new Table('scores', [
+      { name: 'name', dataType: DataType.VARCHAR },
+      { name: 'score', dataType: DataType.INT32 },
+    ], scoresDir);
+    table.insertRows([
+      ['A', 100], ['B', 100], ['C', 90], ['D', 80],
+    ]);
+    catalog.registerTableStorage('scores', table);
+    const engine = new QueryEngine(catalog);
+
+    const result = await engine.run('SELECT name, score, RANK() OVER (ORDER BY score DESC) AS rnk FROM scores ORDER BY score DESC, name');
+    const ranks = result.rows.map(r => r.rnk);
+    expect(ranks).toEqual([1, 1, 3, 4]);
+    engine.close();
+  });
+
+  it('DENSE_RANK has no gaps', async () => {
+    const catalog = new Catalog();
+    catalog.registerTable('scores', [
+      { name: 'name', dataType: DataType.VARCHAR },
+      { name: 'score', dataType: DataType.INT32 },
+    ]);
+    const scoresDir = path.join(tmpDir, 'scores2');
+    fs.mkdirSync(scoresDir, { recursive: true });
+    const table = new Table('scores', [
+      { name: 'name', dataType: DataType.VARCHAR },
+      { name: 'score', dataType: DataType.INT32 },
+    ], scoresDir);
+    table.insertRows([
+      ['A', 100], ['B', 100], ['C', 90], ['D', 80],
+    ]);
+    catalog.registerTableStorage('scores', table);
+    const engine = new QueryEngine(catalog);
+
+    const result = await engine.run('SELECT name, score, DENSE_RANK() OVER (ORDER BY score DESC) AS drnk FROM scores ORDER BY score DESC, name');
+    const ranks = result.rows.map(r => r.drnk);
+    expect(ranks).toEqual([1, 1, 2, 3]);
+    engine.close();
+  });
+
+  it('LAG returns previous row value', async () => {
+    const engine = makeWindowEngine(tmpDir);
+    const result = await engine.run('SELECT name, salary, LAG(salary, 1) OVER (ORDER BY id) AS prev_salary FROM employees ORDER BY id');
+    expect(result.rows[0].prev_salary).toBeNull();
+    expect(result.rows[1].prev_salary).toBe(100);
+    expect(result.rows[2].prev_salary).toBe(120);
+    engine.close();
+  });
+});
+
+describe('scalar functions execution', () => {
+  let tmpDir;
+  let engine;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fn_test_'));
+    const catalog = new Catalog();
+    catalog.registerTable('data', [
+      { name: 'val', dataType: DataType.INT32 },
+      { name: 'txt', dataType: DataType.VARCHAR },
+    ]);
+    const table = new Table('data', [
+      { name: 'val', dataType: DataType.INT32 },
+      { name: 'txt', dataType: DataType.VARCHAR },
+    ], tmpDir);
+    table.insertRows([
+      [16, 'hello world'],
+      [25, 'foo bar'],
+      [0, 'test'],
+      [9, null],
+    ]);
+    catalog.registerTableStorage('data', table);
+    engine = new QueryEngine(catalog);
+  });
+
+  afterEach(() => {
+    engine.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  describe('SQRT', () => {
+    it('computes square root correctly', async () => {
+      const result = await engine.run('SELECT SQRT(val) AS sq FROM data ORDER BY val');
+      expect(result.rows[0].sq).toBe(0);
+      expect(result.rows[1].sq).toBe(3);
+      expect(result.rows[2].sq).toBe(4);
+      expect(result.rows[3].sq).toBe(5);
+    });
+
+    it('returns null for null input', async () => {
+      const result = await engine.run('SELECT SQRT(val) AS sq FROM data WHERE val = 9');
+      expect(result.rows[0].sq).toBe(3);
+    });
+  });
+
+  describe('LENGTH', () => {
+    it('returns string length', async () => {
+      const result = await engine.run("SELECT LENGTH(txt) AS len FROM data WHERE txt = 'hello world'");
+      expect(result.rows[0].len).toBe(11);
+    });
+
+    it('returns null for null input', async () => {
+      const result = await engine.run('SELECT LENGTH(txt) AS len FROM data WHERE val = 9');
+      expect(result.rows[0].len).toBeNull();
+    });
+  });
+
+  describe('REPLACE', () => {
+    it('replaces all occurrences of substring', async () => {
+      const result = await engine.run("SELECT REPLACE(txt, 'o', '0') AS rep FROM data WHERE txt = 'foo bar'");
+      expect(result.rows[0].rep).toBe('f00 bar');
+    });
+
+    it('returns original when pattern not found', async () => {
+      const result = await engine.run("SELECT REPLACE(txt, 'xyz', '!') AS rep FROM data WHERE txt = 'test'");
+      expect(result.rows[0].rep).toBe('test');
+    });
+
+    it('returns null when any arg is null', async () => {
+      const result = await engine.run("SELECT REPLACE(txt, 'a', 'b') AS rep FROM data WHERE val = 9");
+      expect(result.rows[0].rep).toBeNull();
+    });
+  });
+});
+
+describe('TIMESTAMP end-to-end', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ts_test_'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('extracts HOUR, MINUTE, SECOND from timestamp', async () => {
+    const catalog = new Catalog();
+    catalog.registerTable('events', [
+      { name: 'id', dataType: DataType.INT32 },
+      { name: 'ts', dataType: DataType.TIMESTAMP },
+    ]);
+    const table = new Table('events', [
+      { name: 'id', dataType: DataType.INT32 },
+      { name: 'ts', dataType: DataType.TIMESTAMP },
+    ], tmpDir);
+    const tsVal = BigInt(timestampToEpochMs(2024, 3, 15, 14, 30, 45, 0));
+    await table.insertRows([[1, tsVal]]);
+    catalog.registerTableStorage('events', table);
+
+    const engine = new QueryEngine(catalog);
+    const result = await engine.run('SELECT EXTRACT(HOUR FROM ts), EXTRACT(MINUTE FROM ts), EXTRACT(SECOND FROM ts) FROM events');
+    expect(result.rows[0][Object.keys(result.rows[0])[0]]).toBe(14);
+    expect(result.rows[0][Object.keys(result.rows[0])[1]]).toBe(30);
+    expect(result.rows[0][Object.keys(result.rows[0])[2]]).toBe(45);
+    engine.close();
   });
 });

@@ -14,6 +14,7 @@ const DATA_TYPE_TO_ID = {
   [DataType.DECIMAL]: 4,
   [DataType.VARCHAR]: 5,
   [DataType.DATE]: 6,
+  [DataType.TIMESTAMP]: 7,
 };
 
 const ID_TO_DATA_TYPE = Object.fromEntries(

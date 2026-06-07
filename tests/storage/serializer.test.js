@@ -186,5 +186,16 @@ describe('ChunkSerializer', () => {
       const buf = ChunkSerializer.serialize(chunk);
       expect(Buffer.isBuffer(buf)).toBe(true);
     });
+
+    it('TIMESTAMP column round-trips correctly', () => {
+      const ts1 = BigInt(Date.UTC(2024, 2, 15, 14, 30, 45));
+      const ts2 = BigInt(Date.UTC(2023, 0, 1, 0, 0, 0));
+      const restored = roundTrip(makeChunk([
+        { type: DataType.TIMESTAMP, values: [ts1, ts2] },
+      ]));
+      expect(restored.columns[0].dataType).toBe(DataType.TIMESTAMP);
+      expect(restored.columns[0].get(0)).toBe(ts1);
+      expect(restored.columns[0].get(1)).toBe(ts2);
+    });
   });
 });

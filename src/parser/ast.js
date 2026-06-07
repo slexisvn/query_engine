@@ -29,6 +29,12 @@ export const NodeKind = {
   INTERVAL_EXPR: 'IntervalExpr',
   ORDER_KEY: 'OrderKey',
   TYPE_NAME: 'TypeName',
+  WINDOW_SPEC: 'WindowSpec',
+  WINDOW_CALL: 'WindowCall',
+  CREATE_TABLE_STMT: 'CreateTableStmt',
+  DROP_TABLE_STMT: 'DropTableStmt',
+  COLUMN_DEF: 'ColumnDef',
+  EXPLAIN_ANALYZE_STMT: 'ExplainAnalyzeStmt',
 };
 
 export function ExplainStmt(query) {
@@ -160,4 +166,28 @@ export function OrderKey(expr, direction = 'ASC', nullOrder = null) {
 
 export function TypeName(name, params = []) {
   return { kind: NodeKind.TYPE_NAME, name, params };
+}
+
+export function WindowSpec(partitionBy = [], orderBy = []) {
+  return { kind: NodeKind.WINDOW_SPEC, partitionBy, orderBy };
+}
+
+export function WindowCall(name, args, windowSpec) {
+  return { kind: NodeKind.WINDOW_CALL, name, args, windowSpec };
+}
+
+export function CreateTableStmt(name, columns, ifNotExists = false) {
+  return { kind: NodeKind.CREATE_TABLE_STMT, name, columns, ifNotExists };
+}
+
+export function DropTableStmt(name, ifExists = false) {
+  return { kind: NodeKind.DROP_TABLE_STMT, name, ifExists };
+}
+
+export function ColumnDef(name, typeName) {
+  return { kind: NodeKind.COLUMN_DEF, name, typeName };
+}
+
+export function ExplainAnalyzeStmt(query) {
+  return { kind: NodeKind.EXPLAIN_ANALYZE_STMT, query };
 }

@@ -15,6 +15,7 @@ export const PlanNodeType = {
   EMPTY: 'Empty',
   TOP_N: 'TopN',
   INDEX_SCAN: 'IndexScan',
+  WINDOW: 'Window',
 };
 
 export const JoinType = {
@@ -127,6 +128,10 @@ export function LogicalIndexScan(table, alias, indexName, columnName, scanType, 
   };
 }
 
+export function LogicalWindow(windowExprs, child) {
+  return { type: PlanNodeType.WINDOW, windowExprs, children: [child] };
+}
+
 export function LogicalMaterialize(child) {
   return { type: PlanNodeType.MATERIALIZE, children: [child] };
 }
@@ -161,6 +166,9 @@ export function planToString(node, indent = 0) {
       break;
     case PlanNodeType.DEPENDENT_JOIN:
       str += `(${node.subqueryType})`;
+      break;
+    case PlanNodeType.WINDOW:
+      str += `(${node.windowExprs.map(w => w.name).join(', ')})`;
       break;
     case PlanNodeType.TOP_N:
       str += `(${node.count}${node.offset ? `, offset=${node.offset}` : ''})`;

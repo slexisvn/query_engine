@@ -7,9 +7,32 @@ import { DEFAULT_CHUNK_SIZE } from '../../storage/chunk.js';
 import { DataLoader } from './data-loader.js';
 
 export class CSVLoader extends DataLoader {
+  constructor(allowedDir = null) {
+    super();
+    this.allowedDir = allowedDir;
+  }
+
+  validatePath(filePath) {
+    const resolved = path.resolve(filePath);
+    if (this.allowedDir) {
+      const allowedResolved = path.resolve(this.allowedDir);
+      if (!resolved.startsWith(allowedResolved + path.sep) && resolved !== allowedResolved) {
+        throw new Error(`Path traversal denied: ${filePath} is outside allowed directory`);
+      }
+    }
+    if (/\.\.[/\\]/.test(filePath)) {
+      const cwd = process.cwd();
+      if (!resolved.startsWith(cwd + path.sep) && resolved !== cwd) {
+        throw new Error(`Path traversal denied: ${filePath} resolves outside working directory`);
+      }
+    }
+    return resolved;
+  }
+
   async load(engine, filePath) {
+    const resolvedPath = this.validatePath(filePath);
     return new Promise((resolve, reject) => {
-      const tableName = path.basename(filePath, path.extname(filePath)).toUpperCase();
+      const tableName = path.basename(resolvedPath, path.extname(resolvedPath)).toUpperCase();
       let schema = null;
       let table = null;
       let batch = [];
@@ -20,7 +43,7 @@ export class CSVLoader extends DataLoader {
         batch = [];
       };
 
-      const stream = fs.createReadStream(filePath).pipe(csv());
+      const stream = fs.createReadStream(resolvedPath).pipe(csv());
 
       stream.on('data', (data) => {
         if (!schema) {

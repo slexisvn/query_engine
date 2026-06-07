@@ -9,10 +9,22 @@ export class Parser {
   }
 
   parse() {
+    if (this.isAt(TokenType.CREATE)) {
+      return this.parseCreateTable();
+    }
+    if (this.isAt(TokenType.DROP)) {
+      return this.parseDropTable();
+    }
+
     let isExplain = false;
+    let isAnalyze = false;
     if (this.isAt(TokenType.EXPLAIN)) {
       this.advance();
       isExplain = true;
+      if (this.isAt(TokenType.ANALYZE)) {
+        this.advance();
+        isAnalyze = true;
+      }
     }
 
     const stmt = this.parseQueryExpr();
@@ -20,7 +32,43 @@ export class Parser {
       this.error(`Unexpected token ${this.peek().type}`);
     }
 
+    if (isAnalyze) return AST.ExplainAnalyzeStmt(stmt);
     return isExplain ? AST.ExplainStmt(stmt) : stmt;
+  }
+
+  parseCreateTable() {
+    this.advance();
+    this.expect(TokenType.TABLE);
+    let ifNotExists = false;
+    if (this.isAt(TokenType.IF)) {
+      this.advance();
+      this.expect(TokenType.NOT);
+      this.expect(TokenType.EXISTS);
+      ifNotExists = true;
+    }
+    const name = this.expectIdent();
+    this.expect(TokenType.LPAREN);
+    const columns = [];
+    do {
+      const colName = this.expectIdent();
+      const colType = this.parseTypeName();
+      columns.push(AST.ColumnDef(colName, colType));
+    } while (this.tryConsume(TokenType.COMMA));
+    this.expect(TokenType.RPAREN);
+    return AST.CreateTableStmt(name, columns, ifNotExists);
+  }
+
+  parseDropTable() {
+    this.advance();
+    this.expect(TokenType.TABLE);
+    let ifExists = false;
+    if (this.isAt(TokenType.IF)) {
+      this.advance();
+      this.expect(TokenType.EXISTS);
+      ifExists = true;
+    }
+    const name = this.expectIdent();
+    return AST.DropTableStmt(name, ifExists);
   }
 
   parseQueryExpr() {
@@ -216,6 +264,11 @@ export class Parser {
 
   parseJoin(left) {
     let joinType = 'INNER';
+    let isNatural = false;
+
+    if (this.tryConsume(TokenType.NATURAL)) {
+      isNatural = true;
+    }
 
     if (this.tryConsume(TokenType.LEFT)) {
       this.tryConsume(TokenType.OUTER);
@@ -236,11 +289,30 @@ export class Parser {
     const right = this.parseTableRef();
 
     let condition = null;
-    if (joinType !== 'CROSS' && this.tryConsume(TokenType.ON)) {
-      condition = this.parseExpression();
+    let usingColumns = null;
+
+    if (isNatural) {
+      const node = AST.JoinRef(left, right, joinType, null);
+      node.natural = true;
+      return node;
     }
 
-    return AST.JoinRef(left, right, joinType, condition);
+    if (joinType !== 'CROSS') {
+      if (this.tryConsume(TokenType.ON)) {
+        condition = this.parseExpression();
+      } else if (this.tryConsume(TokenType.USING)) {
+        this.expect(TokenType.LPAREN);
+        usingColumns = [];
+        do {
+          usingColumns.push(this.expectIdent());
+        } while (this.tryConsume(TokenType.COMMA));
+        this.expect(TokenType.RPAREN);
+      }
+    }
+
+    const node = AST.JoinRef(left, right, joinType, condition);
+    if (usingColumns) node.usingColumns = usingColumns;
+    return node;
   }
 
   parseExpression() {
@@ -436,6 +508,12 @@ export class Parser {
       return AST.Literal(dateStr.value, 'DATE');
     }
 
+    if (token.type === TokenType.TIMESTAMP) {
+      this.advance();
+      const tsStr = this.expect(TokenType.STRING);
+      return AST.Literal(tsStr.value, 'TIMESTAMP');
+    }
+
     if (token.type === TokenType.INTERVAL) {
       return this.parseInterval();
     }
@@ -535,24 +613,59 @@ export class Parser {
     if (name === 'COUNT' && this.isAt(TokenType.STAR)) {
       this.advance();
       this.expect(TokenType.RPAREN);
+      if (this.isAt(TokenType.OVER)) {
+        return this.parseWindowCall('COUNT_STAR', []);
+      }
       return AST.AggregateCall('COUNT_STAR', [], false);
     }
 
     const distinct = this.tryConsume(TokenType.DISTINCT);
     const args = this.parseExpressionList();
     this.expect(TokenType.RPAREN);
+
+    if (this.isAt(TokenType.OVER)) {
+      return this.parseWindowCall(name, args);
+    }
+
     return AST.AggregateCall(name, args, !!distinct);
   }
 
   parseFunctionCallNamed(name) {
     this.expect(TokenType.LPAREN);
-    if (this.isAt(TokenType.RPAREN)) {
-      this.advance();
-      return AST.FunctionCall(name, []);
+    let args = [];
+    if (!this.isAt(TokenType.RPAREN)) {
+      args = this.parseExpressionList();
     }
-    const args = this.parseExpressionList();
     this.expect(TokenType.RPAREN);
+
+    if (this.isAt(TokenType.OVER)) {
+      return this.parseWindowCall(name, args);
+    }
+
     return AST.FunctionCall(name, args);
+  }
+
+  parseWindowCall(name, args) {
+    this.expect(TokenType.OVER);
+    this.expect(TokenType.LPAREN);
+
+    let partitionBy = [];
+    if (this.tryConsume(TokenType.PARTITION)) {
+      this.expect(TokenType.BY);
+      partitionBy = this.parseExpressionList();
+    }
+
+    let orderBy = [];
+    if (this.isAt(TokenType.ORDER)) {
+      this.advance();
+      this.expect(TokenType.BY);
+      orderBy = this.parseOrderByList();
+    }
+
+    this.expect(TokenType.RPAREN);
+
+    const windowSpec = AST.WindowSpec(partitionBy, orderBy);
+    return AST.WindowCall(name, args, windowSpec);
   }
 
   parseCaseExpr() {
@@ -755,6 +868,11 @@ export class Parser {
       TokenType.DESC, TokenType.LEFT, TokenType.RIGHT, TokenType.FULL,
       TokenType.INNER, TokenType.OUTER, TokenType.CROSS, TokenType.JOIN,
       TokenType.CREATE, TokenType.INTERVAL, TokenType.UNION, TokenType.ALL,
+      TokenType.TIMESTAMP, TokenType.HOUR, TokenType.MINUTE, TokenType.SECOND,
+      TokenType.OVER, TokenType.PARTITION, TokenType.RANGE,
+      TokenType.UNBOUNDED, TokenType.PRECEDING, TokenType.FOLLOWING,
+      TokenType.CURRENT, TokenType.ROW, TokenType.NATURAL, TokenType.USING,
+      TokenType.TABLE, TokenType.DROP, TokenType.IF, TokenType.ANALYZE,
     ].includes(type);
   }
 
@@ -765,7 +883,8 @@ export class Parser {
   isJoinKeyword() {
     const type = this.peek().type;
     return type === TokenType.JOIN || type === TokenType.INNER || type === TokenType.LEFT
-      || type === TokenType.RIGHT || type === TokenType.FULL || type === TokenType.CROSS;
+      || type === TokenType.RIGHT || type === TokenType.FULL || type === TokenType.CROSS
+      || type === TokenType.NATURAL;
   }
 
   isClauseKeyword() {

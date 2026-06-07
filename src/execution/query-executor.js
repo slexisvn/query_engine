@@ -14,6 +14,7 @@ import { UnionOperator } from './operators/union.js';
 import { DependentJoinOperator } from './operators/dependent-join.js';
 import { IndexScanOperator } from './operators/index-scan.js';
 import { extractJoinKeys } from './join-utils.js';
+import { WindowOperator } from './operators/window.js';
 import { SpillManager, FsStorage } from '../storage/spill-manager.js';
 import { ResultSink } from './result-sink.js';
 import { BoundExprKind } from '../binder/expression-binder.js';
@@ -81,6 +82,7 @@ export class QueryExecutor {
       case PlanNodeType.MATERIALIZE: return this.buildMaterialize(node);
       case PlanNodeType.DEPENDENT_JOIN: return this.buildDependentJoin(node);
       case PlanNodeType.TOP_N: return this.buildTopN(node);
+      case PlanNodeType.WINDOW: return this.buildWindow(node);
       case PlanNodeType.EMPTY: return this.buildEmpty(node);
       default:
         throw new Error(`Unsupported plan node: ${node.type}`);
@@ -294,18 +296,65 @@ export class QueryExecutor {
         : combinedMapping;
 
     if (node.physicalStrategy === PhysicalStrategy.MERGE) {
+      let mergeBuild = buildInput;
+      let mergeProbe = probeInput;
+      let mergeBuildKeys = buildKeys;
+      let mergeProbeKeys = probeKeys;
+      let mergeSchema = resultSchema;
+      let mergeMapping = resultMapping;
+      if (node.joinType === JoinType.LEFT && buildInput !== left) {
+        mergeBuild = left;
+        mergeProbe = right;
+        mergeBuildKeys = probeKeys;
+        mergeProbeKeys = buildKeys;
+        mergeSchema = [...left.schema, ...right.schema];
+        mergeMapping = new Map();
+        let mi = 0;
+        for (const col of left.schema) {
+          const key = `${col.tableAlias}.${col.name}`.toUpperCase();
+          mergeMapping.set(key, mi);
+          if (!mergeMapping.has(col.name.toUpperCase())) mergeMapping.set(col.name.toUpperCase(), mi);
+          mi++;
+        }
+        for (const col of right.schema) {
+          const key = `${col.tableAlias}.${col.name}`.toUpperCase();
+          mergeMapping.set(key, mi);
+          if (!mergeMapping.has(col.name.toUpperCase())) mergeMapping.set(col.name.toUpperCase(), mi);
+          mi++;
+        }
+      } else if (node.joinType === JoinType.RIGHT && buildInput !== right) {
+        mergeBuild = right;
+        mergeProbe = left;
+        mergeBuildKeys = probeKeys;
+        mergeProbeKeys = buildKeys;
+        mergeSchema = [...right.schema, ...left.schema];
+        mergeMapping = new Map();
+        let mi = 0;
+        for (const col of right.schema) {
+          const key = `${col.tableAlias}.${col.name}`.toUpperCase();
+          mergeMapping.set(key, mi);
+          if (!mergeMapping.has(col.name.toUpperCase())) mergeMapping.set(col.name.toUpperCase(), mi);
+          mi++;
+        }
+        for (const col of left.schema) {
+          const key = `${col.tableAlias}.${col.name}`.toUpperCase();
+          mergeMapping.set(key, mi);
+          if (!mergeMapping.has(col.name.toUpperCase())) mergeMapping.set(col.name.toUpperCase(), mi);
+          mi++;
+        }
+      }
       return {
-        schema: resultSchema,
-        columnMapping: resultMapping,
+        schema: mergeSchema,
+        columnMapping: mergeMapping,
         register: (graph, currentPipelineId, currentSink) => {
           const leftChunks = [];
           const rightChunks = [];
 
-                    const leftSink = { 
+                    const leftSink = {
             consume: async (c) => leftChunks.push(c),
             finalize: async () => {}
           };
-          const rightSink = { 
+          const rightSink = {
             consume: async (c) => rightChunks.push(c),
             finalize: async () => {}
           };
@@ -321,12 +370,12 @@ export class QueryExecutor {
 
                     graph.setSource(currentPipelineId, async function* () {
             const mergeJoin = new MergeJoinOperator(
-              buildInput === left ? leftChunks : rightChunks,
-              probeInput === left ? leftChunks : rightChunks,
-              buildKeys.map(k => compileExpression(k, buildInput.columnMapping)),
-              probeKeys.map(k => compileExpression(k, probeInput.columnMapping)),
-              buildInput.schema.length,
-              probeInput.schema.length,
+              mergeBuild === left ? leftChunks : rightChunks,
+              mergeProbe === left ? leftChunks : rightChunks,
+              mergeBuildKeys.map(k => compileExpression(k, mergeBuild.columnMapping)),
+              mergeProbeKeys.map(k => compileExpression(k, mergeProbe.columnMapping)),
+              mergeBuild.schema.length,
+              mergeProbe.schema.length,
               node.joinType,
               conditionEvaluator
             );
@@ -549,6 +598,59 @@ export class QueryExecutor {
 
                 graph.setSource(currentPipelineId, async function* () {
           const resultChunks = await aggOp.finalize();
+          for (const chunk of resultChunks) {
+            await currentSink.consume(chunk);
+            yield chunk;
+          }
+          if (currentSink.finalize) await currentSink.finalize();
+        });
+      }
+    };
+  }
+
+  async buildWindow(node) {
+    const child = await this.buildPipeline(node.children[0]);
+    const windowExprs = node.windowExprs;
+
+    const windowSchema = [
+      ...child.schema,
+      ...windowExprs.map((w, i) => ({
+        name: `__window_${i}`,
+        dataType: this.normalizeExecType(w.resultType || 'FLOAT64'),
+        tableAlias: '',
+      })),
+    ];
+    const windowMapping = new Map();
+    let idx = 0;
+    for (const col of windowSchema) {
+      const key = col.tableAlias ? `${col.tableAlias}.${col.name}`.toUpperCase() : col.name.toUpperCase();
+      windowMapping.set(key, idx);
+      if (!windowMapping.has(col.name.toUpperCase())) {
+        windowMapping.set(col.name.toUpperCase(), idx);
+      }
+      idx++;
+    }
+    for (let w = 0; w < windowExprs.length; w++) {
+      const wKey = windowExprKey(windowExprs[w]);
+      windowMapping.set(wKey, child.schema.length + w);
+    }
+
+    return {
+      schema: windowSchema,
+      columnMapping: windowMapping,
+      register: (graph, currentPipelineId, currentSink) => {
+        const childChunks = [];
+        const childSink = {
+          consume: async (c) => childChunks.push(c),
+          finalize: async () => {}
+        };
+        const childPipelineId = graph.createPipeline(childSink);
+        child.register(graph, childPipelineId, childSink);
+        graph.addDependency(currentPipelineId, childPipelineId);
+
+        graph.setSource(currentPipelineId, async function* () {
+          const windowOp = new WindowOperator(windowExprs, child.schema, child.columnMapping, compileExpression);
+          const resultChunks = await windowOp.execute(childChunks);
           for (const chunk of resultChunks) {
             await currentSink.consume(chunk);
             yield chunk;
@@ -899,6 +1001,19 @@ export class QueryExecutor {
     if (name === 'SUM' || name === 'MIN' || name === 'MAX') return 'FLOAT64';
     return 'FLOAT64';
   }
+}
+
+function windowExprKey(expr) {
+  const name = expr.name?.toUpperCase() || 'WIN';
+  const argKey = (expr.args || []).map(a => {
+    if (a.kind === BoundExprKind.COLUMN_REF) return `${a.tableAlias}.${a.columnName}`.toUpperCase();
+    return JSON.stringify(a).slice(0, 30);
+  }).join(',');
+  const partKey = (expr.partitionBy || []).map(p => {
+    if (p.kind === BoundExprKind.COLUMN_REF) return `${p.tableAlias}.${p.columnName}`.toUpperCase();
+    return '';
+  }).join(',');
+  return `__WIN__${name}(${argKey})[${partKey}]`;
 }
 
 function expressionCacheKey(expr) {

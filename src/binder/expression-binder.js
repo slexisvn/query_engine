@@ -19,6 +19,7 @@ export const BoundExprKind = {
   EXTRACT: 'BoundExtract',
   INTERVAL: 'BoundInterval',
   COMPARISON: 'BoundComparison',
+  WINDOW: 'BoundWindow',
 };
 
 export function BoundColumnRef(tableAlias, columnName, columnIndex, dataType, depth = 0) {
@@ -93,6 +94,10 @@ export function BoundInterval(value, unit) {
   return { kind: BoundExprKind.INTERVAL, value, unit, resultType: DataType.INT32 };
 }
 
+export function BoundWindow(name, args, partitionBy, orderBy, resultType) {
+  return { kind: BoundExprKind.WINDOW, name, args, partitionBy, orderBy, resultType };
+}
+
 export function getExprType(expr) {
   if (!expr) return null;
   return expr.resultType || expr.dataType || null;
@@ -154,6 +159,11 @@ function _walkExpr(expr, fn) {
       break;
     case BoundExprKind.EXTRACT:
       _walkExpr(expr.source, fn);
+      break;
+    case BoundExprKind.WINDOW:
+      for (const arg of expr.args) _walkExpr(arg, fn);
+      for (const p of expr.partitionBy) _walkExpr(p, fn);
+      for (const o of expr.orderBy) _walkExpr(o.expr, fn);
       break;
   }
 }

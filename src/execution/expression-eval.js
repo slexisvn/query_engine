@@ -1,5 +1,7 @@
 import { BoundExprKind } from '../binder/expression-binder.js';
-import { DataType, epochDaysToDate, dateToEpochDays } from '../storage/data-type.js';
+import { DataType, epochDaysToDate, dateToEpochDays, epochMsToTimestamp } from '../storage/data-type.js';
+
+const LIKE_CACHE_MAX = 256;
 
 export function compileExpression(expr, columnMapping) {
   if (!expr) return () => null;
@@ -53,6 +55,7 @@ export function compileExpression(expr, columnMapping) {
       const e = compileExpression(expr.expr, columnMapping);
       const p = compileExpression(expr.pattern, columnMapping);
       const regexCache = new Map();
+      const regexKeys = [];
       return (c, r) => {
         const val = e(c, r);
         const pattern = p(c, r);
@@ -61,7 +64,11 @@ export function compileExpression(expr, columnMapping) {
         let regex = regexCache.get(patternKey);
         if (!regex) {
           regex = likeToRegex(patternKey);
+          if (regexCache.size >= LIKE_CACHE_MAX) {
+            regexCache.delete(regexKeys.shift());
+          }
           regexCache.set(patternKey, regex);
+          regexKeys.push(patternKey);
         }
         const result = regex.test(String(val));
         return expr.negated ? !result : result;
@@ -95,10 +102,23 @@ export function compileExpression(expr, columnMapping) {
 
     case BoundExprKind.EXTRACT: {
       const source = compileExpression(expr.source, columnMapping);
+      const srcType = expr.source?.dataType || expr.source?.resultType;
       return (c, r) => {
-        const days = source(c, r);
-        if (days === null) return null;
-        const d = epochDaysToDate(days);
+        const val = source(c, r);
+        if (val === null) return null;
+        if (srcType === DataType.TIMESTAMP || typeof val === 'bigint' || val > 100000) {
+          const ts = epochMsToTimestamp(typeof val === 'bigint' ? Number(val) : val);
+          switch (expr.field) {
+            case 'YEAR': return ts.year;
+            case 'MONTH': return ts.month;
+            case 'DAY': return ts.day;
+            case 'HOUR': return ts.hour;
+            case 'MINUTE': return ts.minute;
+            case 'SECOND': return ts.second;
+            default: return null;
+          }
+        }
+        const d = epochDaysToDate(val);
         switch (expr.field) {
           case 'YEAR': return d.year;
           case 'MONTH': return d.month;
@@ -126,6 +146,15 @@ export function compileExpression(expr, columnMapping) {
 
     case BoundExprKind.INTERVAL:
       return () => ({ value: expr.value, unit: expr.unit, _isInterval: true });
+
+    case BoundExprKind.WINDOW: {
+      const wKey = windowExprKey(expr);
+      if (columnMapping && columnMapping.has(wKey)) {
+        const colIdx = columnMapping.get(wKey);
+        return (chunk, rowIdx) => chunk.columns[colIdx]?.get(rowIdx) ?? null;
+      }
+      return () => null;
+    }
 
     default:
       return () => null;
@@ -229,6 +258,13 @@ function compileFunction(name, args) {
       const v1 = args[0](c, r), v2 = args[1](c, r);
       return v1 == v2 ? null : v1;
     };
+    case 'SQRT': return (c, r) => { const v = args[0](c, r); return v !== null ? Math.sqrt(v) : null; };
+    case 'LENGTH': return (c, r) => { const v = args[0](c, r); return v !== null ? String(v).length : null; };
+    case 'REPLACE': return (c, r) => {
+      const s = args[0](c, r), from = args[1](c, r), to = args[2](c, r);
+      if (s === null || from === null || to === null) return null;
+      return String(s).split(String(from)).join(String(to));
+    };
     default: return () => null;
   }
 }
@@ -269,14 +305,45 @@ function aggExprKey(expr) {
 
 export { aggExprKey };
 
+function windowExprKey(expr) {
+  const name = expr.name?.toUpperCase() || 'WIN';
+  const argKey = (expr.args || []).map(a => {
+    if (a.kind === BoundExprKind.COLUMN_REF) return `${a.tableAlias}.${a.columnName}`.toUpperCase();
+    return JSON.stringify(a).slice(0, 30);
+  }).join(',');
+  const partKey = (expr.partitionBy || []).map(p => {
+    if (p.kind === BoundExprKind.COLUMN_REF) return `${p.tableAlias}.${p.columnName}`.toUpperCase();
+    return '';
+  }).join(',');
+  return `__WIN__${name}(${argKey})[${partKey}]`;
+}
+
+export { windowExprKey };
+
 function castValue(val, targetType) {
   if (val === null) return null;
   switch (targetType) {
     case DataType.INT32: return parseInt(val, 10) | 0;
     case DataType.INT64: return BigInt(parseInt(val, 10));
     case DataType.FLOAT64: return parseFloat(val);
-    case DataType.VARCHAR: return String(val);
+    case DataType.VARCHAR: {
+      if (typeof val === 'bigint') return String(Number(val));
+      return String(val);
+    }
     case DataType.BOOLEAN: return !!val;
+    case DataType.TIMESTAMP: {
+      if (typeof val === 'string') {
+        return new Date(val).getTime();
+      }
+      return Number(val);
+    }
+    case DataType.DATE: {
+      if (typeof val === 'string') {
+        const [y, m, d] = val.split('-').map(Number);
+        return dateToEpochDays(y, m, d);
+      }
+      return val;
+    }
     default: return val;
   }
 }

@@ -100,6 +100,10 @@ function formatNode(node) {
     }
     case PlanNodeType.EMPTY:
       return `Empty (short-circuit)`;
+    case PlanNodeType.WINDOW: {
+      const wExprs = node.windowExprs.map(w => w.name).join(', ');
+      return `Window (${wExprs})`;
+    }
     default:
       return `${node.type}`;
   }

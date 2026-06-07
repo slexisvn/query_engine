@@ -63,6 +63,9 @@ export class FunctionRegistry {
     this.register('NULLIF', scalar('NULLIF', 2, 2));
     this.register('ABS', scalar('ABS', 1, 1));
     this.register('ROUND', scalar('ROUND', 1, 2));
+    this.register('SQRT', scalar('SQRT', 1, 1));
+    this.register('LENGTH', scalar('LENGTH', 1, 1));
+    this.register('REPLACE', scalar('REPLACE', 3, 3));
   }
 }
 

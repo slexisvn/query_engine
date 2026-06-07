@@ -1,5 +1,5 @@
 import { NodeKind } from '../parser/ast.js';
-import { DataType, dateToEpochDays, DECIMAL_SCALE } from '../storage/data-type.js';
+import { DataType, dateToEpochDays, timestampToEpochMs } from '../storage/data-type.js';
 import { BinderScope } from './scope.js';
 import * as BE from './expression-binder.js';
 
@@ -207,7 +207,12 @@ export class Binder {
     const right = this.bindFrom(node.right, scope);
 
     let condition = null;
-    if (node.condition) {
+
+    if (node.natural) {
+      condition = this.buildNaturalJoinCondition(left, right, scope);
+    } else if (node.usingColumns) {
+      condition = this.buildUsingCondition(node.usingColumns, left, right, scope);
+    } else if (node.condition) {
       condition = this.bindExpression(node.condition, scope);
     }
 
@@ -218,6 +223,39 @@ export class Binder {
       right,
       condition,
     };
+  }
+
+  buildNaturalJoinCondition(left, right, scope) {
+    const leftCols = this.getRefColumnNames(left);
+    const rightCols = this.getRefColumnNames(right);
+    const common = leftCols.filter(n => rightCols.includes(n));
+    if (common.length === 0) return null;
+    return this.buildUsingCondition(common, left, right, scope);
+  }
+
+  buildUsingCondition(columnNames, left, right, scope) {
+    let condition = null;
+    for (const colName of columnNames) {
+      const leftRef = scope.resolveColumn(colName, this.getRefAlias(left));
+      const rightRef = scope.resolveColumn(colName, this.getRefAlias(right));
+      if (!leftRef || !rightRef) throw new Error(`USING column not found: ${colName}`);
+      const eq = BE.BoundBinary('=',
+        BE.BoundColumnRef(leftRef.tableAlias, leftRef.column.name, leftRef.columnIndex, leftRef.column.dataType),
+        BE.BoundColumnRef(rightRef.tableAlias, rightRef.column.name, rightRef.columnIndex, rightRef.column.dataType),
+        DataType.BOOLEAN
+      );
+      condition = condition ? BE.BoundBinary('AND', condition, eq, DataType.BOOLEAN) : eq;
+    }
+    return condition;
+  }
+
+  getRefColumnNames(ref) {
+    const cols = ref.columns || [];
+    return cols.map(c => c.name.toUpperCase());
+  }
+
+  getRefAlias(ref) {
+    return ref.alias || ref.tableName || ref.cteName || null;
   }
 
   bindSubqueryRef(node, scope) {
@@ -341,12 +379,27 @@ export class Binder {
       case NodeKind.INTERVAL_EXPR:
         return BE.BoundInterval(parseInt(node.value, 10), node.unit);
 
+      case NodeKind.WINDOW_CALL:
+        return this.bindWindowCall(node, scope);
+
       case NodeKind.ALL_COLUMNS:
         throw new Error('Star expression in unexpected position');
 
       default:
         throw new Error(`Unhandled expression kind: ${node.kind}`);
     }
+  }
+
+  bindWindowCall(node, scope) {
+    const args = node.args.map(a => this.bindExpression(a, scope));
+    const partitionBy = node.windowSpec.partitionBy.map(e => this.bindExpression(e, scope));
+    const orderBy = node.windowSpec.orderBy.map(ok => ({
+      expr: this.bindExpression(ok.expr, scope),
+      direction: ok.direction,
+      nullOrder: ok.nullOrder,
+    }));
+    const resultType = this.inferWindowType(node.name, args);
+    return BE.BoundWindow(node.name.toUpperCase(), args, partitionBy, orderBy, resultType);
   }
 
   bindColumnRef(node, scope) {
@@ -370,6 +423,22 @@ export class Binder {
     if (node.dataType === 'DATE') {
       const [y, m, d] = node.value.split('-').map(Number);
       return BE.BoundLiteral(dateToEpochDays(y, m, d), DataType.DATE);
+    }
+    if (node.dataType === 'TIMESTAMP') {
+      const parts = node.value.split(/[T ]/);
+      const [y, mo, d] = parts[0].split('-').map(Number);
+      let h = 0, mi = 0, s = 0, ms = 0;
+      if (parts[1]) {
+        const timeParts = parts[1].split(':');
+        h = Number(timeParts[0]) || 0;
+        mi = Number(timeParts[1]) || 0;
+        if (timeParts[2]) {
+          const secParts = timeParts[2].split('.');
+          s = Number(secParts[0]) || 0;
+          ms = secParts[1] ? Number(secParts[1].padEnd(3, '0').slice(0, 3)) : 0;
+        }
+      }
+      return BE.BoundLiteral(timestampToEpochMs(y, mo, d, h, mi, s, ms), DataType.TIMESTAMP);
     }
     if (node.dataType === 'BOOLEAN') {
       return BE.BoundLiteral(node.value, DataType.BOOLEAN);
@@ -501,16 +570,31 @@ export class Binder {
 
   inferFunctionType(name, args) {
     switch (name.toUpperCase()) {
-      case 'SUBSTRING': case 'TRIM': case 'UPPER': case 'LOWER':
+      case 'SUBSTRING': case 'TRIM': case 'UPPER': case 'LOWER': case 'REPLACE':
         return DataType.VARCHAR;
       case 'EXTRACT':
         return DataType.INT32;
-      case 'ABS': case 'ROUND':
+      case 'LENGTH':
+        return DataType.INT32;
+      case 'ABS': case 'ROUND': case 'SQRT':
         return args[0] ? BE.getExprType(args[0]) : DataType.FLOAT64;
       case 'COALESCE': case 'NULLIF':
         return args[0] ? BE.getExprType(args[0]) : null;
       default:
         return DataType.VARCHAR;
+    }
+  }
+
+  inferWindowType(name, args) {
+    switch (name.toUpperCase()) {
+      case 'ROW_NUMBER': case 'RANK': case 'DENSE_RANK':
+        return DataType.INT64;
+      case 'LAG': case 'LEAD':
+        return args[0] ? BE.getExprType(args[0]) : DataType.VARCHAR;
+      case 'SUM': case 'AVG': case 'MIN': case 'MAX': case 'COUNT': case 'COUNT_STAR':
+        return this.inferAggregateType(name, args);
+      default:
+        return DataType.FLOAT64;
     }
   }
 
@@ -523,6 +607,7 @@ export class Binder {
       'DECIMAL': DataType.DECIMAL, 'NUMERIC': DataType.DECIMAL,
       'VARCHAR': DataType.VARCHAR, 'TEXT': DataType.VARCHAR, 'CHAR': DataType.VARCHAR,
       'DATE': DataType.DATE,
+      'TIMESTAMP': DataType.TIMESTAMP, 'DATETIME': DataType.TIMESTAMP,
       'BOOLEAN': DataType.BOOLEAN, 'BOOL': DataType.BOOLEAN,
     };
     return map[name] || DataType.VARCHAR;

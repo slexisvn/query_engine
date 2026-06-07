@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Column } from '../../src/storage/column.js';
-import { DataType } from '../../src/storage/data-type.js';
+import { DataType, getDecimalScale, getDecimalScaleNumber, setDecimalScale, timestampToEpochMs, epochMsToTimestamp, epochDaysToEpochMs, epochMsToEpochDays, isTemporal } from '../../src/storage/data-type.js';
 
 describe('Column', () => {
   describe('null bitmap', () => {
@@ -188,5 +188,61 @@ describe('Column', () => {
       expect(col.get(1)).toBe(-9007199254740993n);
       expect(col.get(2)).toBe(0n);
     });
+  });
+});
+
+describe('configurable decimal scale', () => {
+  afterEach(() => {
+    setDecimalScale(2);
+  });
+
+  it('default scale is 100 (2 digits)', () => {
+    expect(getDecimalScale()).toBe(100n);
+    expect(getDecimalScaleNumber()).toBe(100);
+  });
+
+  it('setDecimalScale(4) sets scale to 10000', () => {
+    setDecimalScale(4);
+    expect(getDecimalScale()).toBe(10000n);
+    expect(getDecimalScaleNumber()).toBe(10000);
+  });
+
+  it('setDecimalScale(0) sets scale to 1', () => {
+    setDecimalScale(0);
+    expect(getDecimalScale()).toBe(1n);
+    expect(getDecimalScaleNumber()).toBe(1);
+  });
+
+  it('setDecimalScale(6) sets scale to 1000000', () => {
+    setDecimalScale(6);
+    expect(getDecimalScale()).toBe(1000000n);
+    expect(getDecimalScaleNumber()).toBe(1000000);
+  });
+});
+
+describe('TIMESTAMP data-type utilities', () => {
+  it('converts timestamp components to epoch ms', () => {
+    const ms = timestampToEpochMs(2024, 6, 15, 10, 30, 45, 123);
+    const ts = epochMsToTimestamp(ms);
+    expect(ts.year).toBe(2024);
+    expect(ts.month).toBe(6);
+    expect(ts.day).toBe(15);
+    expect(ts.hour).toBe(10);
+    expect(ts.minute).toBe(30);
+    expect(ts.second).toBe(45);
+    expect(ts.ms).toBe(123);
+  });
+
+  it('converts between epoch days and epoch ms', () => {
+    const days = 19888;
+    const ms = epochDaysToEpochMs(days);
+    expect(epochMsToEpochDays(ms)).toBe(days);
+  });
+
+  it('isTemporal returns true for DATE and TIMESTAMP', () => {
+    expect(isTemporal(DataType.DATE)).toBe(true);
+    expect(isTemporal(DataType.TIMESTAMP)).toBe(true);
+    expect(isTemporal(DataType.INT32)).toBe(false);
+    expect(isTemporal(DataType.VARCHAR)).toBe(false);
   });
 });

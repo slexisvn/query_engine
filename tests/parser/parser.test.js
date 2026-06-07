@@ -814,4 +814,114 @@ describe('Parser', () => {
       expect(coalesce.args).toHaveLength(2);
     });
   });
+
+  describe('DDL statements', () => {
+    it('parses CREATE TABLE with columns', () => {
+      const ast = parse('CREATE TABLE users (id INTEGER, name VARCHAR, active BOOLEAN)');
+      expect(ast.kind).toBe(NodeKind.CREATE_TABLE_STMT);
+      expect(ast.name).toBe('users');
+      expect(ast.columns).toHaveLength(3);
+      expect(ast.columns[0].name).toBe('id');
+      expect(ast.columns[0].typeName.name).toBe('INTEGER');
+      expect(ast.ifNotExists).toBe(false);
+    });
+
+    it('parses CREATE TABLE IF NOT EXISTS', () => {
+      const ast = parse('CREATE TABLE IF NOT EXISTS users (id INT)');
+      expect(ast.ifNotExists).toBe(true);
+    });
+
+    it('parses DROP TABLE', () => {
+      const ast = parse('DROP TABLE users');
+      expect(ast.kind).toBe(NodeKind.DROP_TABLE_STMT);
+      expect(ast.name).toBe('users');
+      expect(ast.ifExists).toBe(false);
+    });
+
+    it('parses DROP TABLE IF EXISTS', () => {
+      const ast = parse('DROP TABLE IF EXISTS users');
+      expect(ast.ifExists).toBe(true);
+    });
+  });
+
+  describe('TIMESTAMP literal', () => {
+    it('parses TIMESTAMP literal', () => {
+      const ast = parse("SELECT TIMESTAMP '2024-06-15 10:30:45'");
+      const expr = ast.selectItems[0].expr;
+      expect(expr.value).toBe('2024-06-15 10:30:45');
+      expect(expr.dataType).toBe('TIMESTAMP');
+    });
+  });
+
+  describe('EXPLAIN ANALYZE', () => {
+    it('parses EXPLAIN ANALYZE SELECT', () => {
+      const ast = parse('EXPLAIN ANALYZE SELECT 1');
+      expect(ast.kind).toBe(NodeKind.EXPLAIN_ANALYZE_STMT);
+      expect(ast.query.kind).toBe(NodeKind.SELECT_STMT);
+    });
+
+    it('EXPLAIN without ANALYZE still works', () => {
+      const ast = parse('EXPLAIN SELECT 1');
+      expect(ast.kind).toBe(NodeKind.EXPLAIN_STMT);
+    });
+  });
+
+  describe('NATURAL JOIN / USING', () => {
+    it('parses NATURAL JOIN', () => {
+      const ast = parse('SELECT * FROM users NATURAL JOIN profiles');
+      expect(ast.from.kind).toBe(NodeKind.JOIN_REF);
+      expect(ast.from.natural).toBe(true);
+      expect(ast.from.joinType).toBe('INNER');
+    });
+
+    it('parses NATURAL LEFT JOIN', () => {
+      const ast = parse('SELECT * FROM users NATURAL LEFT JOIN profiles');
+      expect(ast.from.natural).toBe(true);
+      expect(ast.from.joinType).toBe('LEFT');
+    });
+
+    it('parses JOIN ... USING (col)', () => {
+      const ast = parse('SELECT * FROM users JOIN profiles USING (id)');
+      expect(ast.from.usingColumns).toEqual(['id']);
+    });
+
+    it('parses JOIN ... USING (col1, col2)', () => {
+      const ast = parse('SELECT * FROM a JOIN b USING (x, y)');
+      expect(ast.from.usingColumns).toEqual(['x', 'y']);
+    });
+  });
+
+  describe('window functions', () => {
+    it('parses ROW_NUMBER() OVER (ORDER BY ...)', () => {
+      const ast = parse('SELECT ROW_NUMBER() OVER (ORDER BY id) FROM t');
+      const expr = ast.selectItems[0].expr;
+      expect(expr.kind).toBe(NodeKind.WINDOW_CALL);
+      expect(expr.name).toBe('ROW_NUMBER');
+      expect(expr.windowSpec.orderBy).toHaveLength(1);
+    });
+
+    it('parses RANK() OVER (PARTITION BY dept ORDER BY salary DESC)', () => {
+      const ast = parse('SELECT RANK() OVER (PARTITION BY dept ORDER BY salary DESC) FROM t');
+      const expr = ast.selectItems[0].expr;
+      expect(expr.kind).toBe(NodeKind.WINDOW_CALL);
+      expect(expr.name).toBe('RANK');
+      expect(expr.windowSpec.partitionBy).toHaveLength(1);
+      expect(expr.windowSpec.orderBy[0].direction).toBe('DESC');
+    });
+
+    it('parses LAG(col, 1) OVER (...)', () => {
+      const ast = parse('SELECT LAG(salary, 1) OVER (ORDER BY id) FROM t');
+      const expr = ast.selectItems[0].expr;
+      expect(expr.kind).toBe(NodeKind.WINDOW_CALL);
+      expect(expr.name).toBe('LAG');
+      expect(expr.args).toHaveLength(2);
+    });
+
+    it('parses aggregate as window function: SUM(x) OVER (...)', () => {
+      const ast = parse('SELECT SUM(salary) OVER (PARTITION BY dept ORDER BY id) FROM t');
+      const expr = ast.selectItems[0].expr;
+      expect(expr.kind).toBe(NodeKind.WINDOW_CALL);
+      expect(expr.name).toBe('SUM');
+    });
+  });
 });

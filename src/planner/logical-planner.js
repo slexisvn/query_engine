@@ -1,5 +1,5 @@
 import * as LP from './logical-plan.js';
-import { BoundExprKind, collectCorrelatedColumns } from '../binder/expression-binder.js';
+import { BoundExprKind, BoundColumnRef, collectCorrelatedColumns } from '../binder/expression-binder.js';
 
 let _cteIdCounter = 0;
 
@@ -58,6 +58,14 @@ export class LogicalPlanner {
       if (expr) {
         node = LP.LogicalFilter(expr, node);
       }
+    }
+
+    const windowExprs = [];
+    for (const item of bound.selectItems) {
+      this._collectWindows(item.expr, windowExprs);
+    }
+    if (windowExprs.length > 0) {
+      node = LP.LogicalWindow(windowExprs, node);
     }
 
     if (bound.distinct) {
@@ -203,6 +211,23 @@ export class LogicalPlanner {
       default:
         return expr;
     }
+  }
+
+  _collectWindows(expr, out) {
+    if (!expr) return;
+    if (expr.kind === BoundExprKind.WINDOW) {
+      out.push(expr);
+      return;
+    }
+    if (expr.left) this._collectWindows(expr.left, out);
+    if (expr.right) this._collectWindows(expr.right, out);
+    if (expr.operand) this._collectWindows(expr.operand, out);
+    if (expr.args) for (const a of expr.args) this._collectWindows(a, out);
+    if (expr.whenClauses) for (const wc of expr.whenClauses) {
+      this._collectWindows(wc.condition, out);
+      this._collectWindows(wc.result, out);
+    }
+    if (expr.elseExpr) this._collectWindows(expr.elseExpr, out);
   }
 
   findCorrelatedRefs(boundQuery) {

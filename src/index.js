@@ -2,6 +2,10 @@ import { parse } from './parser/parser.js';
 import { Binder } from './binder/binder.js';
 import { createLogicalPlan } from './planner/logical-planner.js';
 import { defaultFunctionRegistry } from './catalog/function-registry.js';
+import { NodeKind } from './parser/ast.js';
+import { DataType } from './storage/data-type.js';
+import { Column } from './storage/column.js';
+import { Table } from './storage/table.js';
 import { Optimizer } from './optimizer/optimizer.js';
 import { SubqueryUnnesting } from './optimizer/passes/subquery-unnesting.js';
 import { CTEOptimization } from './optimizer/passes/cte-optimization.js';
@@ -109,17 +113,24 @@ export class QueryEngine {
   async compile(sql) {
     const ast = this.parseSQL(sql);
     let isExplain = false;
+    let isAnalyze = false;
     let targetAst = ast;
 
     if (ast.kind === 'ExplainStmt') {
       isExplain = true;
       targetAst = ast.query;
+    } else if (ast.kind === 'ExplainAnalyzeStmt') {
+      isExplain = true;
+      isAnalyze = true;
+      targetAst = ast.query;
+    } else if (ast.kind === 'CreateTableStmt' || ast.kind === 'DropTableStmt') {
+      return { ddl: ast };
     }
 
     const bound = this.bind(targetAst);
     const logicalPlan = this.plan(bound);
     let cteMap = logicalPlan._cteMap || new Map();
-    
+
     if (!this.precomputedStats && !this._statsCollected) {
       const collected = await this.collectStatistics();
       if (collected) {
@@ -127,10 +138,10 @@ export class QueryEngine {
         this._statsCollected = true;
       }
     }
-    
+
     const optimized = this.optimize(logicalPlan);
     cteMap = this.optimizeCTEMap(cteMap);
-    return { plan: optimized, outputColumns: bound.outputColumns, cteMap, isExplain };
+    return { plan: optimized, outputColumns: bound.outputColumns, cteMap, isExplain, isAnalyze };
   }
 
   optimizeCTEMap(cteMap) {
@@ -143,24 +154,116 @@ export class QueryEngine {
   }
 
   async run(sql) {
-    const { plan, outputColumns, cteMap, isExplain } = await this.compile(sql);
+    const compiled = await this.compile(sql);
 
-    if (isExplain) {
+    if (compiled.ddl) {
+      return this.executeDDL(compiled.ddl);
+    }
+
+    const { plan, outputColumns, cteMap, isExplain, isAnalyze } = compiled;
+
+    if (isExplain && !isAnalyze) {
       const { formatPlan } = await import('./planner/plan-formatter.js');
       const planStr = formatPlan(plan);
       return { rows: [{ 'EXPLAIN_PLAN': planStr }], columns: ['EXPLAIN_PLAN'] };
     }
 
-    this.executor.cteDefinitions = cteMap;
-    const { sink, columnNames } = await this.executor.execute(plan, outputColumns);
-    const result = new QueryResult(columnNames, sink);
-    return { rows: await result.toArray(), columns: columnNames };
+    if (isAnalyze) {
+      const { formatPlan } = await import('./planner/plan-formatter.js');
+      const planStr = formatPlan(plan);
+      const startTime = performance.now();
+      this.executor.cteDefinitions = cteMap;
+      const { sink, columnNames } = await this.executor.execute(plan, outputColumns);
+      const result = new QueryResult(columnNames, sink);
+      const rows = await result.toArray();
+      const elapsed = (performance.now() - startTime).toFixed(2);
+      const analyzeStr = `${planStr}\nExecution Time: ${elapsed} ms\nRows Returned: ${rows.length}`;
+      return { rows: [{ 'EXPLAIN_ANALYZE': analyzeStr }], columns: ['EXPLAIN_ANALYZE'] };
+    }
+
+    this._activeCancel = new AbortController();
+    try {
+      this.executor.cteDefinitions = cteMap;
+      const { sink, columnNames } = await this.executor.execute(plan, outputColumns);
+      const result = new QueryResult(columnNames, sink);
+      return { rows: await result.toArray(), columns: columnNames };
+    } finally {
+      this._activeCancel = null;
+    }
+  }
+
+  cancel() {
+    if (this._activeCancel) {
+      this._activeCancel.abort();
+    }
+  }
+
+  executeDDL(ddl) {
+    if (ddl.kind === 'CreateTableStmt') {
+      return this.executeCreateTable(ddl);
+    }
+    if (ddl.kind === 'DropTableStmt') {
+      return this.executeDropTable(ddl);
+    }
+    throw new Error(`Unknown DDL: ${ddl.kind}`);
+  }
+
+  executeCreateTable(stmt) {
+    const resolveType = (typeName) => {
+      const map = {
+        'INTEGER': DataType.INT32, 'INT': DataType.INT32, 'INT32': DataType.INT32,
+        'BIGINT': DataType.INT64, 'INT64': DataType.INT64,
+        'FLOAT': DataType.FLOAT64, 'DOUBLE': DataType.FLOAT64, 'REAL': DataType.FLOAT64,
+        'DECIMAL': DataType.DECIMAL, 'NUMERIC': DataType.DECIMAL,
+        'VARCHAR': DataType.VARCHAR, 'TEXT': DataType.VARCHAR, 'CHAR': DataType.VARCHAR,
+        'DATE': DataType.DATE,
+        'TIMESTAMP': DataType.TIMESTAMP, 'DATETIME': DataType.TIMESTAMP,
+        'BOOLEAN': DataType.BOOLEAN, 'BOOL': DataType.BOOLEAN,
+      };
+      return map[typeName.name.toUpperCase()] || DataType.VARCHAR;
+    };
+
+    const tableName = stmt.name.toUpperCase();
+
+    if (this.catalog.getTable(tableName)) {
+      if (stmt.ifNotExists) {
+        return { rows: [], columns: [], message: `Table ${tableName} already exists` };
+      }
+      throw new Error(`Table ${tableName} already exists`);
+    }
+
+    const columns = stmt.columns.map(col => ({
+      name: col.name.toUpperCase(),
+      dataType: resolveType(col.typeName),
+    }));
+
+    const bufferPath = this.tempManager.allocate('buffer', tableName);
+    const table = new Table(tableName, columns, bufferPath);
+    this.catalog.registerTable(tableName, columns);
+    this.catalog.registerTableStorage(tableName, table);
+
+    return { rows: [], columns: [], message: `Table ${tableName} created` };
+  }
+
+  executeDropTable(stmt) {
+    const tableName = stmt.name.toUpperCase();
+    if (!this.catalog.getTable(tableName)) {
+      if (stmt.ifExists) {
+        return { rows: [], columns: [], message: `Table ${tableName} does not exist` };
+      }
+      throw new Error(`Table ${tableName} does not exist`);
+    }
+    this.catalog.dropTable(tableName);
+    return { rows: [], columns: [], message: `Table ${tableName} dropped` };
   }
 
   async stream(sql) {
-    const { plan, outputColumns, cteMap, isExplain } = await this.compile(sql);
+    const compiled = await this.compile(sql);
+    if (compiled.ddl) return this.executeDDL(compiled.ddl);
 
-    if (isExplain) {
+    const { plan, outputColumns, cteMap, isExplain, isAnalyze } = compiled;
+
+    if (isExplain && !isAnalyze) {
       const { formatPlan } = await import('./planner/plan-formatter.js');
       const planStr = formatPlan(plan);
       return { rows: [{ 'EXPLAIN_PLAN': planStr }], columns: ['EXPLAIN_PLAN'] };

@@ -41,6 +41,15 @@ export class Catalog {
     return table.columns.findIndex(c => c.name.toUpperCase() === upper);
   }
 
+  dropTable(name) {
+    const upper = name.toUpperCase();
+    this.tables.delete(upper);
+    this.tableStorage.delete(upper);
+    for (const [key, entry] of this.indexes) {
+      if (entry.tableName === upper) this.indexes.delete(key);
+    }
+  }
+
   hasTable(name) {
     return this.tables.has(name.toUpperCase());
   }
