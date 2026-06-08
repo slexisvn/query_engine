@@ -1,0 +1,2001 @@
+id,name,email,country,city,tier,signup_date,total_spent
+1,Carol Clark,carol.clark1@example.com,AU,San Francisco,silver,2023-08-14,9705.59
+2,Bob Hill,bob.hill2@example.com,MX,Atlanta,platinum,2018-10-01,5155.55
+3,Frank Martinez,frank.martinez3@example.com,DE,Seattle,gold,2023-11-23,45790.05
+4,Dave Hill,dave.hill4@example.com,IN,Denver,gold,2019-01-20,3595.35
+5,Nick Hall,nick.hall5@example.com,US,Seattle,gold,2020-12-26,4743.38
+6,Mia Garcia,mia.garcia6@example.com,US,Portland,silver,2019-07-22,34317.96
+7,Tina Hall,tina.hall7@example.com,FR,Miami,gold,2019-04-20,8642.24
+8,Alice Thomas,alice.thomas8@example.com,IN,New York,silver,2020-01-15,10537.02
+9,Kate Wilson,kate.wilson9@example.com,UK,New York,silver,2023-09-05,13611.37
+10,Kate Smith,kate.smith10@example.com,CA,Boston,platinum,2021-06-15,38927.7
+11,Sam Anderson,sam.anderson11@example.com,JP,Atlanta,bronze,2025-02-25,10792.25
+12,Olivia Taylor,olivia.taylor12@example.com,UK,Austin,gold,2021-02-05,10161.02
+13,Grace Thomas,grace.thomas13@example.com,AU,San Francisco,bronze,2023-06-05,7628.67
+14,Hank Davis,hank.davis14@example.com,FR,Atlanta,bronze,2023-02-09,17690.03
+15,Frank Martinez,frank.martinez15@example.com,US,Austin,platinum,2022-11-21,10065.23
+16,Frank Wilson,frank.wilson16@example.com,JP,Portland,silver,2024-04-03,1027.28
+17,Dave Garcia,dave.garcia17@example.com,FR,Miami,bronze,2021-05-25,816.13
+18,Alice Young,alice.young18@example.com,AU,Miami,platinum,2022-01-06,49784.75
+19,Jack Wilson,jack.wilson19@example.com,AU,San Francisco,silver,2023-11-18,18504.83
+20,Quinn Scott,quinn.scott20@example.com,DE,Chicago,gold,2018-01-12,23966.58
+21,Carol Anderson,carol.anderson21@example.com,DE,Miami,platinum,2023-02-04,34356.87
+22,Frank Moore,frank.moore22@example.com,BR,Chicago,silver,2024-11-05,13034.44
+23,Olivia Martinez,olivia.martinez23@example.com,DE,Chicago,bronze,2021-11-07,10466.99
+24,Leo Hall,leo.hall24@example.com,BR,Miami,silver,2018-01-18,18846.71
+25,Grace Davis,grace.davis25@example.com,DE,Chicago,silver,2023-05-26,4309.99
+26,Grace Wilson,grace.wilson26@example.com,FR,Boston,bronze,2021-05-04,22511.38
+27,Grace King,grace.king27@example.com,MX,Seattle,gold,2025-08-21,15785.87
+28,Quinn Martinez,quinn.martinez28@example.com,BR,Denver,platinum,2023-07-02,26994.74
+29,Mia Wright,mia.wright29@example.com,FR,Miami,bronze,2024-12-28,7665.71
+30,Mia Young,mia.young30@example.com,FR,San Francisco,gold,2022-06-09,24492.9
+31,Quinn Lee,quinn.lee31@example.com,MX,Atlanta,bronze,2022-01-27,31061.45
+32,Carol Anderson,carol.anderson32@example.com,JP,New York,platinum,2022-03-27,47870.3
+33,Eve Young,eve.young33@example.com,IN,Miami,gold,2023-05-13,21052.71
+34,Frank Taylor,frank.taylor34@example.com,FR,Chicago,silver,2020-04-18,3013.07
+35,Nick Anderson,nick.anderson35@example.com,US,Seattle,platinum,2018-07-05,10240.84
+36,Nick Wilson,nick.wilson36@example.com,US,Portland,silver,2020-11-28,18844.63
+37,Bob Clark,bob.clark37@example.com,FR,New York,platinum,2025-01-14,21681.82
+38,Rosa Hall,rosa.hall38@example.com,FR,New York,silver,2022-10-23,1189.36
+39,Leo Garcia,leo.garcia39@example.com,FR,Miami,silver,2023-05-26,42426.16
+40,Eve Garcia,eve.garcia40@example.com,US,Seattle,gold,2023-11-20,7556.27
+41,Kate Lee,kate.lee41@example.com,US,San Francisco,gold,2024-05-10,48240.17
+42,Tina Smith,tina.smith42@example.com,MX,Seattle,silver,2019-12-18,13418.58
+43,Bob King,bob.king43@example.com,MX,Miami,silver,2021-07-24,10314.46
+44,Sam Anderson,sam.anderson44@example.com,CA,New York,platinum,2021-09-27,45785.89
+45,Pete Davis,pete.davis45@example.com,DE,Miami,silver,2024-06-23,29568.23
+46,Rosa Wilson,rosa.wilson46@example.com,JP,New York,bronze,2018-08-22,22663.62
+47,Quinn Taylor,quinn.taylor47@example.com,FR,Atlanta,bronze,2018-04-11,11180.45
+48,Eve Garcia,eve.garcia48@example.com,US,Seattle,bronze,2025-12-10,23407.61
+49,Kate King,kate.king49@example.com,IN,Atlanta,gold,2019-02-15,15504.8
+50,Kate Martinez,kate.martinez50@example.com,FR,Austin,silver,2024-07-05,15900.63
+51,Eve Garcia,eve.garcia51@example.com,CA,Atlanta,silver,2018-03-01,34057.86
+52,Alice Smith,alice.smith52@example.com,US,Seattle,platinum,2021-07-10,44502.38
+53,Ivy Taylor,ivy.taylor53@example.com,UK,Miami,gold,2025-06-09,36257.03
+54,Kate Johnson,kate.johnson54@example.com,BR,Austin,bronze,2025-03-17,12953.31
+55,Pete Martinez,pete.martinez55@example.com,US,Denver,bronze,2020-06-18,8243.75
+56,Carol King,carol.king56@example.com,BR,Atlanta,gold,2019-09-05,7686.32
+57,Jack Davis,jack.davis57@example.com,FR,Atlanta,bronze,2022-07-07,21839.71
+58,Hank Johnson,hank.johnson58@example.com,UK,New York,bronze,2020-09-26,40512.07
+59,Leo Martinez,leo.martinez59@example.com,DE,Denver,platinum,2023-11-19,11864.53
+60,Alice Thomas,alice.thomas60@example.com,US,Portland,gold,2025-07-15,10035.46
+61,Nick Hill,nick.hill61@example.com,IN,Austin,gold,2019-06-22,14858.37
+62,Dave Anderson,dave.anderson62@example.com,AU,Seattle,gold,2018-10-02,19447.27
+63,Frank Young,frank.young63@example.com,US,Miami,platinum,2019-10-20,29978.1
+64,Frank Scott,frank.scott64@example.com,IN,Boston,gold,2024-03-13,28373.88
+65,Alice Taylor,alice.taylor65@example.com,BR,Atlanta,silver,2020-04-25,28619.33
+66,Rosa King,rosa.king66@example.com,MX,Chicago,silver,2024-08-22,4571.62
+67,Rosa Thomas,rosa.thomas67@example.com,FR,Austin,silver,2019-07-06,29117.54
+68,Sam Hall,sam.hall68@example.com,CA,Chicago,bronze,2024-12-06,40431.85
+69,Ivy King,ivy.king69@example.com,CA,Seattle,silver,2019-11-26,9361.86
+70,Rosa Lee,rosa.lee70@example.com,AU,Denver,silver,2024-09-10,20949.9
+71,Sam Moore,sam.moore71@example.com,DE,Miami,silver,2020-01-22,34686.72
+72,Leo Clark,leo.clark72@example.com,CA,Seattle,bronze,2022-06-23,22850.51
+73,Carol Young,carol.young73@example.com,US,Miami,platinum,2021-09-26,41172.49
+74,Bob Davis,bob.davis74@example.com,FR,Austin,gold,2023-09-11,17923.36
+75,Sam Davis,sam.davis75@example.com,US,Atlanta,gold,2022-10-12,39962.49
+76,Hank Hall,hank.hall76@example.com,DE,San Francisco,gold,2019-11-11,5010.89
+77,Grace Garcia,grace.garcia77@example.com,JP,Denver,platinum,2023-06-18,22761.39
+78,Sam Anderson,sam.anderson78@example.com,JP,Seattle,bronze,2022-06-18,21973.91
+79,Pete Garcia,pete.garcia79@example.com,UK,San Francisco,silver,2024-03-08,36789.9
+80,Nick Thomas,nick.thomas80@example.com,CA,Portland,silver,2021-07-09,26095.82
+81,Hank King,hank.king81@example.com,AU,Miami,bronze,2019-10-20,32171.19
+82,Leo Clark,leo.clark82@example.com,CA,Atlanta,gold,2019-01-27,35685.7
+83,Kate Anderson,kate.anderson83@example.com,CA,Denver,silver,2020-07-13,20560.35
+84,Kate Thomas,kate.thomas84@example.com,BR,Portland,platinum,2025-12-15,19842.58
+85,Tina Clark,tina.clark85@example.com,AU,New York,platinum,2022-01-10,29259.17
+86,Dave Allen,dave.allen86@example.com,UK,Portland,gold,2023-04-27,47785.19
+87,Nick Taylor,nick.taylor87@example.com,FR,Boston,platinum,2024-08-23,28163.43
+88,Tina Martinez,tina.martinez88@example.com,UK,Austin,gold,2023-12-05,30625.68
+89,Ivy Davis,ivy.davis89@example.com,UK,Miami,platinum,2025-07-01,45074.7
+90,Sam Wright,sam.wright90@example.com,BR,Austin,bronze,2018-01-25,8157.18
+91,Leo Anderson,leo.anderson91@example.com,BR,Atlanta,bronze,2022-04-28,22265.34
+92,Dave Lee,dave.lee92@example.com,AU,Portland,platinum,2022-08-09,20915.4
+93,Pete Clark,pete.clark93@example.com,AU,New York,silver,2022-03-27,11287.55
+94,Frank Martinez,frank.martinez94@example.com,UK,Miami,bronze,2022-11-17,11979.47
+95,Bob Hall,bob.hall95@example.com,AU,Chicago,silver,2020-09-01,22949.3
+96,Sam Young,sam.young96@example.com,CA,Miami,gold,2020-04-12,42533.56
+97,Jack Allen,jack.allen97@example.com,AU,Boston,platinum,2018-10-21,26379.84
+98,Alice Taylor,alice.taylor98@example.com,US,Portland,platinum,2020-02-21,19894.79
+99,Leo Young,leo.young99@example.com,BR,Denver,gold,2021-01-21,5287.31
+100,Dave Hall,dave.hall100@example.com,FR,Miami,gold,2021-03-28,41883.9
+101,Tina Moore,tina.moore101@example.com,MX,Seattle,silver,2019-09-21,20109.74
+102,Quinn Scott,quinn.scott102@example.com,CA,Atlanta,gold,2022-09-10,22021.88
+103,Grace Davis,grace.davis103@example.com,IN,Boston,gold,2022-03-22,5259.14
+104,Quinn Young,quinn.young104@example.com,CA,Seattle,silver,2024-04-24,14414.81
+105,Quinn Scott,quinn.scott105@example.com,CA,San Francisco,bronze,2025-10-23,12402.98
+106,Frank Johnson,frank.johnson106@example.com,DE,Seattle,bronze,2018-08-14,47260.39
+107,Pete Wilson,pete.wilson107@example.com,MX,New York,silver,2023-12-14,43285.64
+108,Bob Moore,bob.moore108@example.com,IN,Portland,silver,2025-11-27,17302.38
+109,Kate Hall,kate.hall109@example.com,IN,Seattle,bronze,2019-09-25,46226.44
+110,Frank Anderson,frank.anderson110@example.com,AU,New York,gold,2020-08-23,10236.3
+111,Quinn Davis,quinn.davis111@example.com,UK,Austin,silver,2019-04-09,39709.42
+112,Kate Allen,kate.allen112@example.com,MX,Chicago,platinum,2022-08-02,31003.24
+113,Grace Thomas,grace.thomas113@example.com,CA,Miami,bronze,2024-08-24,47712.55
+114,Frank Smith,frank.smith114@example.com,IN,Atlanta,gold,2024-06-21,12471.37
+115,Leo Hill,leo.hill115@example.com,JP,Atlanta,bronze,2025-11-17,19786.54
+116,Frank Brown,frank.brown116@example.com,IN,Portland,platinum,2020-12-22,19999.13
+117,Alice Moore,alice.moore117@example.com,UK,Boston,silver,2018-09-26,34135.38
+118,Pete Allen,pete.allen118@example.com,FR,Portland,platinum,2019-11-10,28078.04
+119,Dave Allen,dave.allen119@example.com,DE,Denver,platinum,2024-09-06,44292.29
+120,Eve Davis,eve.davis120@example.com,CA,Boston,platinum,2022-04-13,24599.28
+121,Dave Johnson,dave.johnson121@example.com,CA,New York,bronze,2025-10-23,16325.02
+122,Grace Hall,grace.hall122@example.com,AU,Seattle,silver,2021-04-14,2768.92
+123,Kate Wright,kate.wright123@example.com,CA,Boston,platinum,2023-12-26,2695.21
+124,Frank Wright,frank.wright124@example.com,IN,Atlanta,gold,2018-05-16,10971.89
+125,Carol Johnson,carol.johnson125@example.com,UK,Boston,bronze,2025-10-17,23643.28
+126,Alice Allen,alice.allen126@example.com,BR,New York,silver,2022-03-14,10178.86
+127,Kate Scott,kate.scott127@example.com,FR,Austin,silver,2019-04-28,29108.17
+128,Alice Smith,alice.smith128@example.com,MX,Miami,gold,2021-05-06,24359.41
+129,Grace Johnson,grace.johnson129@example.com,BR,New York,gold,2020-02-06,2055.56
+130,Pete Smith,pete.smith130@example.com,CA,Miami,gold,2021-02-26,38482.08
+131,Tina Davis,tina.davis131@example.com,CA,Seattle,platinum,2020-01-17,9896.47
+132,Quinn Davis,quinn.davis132@example.com,US,Miami,gold,2022-11-14,45393.35
+133,Bob Taylor,bob.taylor133@example.com,FR,Miami,bronze,2020-11-07,7390.83
+134,Sam Scott,sam.scott134@example.com,US,Chicago,platinum,2022-07-07,23076.62
+135,Mia Smith,mia.smith135@example.com,JP,Seattle,silver,2025-11-28,44585.68
+136,Tina Clark,tina.clark136@example.com,UK,San Francisco,gold,2022-03-14,7651.07
+137,Dave Lee,dave.lee137@example.com,AU,New York,platinum,2025-07-04,33218.34
+138,Alice Anderson,alice.anderson138@example.com,AU,New York,gold,2023-10-22,31983.54
+139,Sam Martinez,sam.martinez139@example.com,IN,San Francisco,gold,2023-10-13,44479.02
+140,Hank Brown,hank.brown140@example.com,FR,Portland,silver,2025-01-12,25590.94
+141,Dave Brown,dave.brown141@example.com,MX,New York,platinum,2022-07-22,17702.47
+142,Dave Johnson,dave.johnson142@example.com,US,Seattle,silver,2025-03-20,23110.74
+143,Nick Anderson,nick.anderson143@example.com,DE,San Francisco,bronze,2019-05-22,17402.59
+144,Hank King,hank.king144@example.com,AU,Portland,platinum,2023-01-24,31818.83
+145,Jack Johnson,jack.johnson145@example.com,DE,Seattle,gold,2023-12-10,44445.54
+146,Leo Anderson,leo.anderson146@example.com,BR,Portland,bronze,2025-09-28,10023.54
+147,Nick Garcia,nick.garcia147@example.com,UK,Portland,gold,2021-08-19,22708.68
+148,Grace Johnson,grace.johnson148@example.com,IN,Boston,silver,2023-11-08,46198.03
+149,Jack Scott,jack.scott149@example.com,IN,San Francisco,silver,2018-11-10,16483.68
+150,Pete Thomas,pete.thomas150@example.com,US,Austin,silver,2025-03-17,49096.41
+151,Leo Clark,leo.clark151@example.com,AU,Boston,bronze,2020-12-26,18849.34
+152,Kate Thomas,kate.thomas152@example.com,JP,Miami,gold,2025-04-15,25076.38
+153,Hank Davis,hank.davis153@example.com,CA,Chicago,platinum,2018-12-08,37128.32
+154,Jack Anderson,jack.anderson154@example.com,FR,Seattle,gold,2025-09-06,18808.09
+155,Sam Wright,sam.wright155@example.com,IN,Chicago,gold,2018-09-14,819.13
+156,Grace Young,grace.young156@example.com,JP,Austin,gold,2021-11-07,45624.06
+157,Jack Allen,jack.allen157@example.com,CA,Boston,silver,2023-01-04,28417.9
+158,Carol Hall,carol.hall158@example.com,UK,New York,platinum,2024-08-28,16267.35
+159,Mia Wright,mia.wright159@example.com,BR,Austin,gold,2024-04-11,8678.1
+160,Tina Lee,tina.lee160@example.com,CA,Miami,bronze,2019-09-09,22534.13
+161,Tina Wilson,tina.wilson161@example.com,JP,Austin,silver,2021-02-19,48965.28
+162,Nick Brown,nick.brown162@example.com,JP,Portland,bronze,2023-08-15,31872.33
+163,Eve Wright,eve.wright163@example.com,JP,Denver,silver,2024-10-04,38686.4
+164,Pete King,pete.king164@example.com,UK,New York,silver,2021-05-11,2959.06
+165,Ivy Scott,ivy.scott165@example.com,JP,Denver,platinum,2019-11-24,48719.66
+166,Ivy Lee,ivy.lee166@example.com,US,Seattle,bronze,2021-12-16,2548.46
+167,Dave Clark,dave.clark167@example.com,IN,Denver,gold,2020-08-19,7200.99
+168,Hank Hall,hank.hall168@example.com,BR,San Francisco,bronze,2019-11-22,1567.1
+169,Ivy Davis,ivy.davis169@example.com,BR,New York,platinum,2023-05-21,27212.73
+170,Leo Davis,leo.davis170@example.com,MX,New York,bronze,2023-11-27,5515.1
+171,Alice Wright,alice.wright171@example.com,IN,Austin,silver,2024-10-15,6424.08
+172,Leo King,leo.king172@example.com,US,Portland,silver,2025-10-13,18837.17
+173,Hank Brown,hank.brown173@example.com,AU,Atlanta,gold,2025-12-17,35723.35
+174,Eve Brown,eve.brown174@example.com,FR,Seattle,silver,2025-12-20,18649.55
+175,Mia Smith,mia.smith175@example.com,UK,Austin,gold,2019-09-28,3131.79
+176,Tina Scott,tina.scott176@example.com,FR,Denver,platinum,2020-08-16,44059.18
+177,Alice Brown,alice.brown177@example.com,FR,Miami,platinum,2024-07-20,2369.26
+178,Tina Davis,tina.davis178@example.com,UK,Boston,gold,2018-07-26,20550.07
+179,Alice Lee,alice.lee179@example.com,US,New York,silver,2023-04-24,5.51
+180,Bob Allen,bob.allen180@example.com,MX,San Francisco,silver,2024-10-21,1852.49
+181,Tina Wilson,tina.wilson181@example.com,DE,Chicago,bronze,2024-02-23,24528.7
+182,Grace Smith,grace.smith182@example.com,BR,Denver,silver,2021-02-16,4114.53
+183,Carol Lee,carol.lee183@example.com,MX,Miami,bronze,2018-11-04,18701.7
+184,Jack Taylor,jack.taylor184@example.com,FR,Austin,silver,2021-06-14,15977.69
+185,Quinn Moore,quinn.moore185@example.com,IN,Portland,silver,2019-01-17,46533.54
+186,Frank Scott,frank.scott186@example.com,BR,Seattle,bronze,2018-02-26,46159.09
+187,Leo Martinez,leo.martinez187@example.com,FR,Boston,silver,2020-05-20,20619.74
+188,Rosa King,rosa.king188@example.com,AU,Boston,gold,2023-12-24,48752.22
+189,Bob Anderson,bob.anderson189@example.com,UK,Chicago,silver,2024-05-03,42787.82
+190,Tina Hall,tina.hall190@example.com,FR,Chicago,bronze,2022-01-08,42889.48
+191,Ivy Lee,ivy.lee191@example.com,US,Atlanta,bronze,2021-03-24,47066.28
+192,Grace Thomas,grace.thomas192@example.com,AU,San Francisco,gold,2018-07-02,16331.45
+193,Rosa Young,rosa.young193@example.com,JP,Atlanta,platinum,2025-06-04,1395.29
+194,Carol Hall,carol.hall194@example.com,DE,Austin,bronze,2018-03-05,21954.92
+195,Frank Scott,frank.scott195@example.com,FR,Seattle,platinum,2020-12-15,29137.52
+196,Mia Brown,mia.brown196@example.com,US,Seattle,bronze,2022-01-28,21127.77
+197,Eve Allen,eve.allen197@example.com,AU,Miami,platinum,2019-11-02,44223.49
+198,Alice Allen,alice.allen198@example.com,UK,Chicago,bronze,2025-04-05,45080.96
+199,Pete Anderson,pete.anderson199@example.com,US,San Francisco,silver,2022-09-06,16468.26
+200,Eve King,eve.king200@example.com,AU,Chicago,platinum,2024-06-09,16122.07
+201,Olivia Hall,olivia.hall201@example.com,AU,Chicago,platinum,2022-03-05,19841.23
+202,Bob Hill,bob.hill202@example.com,US,Miami,bronze,2021-10-01,40955.41
+203,Jack Wilson,jack.wilson203@example.com,FR,New York,gold,2024-07-02,1494.04
+204,Hank Clark,hank.clark204@example.com,UK,Portland,bronze,2022-12-05,49603.77
+205,Olivia Anderson,olivia.anderson205@example.com,BR,Seattle,platinum,2023-10-05,27719.21
+206,Alice Wilson,alice.wilson206@example.com,FR,Chicago,bronze,2022-01-21,19938.84
+207,Mia Martinez,mia.martinez207@example.com,UK,Miami,bronze,2020-06-16,2386.59
+208,Frank Taylor,frank.taylor208@example.com,UK,New York,silver,2023-12-14,19920.19
+209,Tina Hall,tina.hall209@example.com,MX,Denver,gold,2021-11-26,6775.36
+210,Carol Hill,carol.hill210@example.com,MX,Austin,silver,2018-03-17,19313.48
+211,Kate Moore,kate.moore211@example.com,MX,Portland,platinum,2020-03-13,2287.21
+212,Frank Smith,frank.smith212@example.com,MX,Denver,bronze,2018-07-20,45515.41
+213,Tina Moore,tina.moore213@example.com,JP,Denver,gold,2019-04-08,18274.5
+214,Tina Martinez,tina.martinez214@example.com,MX,Miami,platinum,2020-09-27,25328.97
+215,Olivia Moore,olivia.moore215@example.com,UK,San Francisco,bronze,2022-10-08,17652.91
+216,Tina Davis,tina.davis216@example.com,BR,Seattle,bronze,2024-09-06,44470.78
+217,Bob Thomas,bob.thomas217@example.com,BR,Portland,platinum,2021-03-03,18230.91
+218,Ivy Scott,ivy.scott218@example.com,DE,Denver,silver,2018-03-05,22495.91
+219,Dave Anderson,dave.anderson219@example.com,IN,Denver,bronze,2020-11-15,12805.22
+220,Mia Young,mia.young220@example.com,DE,Denver,platinum,2019-12-27,5448.97
+221,Ivy Young,ivy.young221@example.com,CA,Portland,gold,2019-05-19,11383.84
+222,Olivia Wright,olivia.wright222@example.com,JP,Denver,platinum,2025-03-01,27558.86
+223,Quinn Lee,quinn.lee223@example.com,CA,Austin,gold,2024-11-09,18451.54
+224,Hank Lee,hank.lee224@example.com,FR,Seattle,silver,2020-06-03,19990.31
+225,Alice Clark,alice.clark225@example.com,UK,Seattle,silver,2025-06-06,21951.2
+226,Ivy Allen,ivy.allen226@example.com,FR,Boston,silver,2020-08-07,30059.6
+227,Pete Thomas,pete.thomas227@example.com,UK,Denver,platinum,2024-06-27,11041.38
+228,Alice Hill,alice.hill228@example.com,US,Boston,gold,2024-09-11,12467.9
+229,Rosa Martinez,rosa.martinez229@example.com,IN,Austin,gold,2018-07-04,9456.19
+230,Jack Young,jack.young230@example.com,US,New York,gold,2024-06-22,26401.16
+231,Grace Hall,grace.hall231@example.com,US,Miami,platinum,2022-04-27,49694.51
+232,Rosa Smith,rosa.smith232@example.com,FR,San Francisco,platinum,2020-11-28,800.43
+233,Eve Allen,eve.allen233@example.com,MX,San Francisco,platinum,2019-06-14,35793.26
+234,Alice Hall,alice.hall234@example.com,UK,Atlanta,bronze,2024-08-14,12212.23
+235,Carol Smith,carol.smith235@example.com,MX,Boston,silver,2022-04-08,38115.67
+236,Pete Young,pete.young236@example.com,US,Boston,bronze,2018-10-22,6372.54
+237,Alice Davis,alice.davis237@example.com,BR,Seattle,gold,2025-06-26,44226.52
+238,Dave Clark,dave.clark238@example.com,CA,Chicago,gold,2024-05-05,26854.26
+239,Sam Moore,sam.moore239@example.com,US,Boston,gold,2023-04-14,49947.59
+240,Frank King,frank.king240@example.com,US,Chicago,gold,2020-12-23,21106.68
+241,Rosa Wilson,rosa.wilson241@example.com,DE,Miami,platinum,2025-02-11,44321.42
+242,Dave Brown,dave.brown242@example.com,BR,San Francisco,gold,2018-10-27,8269.17
+243,Grace Johnson,grace.johnson243@example.com,JP,Seattle,silver,2019-01-09,34340.77
+244,Olivia Martinez,olivia.martinez244@example.com,UK,San Francisco,platinum,2018-03-19,20992.05
+245,Hank Brown,hank.brown245@example.com,DE,Denver,gold,2020-12-28,39047.53
+246,Sam Martinez,sam.martinez246@example.com,UK,Austin,gold,2024-10-03,37256.58
+247,Kate Scott,kate.scott247@example.com,US,Chicago,bronze,2022-08-26,2876.27
+248,Quinn Clark,quinn.clark248@example.com,IN,Boston,platinum,2020-05-26,16137.55
+249,Olivia Smith,olivia.smith249@example.com,AU,Atlanta,bronze,2024-09-11,8649.56
+250,Kate Thomas,kate.thomas250@example.com,DE,Boston,gold,2024-08-27,10513.58
+251,Pete Wilson,pete.wilson251@example.com,BR,Boston,bronze,2024-12-14,25708.96
+252,Nick Wright,nick.wright252@example.com,US,Miami,platinum,2023-01-14,27949.08
+253,Eve Hall,eve.hall253@example.com,IN,Boston,bronze,2024-01-20,47520.83
+254,Bob Hall,bob.hall254@example.com,DE,New York,gold,2018-05-27,827.54
+255,Grace Davis,grace.davis255@example.com,JP,Portland,platinum,2020-06-24,26765.09
+256,Tina Clark,tina.clark256@example.com,US,Chicago,platinum,2025-01-06,39664.57
+257,Kate Smith,kate.smith257@example.com,IN,Denver,bronze,2020-11-08,15303.3
+258,Ivy Wilson,ivy.wilson258@example.com,US,Boston,platinum,2023-08-24,14772.28
+259,Mia Brown,mia.brown259@example.com,US,Atlanta,gold,2023-06-01,19548.66
+260,Eve Thomas,eve.thomas260@example.com,DE,New York,silver,2019-10-21,30022.39
+261,Hank Clark,hank.clark261@example.com,JP,San Francisco,bronze,2025-08-26,35663.71
+262,Frank Brown,frank.brown262@example.com,FR,Austin,gold,2025-06-24,37701.47
+263,Leo Young,leo.young263@example.com,JP,Miami,gold,2020-02-14,48873.52
+264,Nick Young,nick.young264@example.com,FR,Denver,platinum,2018-09-12,6883.96
+265,Quinn Anderson,quinn.anderson265@example.com,US,Denver,gold,2022-11-01,11042.94
+266,Frank King,frank.king266@example.com,BR,New York,silver,2019-09-17,48343.09
+267,Dave Hill,dave.hill267@example.com,AU,Seattle,silver,2024-10-15,36439.63
+268,Hank Wright,hank.wright268@example.com,UK,Chicago,silver,2023-11-28,9307.78
+269,Pete Johnson,pete.johnson269@example.com,US,San Francisco,platinum,2018-03-03,9533.74
+270,Ivy Wright,ivy.wright270@example.com,US,Austin,silver,2020-05-24,39261.29
+271,Hank Hall,hank.hall271@example.com,UK,Seattle,gold,2023-03-01,1333.99
+272,Olivia Young,olivia.young272@example.com,IN,Portland,bronze,2023-09-21,34337.67
+273,Rosa Anderson,rosa.anderson273@example.com,FR,Austin,silver,2020-05-18,43786.08
+274,Bob Martinez,bob.martinez274@example.com,JP,New York,bronze,2023-01-05,24828.73
+275,Quinn Scott,quinn.scott275@example.com,IN,Denver,bronze,2019-12-01,39145.71
+276,Quinn Allen,quinn.allen276@example.com,IN,New York,bronze,2019-07-14,47413.22
+277,Alice Allen,alice.allen277@example.com,FR,New York,bronze,2018-09-04,14388.05
+278,Jack Clark,jack.clark278@example.com,AU,New York,silver,2024-03-25,23526.66
+279,Leo Martinez,leo.martinez279@example.com,BR,Denver,bronze,2018-02-07,22437.61
+280,Carol Anderson,carol.anderson280@example.com,BR,Atlanta,gold,2020-07-16,21070.39
+281,Ivy Davis,ivy.davis281@example.com,MX,Denver,bronze,2018-02-25,9503.17
+282,Hank Smith,hank.smith282@example.com,JP,Chicago,silver,2018-04-01,22463.02
+283,Tina Wright,tina.wright283@example.com,JP,San Francisco,platinum,2025-08-11,13804.32
+284,Kate Scott,kate.scott284@example.com,US,Portland,platinum,2021-03-25,39664.17
+285,Tina Smith,tina.smith285@example.com,CA,Miami,gold,2022-01-26,27538.11
+286,Dave Hill,dave.hill286@example.com,BR,San Francisco,platinum,2024-05-26,13217.03
+287,Carol Clark,carol.clark287@example.com,BR,Denver,gold,2022-10-16,22314.96
+288,Quinn Allen,quinn.allen288@example.com,AU,San Francisco,silver,2021-11-22,30515.43
+289,Frank Clark,frank.clark289@example.com,UK,Austin,silver,2024-10-20,21665.5
+290,Jack Davis,jack.davis290@example.com,MX,Atlanta,gold,2022-01-28,19595.83
+291,Hank Davis,hank.davis291@example.com,JP,Portland,bronze,2023-01-15,18901.01
+292,Leo Allen,leo.allen292@example.com,DE,Denver,silver,2020-05-11,8517.81
+293,Kate Hill,kate.hill293@example.com,UK,Miami,bronze,2023-12-20,45646.02
+294,Mia Garcia,mia.garcia294@example.com,UK,Portland,gold,2018-07-05,722.49
+295,Sam Lee,sam.lee295@example.com,JP,New York,platinum,2022-08-23,35835.87
+296,Grace Martinez,grace.martinez296@example.com,IN,Austin,silver,2025-09-22,48399.15
+297,Mia Allen,mia.allen297@example.com,FR,Seattle,bronze,2025-05-26,19852.5
+298,Jack Allen,jack.allen298@example.com,CA,Boston,platinum,2020-03-07,16913.67
+299,Grace Garcia,grace.garcia299@example.com,CA,Boston,gold,2020-01-23,30786.37
+300,Quinn Johnson,quinn.johnson300@example.com,JP,Chicago,silver,2025-06-25,43744.89
+301,Nick Martinez,nick.martinez301@example.com,IN,Portland,silver,2018-05-06,4873.96
+302,Rosa Taylor,rosa.taylor302@example.com,US,Seattle,platinum,2022-04-26,46584.03
+303,Carol Smith,carol.smith303@example.com,MX,Atlanta,bronze,2018-12-05,21537.14
+304,Quinn Hill,quinn.hill304@example.com,JP,Portland,gold,2023-07-10,305.46
+305,Hank Lee,hank.lee305@example.com,US,Austin,gold,2024-02-13,7893.62
+306,Alice Hall,alice.hall306@example.com,UK,Atlanta,gold,2022-08-15,25617.61
+307,Leo Hall,leo.hall307@example.com,US,Portland,gold,2019-06-07,6874.38
+308,Alice Moore,alice.moore308@example.com,FR,New York,platinum,2025-07-14,48473.47
+309,Rosa Wilson,rosa.wilson309@example.com,US,Chicago,gold,2021-08-13,11466.61
+310,Hank Johnson,hank.johnson310@example.com,US,Austin,platinum,2018-12-24,28012.86
+311,Hank Moore,hank.moore311@example.com,BR,San Francisco,silver,2020-06-25,29055.6
+312,Alice Hill,alice.hill312@example.com,IN,Seattle,silver,2018-05-06,40929.98
+313,Rosa Thomas,rosa.thomas313@example.com,BR,Atlanta,gold,2021-09-18,45144.64
+314,Frank Wilson,frank.wilson314@example.com,CA,Boston,silver,2021-04-14,48945.43
+315,Leo Wright,leo.wright315@example.com,IN,Atlanta,platinum,2024-03-10,28945.3
+316,Frank Smith,frank.smith316@example.com,UK,Denver,platinum,2020-09-22,20161.25
+317,Alice Hill,alice.hill317@example.com,DE,Atlanta,silver,2019-04-12,23327.36
+318,Olivia Wilson,olivia.wilson318@example.com,IN,Denver,platinum,2021-07-08,49979.17
+319,Rosa King,rosa.king319@example.com,UK,San Francisco,silver,2025-01-19,32622.44
+320,Leo Wilson,leo.wilson320@example.com,IN,Austin,bronze,2019-08-17,5820.42
+321,Pete Clark,pete.clark321@example.com,JP,Denver,silver,2018-11-05,44630.14
+322,Grace Davis,grace.davis322@example.com,UK,Chicago,platinum,2021-12-17,4395.79
+323,Alice Young,alice.young323@example.com,JP,Austin,bronze,2022-07-13,4015.69
+324,Mia Lee,mia.lee324@example.com,DE,Boston,bronze,2024-04-27,19326.2
+325,Mia Davis,mia.davis325@example.com,CA,New York,platinum,2019-06-17,4070.57
+326,Olivia Lee,olivia.lee326@example.com,JP,Miami,bronze,2018-12-25,22355.01
+327,Hank Johnson,hank.johnson327@example.com,IN,New York,gold,2023-09-03,42933.24
+328,Alice Taylor,alice.taylor328@example.com,MX,San Francisco,bronze,2021-06-20,42597.34
+329,Carol Johnson,carol.johnson329@example.com,DE,Miami,silver,2018-03-27,21168.18
+330,Eve Clark,eve.clark330@example.com,MX,Seattle,platinum,2023-08-09,4102.85
+331,Leo Wilson,leo.wilson331@example.com,IN,Miami,platinum,2021-07-24,30329.41
+332,Dave Hall,dave.hall332@example.com,BR,Portland,gold,2025-02-07,38963.23
+333,Rosa Moore,rosa.moore333@example.com,DE,New York,gold,2019-10-22,22547.06
+334,Grace Clark,grace.clark334@example.com,CA,Seattle,bronze,2023-06-16,7333.82
+335,Quinn Lee,quinn.lee335@example.com,IN,New York,platinum,2019-09-04,25366.28
+336,Jack Young,jack.young336@example.com,FR,Boston,gold,2025-06-09,25073.59
+337,Pete Anderson,pete.anderson337@example.com,JP,Boston,gold,2023-10-21,34435.47
+338,Quinn Taylor,quinn.taylor338@example.com,FR,San Francisco,platinum,2019-03-17,9752.54
+339,Bob Johnson,bob.johnson339@example.com,BR,Portland,silver,2019-03-07,9622.15
+340,Bob King,bob.king340@example.com,MX,Denver,gold,2020-09-05,30426.55
+341,Jack Young,jack.young341@example.com,BR,Chicago,platinum,2022-10-14,40954.35
+342,Sam Anderson,sam.anderson342@example.com,JP,Denver,platinum,2020-07-02,2704.86
+343,Rosa Clark,rosa.clark343@example.com,UK,Atlanta,platinum,2019-09-07,10578.35
+344,Leo Taylor,leo.taylor344@example.com,MX,Miami,silver,2022-01-18,22924.05
+345,Jack Hill,jack.hill345@example.com,US,Seattle,platinum,2018-06-06,11339.67
+346,Tina Allen,tina.allen346@example.com,FR,Seattle,silver,2020-11-21,22567.83
+347,Kate Young,kate.young347@example.com,AU,Austin,silver,2021-07-05,32884.83
+348,Eve Scott,eve.scott348@example.com,FR,Denver,gold,2022-10-25,14446.43
+349,Carol Wright,carol.wright349@example.com,FR,Miami,bronze,2020-12-23,38380.35
+350,Leo Taylor,leo.taylor350@example.com,MX,Austin,gold,2022-03-10,18500.64
+351,Eve Brown,eve.brown351@example.com,AU,Portland,platinum,2019-12-12,12339.6
+352,Rosa Martinez,rosa.martinez352@example.com,DE,Atlanta,platinum,2019-04-12,479.29
+353,Pete Thomas,pete.thomas353@example.com,FR,Denver,gold,2025-09-02,15142.66
+354,Tina King,tina.king354@example.com,FR,Seattle,bronze,2025-07-21,21267.43
+355,Leo Allen,leo.allen355@example.com,JP,Seattle,bronze,2022-10-11,9443.55
+356,Leo Johnson,leo.johnson356@example.com,DE,Chicago,bronze,2025-03-08,45640.35
+357,Olivia Lee,olivia.lee357@example.com,MX,Austin,bronze,2018-08-11,34138.52
+358,Frank Brown,frank.brown358@example.com,UK,Boston,bronze,2023-03-19,12813.96
+359,Ivy Taylor,ivy.taylor359@example.com,DE,New York,silver,2021-06-24,17700.39
+360,Jack Allen,jack.allen360@example.com,DE,Boston,bronze,2023-04-21,30505.28
+361,Grace Scott,grace.scott361@example.com,DE,Portland,silver,2018-12-04,35142.97
+362,Pete Moore,pete.moore362@example.com,MX,San Francisco,silver,2019-06-13,2198.96
+363,Quinn Anderson,quinn.anderson363@example.com,AU,Austin,silver,2022-11-26,32939.43
+364,Pete Taylor,pete.taylor364@example.com,AU,Seattle,silver,2021-02-17,9344.07
+365,Frank Brown,frank.brown365@example.com,FR,San Francisco,silver,2019-07-02,8359.88
+366,Tina Taylor,tina.taylor366@example.com,IN,Denver,silver,2025-10-03,19844.39
+367,Quinn Davis,quinn.davis367@example.com,CA,Chicago,gold,2022-11-13,33887.95
+368,Alice Davis,alice.davis368@example.com,UK,Denver,platinum,2018-02-10,44479.07
+369,Alice Thomas,alice.thomas369@example.com,CA,Boston,silver,2019-08-23,18520.18
+370,Dave Johnson,dave.johnson370@example.com,BR,San Francisco,silver,2021-07-22,36972.23
+371,Pete Lee,pete.lee371@example.com,FR,Chicago,platinum,2022-06-03,37310.46
+372,Jack Johnson,jack.johnson372@example.com,UK,New York,silver,2023-02-08,28584.32
+373,Jack Wright,jack.wright373@example.com,IN,San Francisco,silver,2024-08-26,23857.93
+374,Frank Johnson,frank.johnson374@example.com,CA,Chicago,silver,2024-08-07,36709.37
+375,Hank Taylor,hank.taylor375@example.com,US,Portland,bronze,2022-08-28,14802.5
+376,Ivy King,ivy.king376@example.com,FR,Austin,gold,2018-09-06,25476.87
+377,Dave Wright,dave.wright377@example.com,CA,Miami,bronze,2025-02-16,37375.51
+378,Olivia Wright,olivia.wright378@example.com,DE,Chicago,platinum,2019-03-12,19840.8
+379,Bob Allen,bob.allen379@example.com,DE,San Francisco,gold,2023-12-12,2052.04
+380,Hank Martinez,hank.martinez380@example.com,FR,Austin,bronze,2019-08-15,7163.12
+381,Grace Scott,grace.scott381@example.com,UK,Denver,platinum,2023-07-07,14788.04
+382,Pete Taylor,pete.taylor382@example.com,CA,Atlanta,gold,2020-08-24,37726.38
+383,Tina Garcia,tina.garcia383@example.com,AU,Portland,bronze,2019-12-19,29813.17
+384,Jack Thomas,jack.thomas384@example.com,US,Denver,bronze,2021-05-07,2875.1
+385,Bob Scott,bob.scott385@example.com,CA,Denver,silver,2018-06-19,11921.61
+386,Rosa Young,rosa.young386@example.com,JP,Miami,gold,2022-03-22,37113.43
+387,Tina Taylor,tina.taylor387@example.com,AU,Denver,silver,2022-06-27,13806.56
+388,Mia Wright,mia.wright388@example.com,DE,New York,bronze,2018-03-25,18158.24
+389,Tina Taylor,tina.taylor389@example.com,DE,New York,bronze,2025-01-09,40898.77
+390,Alice Garcia,alice.garcia390@example.com,UK,San Francisco,silver,2021-10-27,2176.88
+391,Pete King,pete.king391@example.com,UK,Austin,bronze,2018-01-14,23224.03
+392,Alice Thomas,alice.thomas392@example.com,CA,San Francisco,platinum,2025-02-23,29415.14
+393,Sam Clark,sam.clark393@example.com,AU,Seattle,gold,2020-08-06,46016.3
+394,Mia Martinez,mia.martinez394@example.com,IN,Austin,bronze,2018-07-20,25688.73
+395,Jack Moore,jack.moore395@example.com,US,Seattle,silver,2018-02-09,20570.32
+396,Carol King,carol.king396@example.com,JP,Portland,gold,2022-07-09,18260.88
+397,Sam Wright,sam.wright397@example.com,MX,New York,platinum,2023-06-24,37506.36
+398,Quinn Martinez,quinn.martinez398@example.com,CA,Austin,bronze,2020-01-22,29609.73
+399,Rosa Moore,rosa.moore399@example.com,FR,Austin,silver,2025-04-17,29370.26
+400,Jack Wilson,jack.wilson400@example.com,BR,Austin,bronze,2022-05-25,34111.49
+401,Pete Hill,pete.hill401@example.com,DE,Seattle,gold,2025-10-10,10589.06
+402,Olivia King,olivia.king402@example.com,IN,Chicago,platinum,2025-04-12,27251.79
+403,Jack Smith,jack.smith403@example.com,US,Boston,platinum,2020-12-28,9867.01
+404,Grace Brown,grace.brown404@example.com,FR,Atlanta,platinum,2021-03-18,28843.75
+405,Sam Martinez,sam.martinez405@example.com,DE,San Francisco,platinum,2018-05-12,44772.14
+406,Eve Wilson,eve.wilson406@example.com,MX,San Francisco,gold,2025-01-27,14977.9
+407,Olivia Smith,olivia.smith407@example.com,UK,Denver,platinum,2023-02-09,31452.57
+408,Leo Hall,leo.hall408@example.com,AU,New York,platinum,2018-10-04,15831
+409,Nick Thomas,nick.thomas409@example.com,IN,Boston,platinum,2018-05-05,32039.45
+410,Tina Young,tina.young410@example.com,MX,Atlanta,silver,2018-09-19,25292.24
+411,Carol Thomas,carol.thomas411@example.com,MX,Portland,platinum,2022-06-17,33356.55
+412,Leo Martinez,leo.martinez412@example.com,FR,San Francisco,silver,2021-12-25,44846.17
+413,Nick Lee,nick.lee413@example.com,FR,New York,gold,2025-07-09,2711.22
+414,Mia Smith,mia.smith414@example.com,DE,New York,platinum,2018-11-22,2002.62
+415,Hank Davis,hank.davis415@example.com,US,Seattle,silver,2020-01-21,7984.33
+416,Grace Hill,grace.hill416@example.com,FR,San Francisco,platinum,2022-12-13,14645.73
+417,Leo Taylor,leo.taylor417@example.com,DE,Seattle,platinum,2024-05-22,5904.59
+418,Kate Moore,kate.moore418@example.com,IN,Seattle,silver,2019-01-24,9245.53
+419,Eve Hall,eve.hall419@example.com,FR,Boston,bronze,2021-05-15,12101.31
+420,Eve Hill,eve.hill420@example.com,DE,Miami,gold,2025-04-20,43120.62
+421,Alice Young,alice.young421@example.com,CA,Atlanta,gold,2024-11-22,35006.5
+422,Quinn Davis,quinn.davis422@example.com,BR,Chicago,gold,2025-03-21,14744.55
+423,Rosa Moore,rosa.moore423@example.com,DE,Portland,gold,2021-02-10,23987.03
+424,Ivy Martinez,ivy.martinez424@example.com,CA,Denver,bronze,2022-10-25,45894
+425,Rosa Taylor,rosa.taylor425@example.com,AU,Chicago,bronze,2022-02-12,28268.49
+426,Quinn Wilson,quinn.wilson426@example.com,JP,Portland,gold,2022-07-02,9222.63
+427,Hank Clark,hank.clark427@example.com,BR,Miami,gold,2020-01-27,7340.59
+428,Quinn Davis,quinn.davis428@example.com,BR,Portland,platinum,2025-10-18,23318.8
+429,Tina Johnson,tina.johnson429@example.com,CA,Denver,gold,2024-03-13,15528.29
+430,Dave Scott,dave.scott430@example.com,AU,Miami,bronze,2023-01-27,38599.02
+431,Leo Davis,leo.davis431@example.com,FR,Chicago,platinum,2025-11-16,31520.06
+432,Sam Hall,sam.hall432@example.com,FR,Denver,bronze,2022-08-13,12071.39
+433,Jack Johnson,jack.johnson433@example.com,CA,New York,bronze,2019-09-17,27450.33
+434,Bob Hall,bob.hall434@example.com,UK,Miami,silver,2024-08-11,43168.28
+435,Ivy Lee,ivy.lee435@example.com,US,Atlanta,gold,2019-07-07,39689.8
+436,Nick Hill,nick.hill436@example.com,UK,Atlanta,bronze,2021-05-05,16214.5
+437,Carol Davis,carol.davis437@example.com,CA,Chicago,silver,2019-11-15,26795.87
+438,Ivy Hall,ivy.hall438@example.com,DE,Denver,platinum,2018-09-02,26855.4
+439,Hank Davis,hank.davis439@example.com,AU,Chicago,bronze,2023-04-04,1163.91
+440,Mia Allen,mia.allen440@example.com,CA,Portland,platinum,2024-09-04,19066.82
+441,Leo Hall,leo.hall441@example.com,FR,Austin,gold,2018-05-08,20884.54
+442,Nick King,nick.king442@example.com,CA,Chicago,platinum,2020-12-14,11530.22
+443,Dave Johnson,dave.johnson443@example.com,UK,Denver,silver,2019-04-14,6247.04
+444,Dave Wilson,dave.wilson444@example.com,MX,New York,gold,2025-12-01,17052.37
+445,Eve Johnson,eve.johnson445@example.com,CA,San Francisco,platinum,2018-11-01,10660.13
+446,Rosa Clark,rosa.clark446@example.com,AU,Denver,gold,2022-07-15,1455.21
+447,Leo Taylor,leo.taylor447@example.com,MX,Boston,platinum,2024-10-14,28482.68
+448,Quinn King,quinn.king448@example.com,CA,Denver,silver,2020-12-22,11837.72
+449,Sam Young,sam.young449@example.com,DE,Seattle,platinum,2021-07-16,7787.03
+450,Alice Garcia,alice.garcia450@example.com,CA,Austin,bronze,2021-12-02,32167.01
+451,Rosa Wilson,rosa.wilson451@example.com,JP,New York,platinum,2020-09-20,11169.21
+452,Carol Moore,carol.moore452@example.com,MX,Miami,bronze,2021-01-10,29451.21
+453,Bob Allen,bob.allen453@example.com,JP,New York,bronze,2025-05-21,48798.54
+454,Rosa Hill,rosa.hill454@example.com,IN,San Francisco,platinum,2020-05-21,5333.25
+455,Ivy Brown,ivy.brown455@example.com,FR,Seattle,platinum,2025-12-24,33.31
+456,Grace Wilson,grace.wilson456@example.com,JP,New York,silver,2023-11-23,5498.87
+457,Hank Young,hank.young457@example.com,CA,Miami,bronze,2020-07-07,8984.65
+458,Rosa Martinez,rosa.martinez458@example.com,FR,Portland,gold,2019-03-08,48584.38
+459,Ivy Martinez,ivy.martinez459@example.com,MX,San Francisco,platinum,2020-06-10,46619.55
+460,Dave Scott,dave.scott460@example.com,JP,Miami,silver,2018-06-25,38270.74
+461,Bob Brown,bob.brown461@example.com,MX,Chicago,bronze,2023-11-05,32936.65
+462,Leo Wilson,leo.wilson462@example.com,IN,Seattle,silver,2025-11-07,17374.8
+463,Leo Scott,leo.scott463@example.com,MX,Atlanta,silver,2021-07-06,9702.18
+464,Eve Moore,eve.moore464@example.com,DE,New York,silver,2019-06-27,2346.33
+465,Sam Davis,sam.davis465@example.com,AU,New York,gold,2018-12-12,19504.12
+466,Rosa Johnson,rosa.johnson466@example.com,FR,New York,platinum,2019-04-28,43271.03
+467,Frank Thomas,frank.thomas467@example.com,DE,Atlanta,platinum,2019-08-15,45689.4
+468,Nick Young,nick.young468@example.com,JP,San Francisco,platinum,2021-08-05,39101.15
+469,Jack Hall,jack.hall469@example.com,US,Denver,bronze,2020-08-15,10953.98
+470,Leo Allen,leo.allen470@example.com,FR,Seattle,platinum,2021-02-20,47883.19
+471,Frank Garcia,frank.garcia471@example.com,BR,San Francisco,bronze,2020-11-06,41688.41
+472,Ivy Scott,ivy.scott472@example.com,CA,Portland,platinum,2018-09-24,26957.06
+473,Quinn Hall,quinn.hall473@example.com,CA,Chicago,gold,2023-11-06,45017.59
+474,Tina Davis,tina.davis474@example.com,US,Seattle,silver,2021-04-26,34053.13
+475,Ivy Moore,ivy.moore475@example.com,FR,Boston,platinum,2018-04-15,2581.02
+476,Quinn Thomas,quinn.thomas476@example.com,JP,Boston,bronze,2018-09-23,42195.37
+477,Alice King,alice.king477@example.com,US,New York,gold,2023-10-19,9631.04
+478,Quinn Garcia,quinn.garcia478@example.com,DE,Miami,silver,2024-05-18,8561.82
+479,Grace Lee,grace.lee479@example.com,JP,Austin,gold,2019-01-12,38471.71
+480,Kate Scott,kate.scott480@example.com,IN,Miami,platinum,2018-02-26,42030.86
+481,Dave Thomas,dave.thomas481@example.com,JP,Seattle,bronze,2025-10-12,30577.84
+482,Carol Johnson,carol.johnson482@example.com,MX,Atlanta,silver,2023-12-03,41163.57
+483,Carol Hall,carol.hall483@example.com,IN,Austin,silver,2022-07-24,29617.04
+484,Frank Young,frank.young484@example.com,IN,Boston,bronze,2021-11-04,30488.47
+485,Quinn Moore,quinn.moore485@example.com,US,Boston,bronze,2025-02-12,12091.33
+486,Pete Taylor,pete.taylor486@example.com,UK,Atlanta,silver,2019-04-13,22363.72
+487,Hank Moore,hank.moore487@example.com,MX,Austin,silver,2023-08-16,5823.43
+488,Nick Anderson,nick.anderson488@example.com,JP,Austin,platinum,2019-08-07,20313.26
+489,Jack Johnson,jack.johnson489@example.com,JP,Boston,bronze,2025-09-25,33761.1
+490,Alice Brown,alice.brown490@example.com,FR,San Francisco,platinum,2022-03-12,21900.59
+491,Nick Wright,nick.wright491@example.com,AU,Portland,platinum,2021-09-24,33086.69
+492,Ivy Johnson,ivy.johnson492@example.com,IN,Chicago,silver,2020-05-08,24124.45
+493,Quinn Davis,quinn.davis493@example.com,BR,Denver,bronze,2019-02-10,22103.27
+494,Alice Anderson,alice.anderson494@example.com,CA,Austin,gold,2021-01-21,17007.4
+495,Pete Hill,pete.hill495@example.com,BR,Miami,bronze,2019-10-01,26985.59
+496,Quinn Hill,quinn.hill496@example.com,AU,Austin,silver,2025-08-06,20647.28
+497,Hank Davis,hank.davis497@example.com,IN,Denver,bronze,2023-12-16,31648.8
+498,Alice Anderson,alice.anderson498@example.com,FR,Boston,bronze,2020-09-04,43276.66
+499,Nick Lee,nick.lee499@example.com,JP,Boston,gold,2020-04-02,41876.01
+500,Bob Martinez,bob.martinez500@example.com,BR,Denver,gold,2019-06-06,2420.96
+501,Nick Brown,nick.brown501@example.com,AU,Chicago,gold,2020-07-10,10983.3
+502,Ivy Thomas,ivy.thomas502@example.com,JP,San Francisco,bronze,2018-06-16,45254.81
+503,Tina Brown,tina.brown503@example.com,FR,Denver,bronze,2025-05-17,13619.59
+504,Mia Hall,mia.hall504@example.com,MX,Atlanta,gold,2018-01-23,2192.68
+505,Hank Davis,hank.davis505@example.com,DE,Miami,gold,2020-02-01,31500.48
+506,Nick Garcia,nick.garcia506@example.com,JP,Atlanta,bronze,2020-05-18,43849.5
+507,Rosa Davis,rosa.davis507@example.com,JP,Denver,bronze,2025-11-15,39333.86
+508,Carol Young,carol.young508@example.com,BR,Miami,bronze,2023-08-24,43713.21
+509,Frank Allen,frank.allen509@example.com,IN,San Francisco,silver,2021-08-14,42825.1
+510,Pete Davis,pete.davis510@example.com,MX,Miami,bronze,2018-08-09,12709.57
+511,Kate Hall,kate.hall511@example.com,US,Chicago,bronze,2018-09-01,2400.84
+512,Pete Allen,pete.allen512@example.com,JP,Miami,gold,2023-03-27,24255.15
+513,Dave Brown,dave.brown513@example.com,MX,Portland,bronze,2021-11-25,45277.42
+514,Grace Martinez,grace.martinez514@example.com,FR,Chicago,bronze,2020-12-04,17927.53
+515,Grace Wright,grace.wright515@example.com,JP,Austin,silver,2022-04-07,48729.65
+516,Rosa Johnson,rosa.johnson516@example.com,US,Chicago,platinum,2021-01-01,47227.06
+517,Hank Anderson,hank.anderson517@example.com,IN,San Francisco,silver,2023-03-08,26970.54
+518,Olivia Wright,olivia.wright518@example.com,CA,Atlanta,gold,2023-01-21,19717.75
+519,Dave Davis,dave.davis519@example.com,BR,Austin,bronze,2020-05-18,8547.83
+520,Dave Clark,dave.clark520@example.com,IN,Miami,bronze,2022-02-12,13556.17
+521,Ivy Wilson,ivy.wilson521@example.com,US,Atlanta,platinum,2023-06-04,14191.56
+522,Grace Hall,grace.hall522@example.com,DE,Atlanta,platinum,2018-04-15,19295.01
+523,Rosa King,rosa.king523@example.com,BR,Boston,bronze,2020-07-26,44111.02
+524,Alice Wilson,alice.wilson524@example.com,BR,San Francisco,silver,2018-02-19,17108.4
+525,Nick Johnson,nick.johnson525@example.com,UK,Miami,gold,2025-06-24,20621.35
+526,Dave King,dave.king526@example.com,BR,Denver,gold,2019-03-24,16075.04
+527,Alice Allen,alice.allen527@example.com,IN,Boston,silver,2023-09-06,41968.97
+528,Jack Allen,jack.allen528@example.com,UK,Portland,platinum,2020-10-18,42381.47
+529,Frank Wilson,frank.wilson529@example.com,BR,Seattle,platinum,2021-02-08,31678.49
+530,Jack Wilson,jack.wilson530@example.com,JP,Denver,silver,2020-11-01,29224.09
+531,Kate Garcia,kate.garcia531@example.com,DE,New York,bronze,2021-01-16,29128.56
+532,Bob King,bob.king532@example.com,JP,Denver,platinum,2021-07-23,13016.41
+533,Rosa Clark,rosa.clark533@example.com,MX,Atlanta,bronze,2024-01-02,42350.09
+534,Nick Johnson,nick.johnson534@example.com,AU,Denver,bronze,2025-02-20,5960.04
+535,Hank Wilson,hank.wilson535@example.com,FR,Boston,silver,2023-08-14,8743.83
+536,Grace Taylor,grace.taylor536@example.com,BR,Chicago,silver,2023-11-20,2667.83
+537,Hank Hall,hank.hall537@example.com,US,Denver,platinum,2021-01-06,9884.1
+538,Grace Clark,grace.clark538@example.com,US,San Francisco,gold,2023-04-19,10149.74
+539,Grace Taylor,grace.taylor539@example.com,IN,Seattle,bronze,2025-02-01,35391.91
+540,Eve Allen,eve.allen540@example.com,US,Atlanta,silver,2023-07-03,28323.06
+541,Quinn Wright,quinn.wright541@example.com,AU,Chicago,bronze,2019-06-10,41032.19
+542,Mia Brown,mia.brown542@example.com,IN,Portland,gold,2025-09-01,43523.91
+543,Rosa Young,rosa.young543@example.com,DE,Boston,bronze,2024-07-08,4068.35
+544,Ivy Garcia,ivy.garcia544@example.com,UK,New York,platinum,2025-05-23,5979.81
+545,Olivia Allen,olivia.allen545@example.com,BR,Portland,silver,2025-01-10,7388.85
+546,Nick Wright,nick.wright546@example.com,JP,Miami,platinum,2023-07-28,34248.86
+547,Grace Hall,grace.hall547@example.com,IN,San Francisco,silver,2021-11-01,9507.21
+548,Mia Clark,mia.clark548@example.com,MX,New York,bronze,2024-08-05,36740.5
+549,Nick Johnson,nick.johnson549@example.com,AU,Miami,gold,2018-11-18,2995.07
+550,Grace Allen,grace.allen550@example.com,FR,San Francisco,silver,2018-07-23,19569.89
+551,Sam Allen,sam.allen551@example.com,FR,San Francisco,bronze,2025-07-28,17092.9
+552,Jack Hall,jack.hall552@example.com,UK,Miami,platinum,2024-06-02,10881.01
+553,Grace Martinez,grace.martinez553@example.com,US,Miami,bronze,2022-05-06,37666.11
+554,Mia Moore,mia.moore554@example.com,DE,Austin,gold,2019-02-18,36718.82
+555,Mia Allen,mia.allen555@example.com,US,Boston,gold,2020-08-24,1448.96
+556,Hank Young,hank.young556@example.com,FR,Chicago,bronze,2018-09-11,2411.96
+557,Sam Hill,sam.hill557@example.com,MX,New York,bronze,2024-02-22,25232.24
+558,Mia Smith,mia.smith558@example.com,US,Chicago,silver,2019-09-06,35467.75
+559,Quinn Allen,quinn.allen559@example.com,AU,Denver,silver,2022-12-09,35112.83
+560,Pete Johnson,pete.johnson560@example.com,DE,Denver,silver,2021-11-05,29230.85
+561,Kate Young,kate.young561@example.com,UK,New York,bronze,2020-06-17,22321.73
+562,Quinn King,quinn.king562@example.com,JP,Miami,gold,2019-09-24,27262.4
+563,Dave Davis,dave.davis563@example.com,FR,Austin,platinum,2020-05-23,49597.92
+564,Jack Scott,jack.scott564@example.com,MX,Portland,gold,2024-04-07,17308.18
+565,Quinn Lee,quinn.lee565@example.com,JP,Boston,silver,2019-08-07,28710.5
+566,Jack Hill,jack.hill566@example.com,JP,Boston,platinum,2023-01-21,47980.18
+567,Tina Thomas,tina.thomas567@example.com,AU,Chicago,bronze,2021-01-04,8025.85
+568,Tina Moore,tina.moore568@example.com,MX,Seattle,bronze,2019-09-20,17558.06
+569,Jack Moore,jack.moore569@example.com,FR,Denver,bronze,2022-06-16,48514.3
+570,Sam Taylor,sam.taylor570@example.com,IN,Atlanta,silver,2020-09-15,38220.22
+571,Jack Young,jack.young571@example.com,MX,Portland,silver,2020-05-09,22005.83
+572,Leo Hill,leo.hill572@example.com,JP,Atlanta,gold,2018-02-04,17563.62
+573,Bob Lee,bob.lee573@example.com,MX,Seattle,silver,2021-11-22,42295.87
+574,Pete Davis,pete.davis574@example.com,AU,Boston,silver,2022-07-24,19543.34
+575,Alice Wright,alice.wright575@example.com,US,Boston,bronze,2023-11-07,27078.78
+576,Ivy Davis,ivy.davis576@example.com,CA,Boston,gold,2020-04-03,23991.16
+577,Ivy Johnson,ivy.johnson577@example.com,MX,Seattle,bronze,2024-06-15,48431.62
+578,Jack Wilson,jack.wilson578@example.com,UK,Portland,silver,2018-08-07,33098
+579,Frank Moore,frank.moore579@example.com,CA,Austin,bronze,2019-12-08,19652.64
+580,Tina Johnson,tina.johnson580@example.com,US,Denver,platinum,2022-08-02,29994.24
+581,Mia Garcia,mia.garcia581@example.com,MX,Chicago,bronze,2021-03-02,23284.26
+582,Tina Thomas,tina.thomas582@example.com,AU,Denver,gold,2024-02-07,25936.52
+583,Mia Young,mia.young583@example.com,UK,Austin,gold,2022-11-05,30679.07
+584,Eve Clark,eve.clark584@example.com,BR,Seattle,gold,2018-05-11,43323.49
+585,Hank Allen,hank.allen585@example.com,BR,Denver,silver,2022-01-01,43319
+586,Ivy Wilson,ivy.wilson586@example.com,US,Seattle,gold,2021-03-24,14584.49
+587,Hank Hill,hank.hill587@example.com,US,Atlanta,bronze,2022-03-23,13961.4
+588,Tina Anderson,tina.anderson588@example.com,UK,Seattle,gold,2025-01-18,44276.79
+589,Olivia Clark,olivia.clark589@example.com,CA,Portland,gold,2023-03-09,14035.55
+590,Ivy Allen,ivy.allen590@example.com,UK,Portland,silver,2020-12-15,27033.08
+591,Mia Wilson,mia.wilson591@example.com,BR,Seattle,gold,2025-12-08,31228.44
+592,Rosa Hill,rosa.hill592@example.com,FR,Seattle,silver,2025-12-09,14686.52
+593,Pete Martinez,pete.martinez593@example.com,FR,Miami,silver,2020-07-27,22456.63
+594,Hank Moore,hank.moore594@example.com,FR,Seattle,gold,2021-07-11,29437.29
+595,Kate Thomas,kate.thomas595@example.com,MX,New York,bronze,2024-05-14,14332.8
+596,Rosa Lee,rosa.lee596@example.com,JP,Denver,platinum,2025-01-18,9828.21
+597,Mia Moore,mia.moore597@example.com,FR,Denver,platinum,2025-05-16,37016.17
+598,Tina Smith,tina.smith598@example.com,AU,Denver,gold,2018-06-06,32476.15
+599,Eve Martinez,eve.martinez599@example.com,JP,Portland,platinum,2019-04-24,8216.61
+600,Rosa Wilson,rosa.wilson600@example.com,FR,New York,bronze,2022-12-03,27676.06
+601,Grace Johnson,grace.johnson601@example.com,AU,New York,platinum,2024-12-06,1939.45
+602,Carol Garcia,carol.garcia602@example.com,FR,San Francisco,bronze,2018-02-20,7079.53
+603,Ivy Allen,ivy.allen603@example.com,US,Atlanta,bronze,2022-03-11,35670.29
+604,Bob Moore,bob.moore604@example.com,IN,Portland,platinum,2022-01-03,44618.27
+605,Quinn Young,quinn.young605@example.com,JP,Seattle,platinum,2024-06-01,2004.47
+606,Ivy Moore,ivy.moore606@example.com,DE,New York,platinum,2019-02-09,24790.86
+607,Kate Lee,kate.lee607@example.com,US,Denver,gold,2022-02-15,37827.03
+608,Jack Allen,jack.allen608@example.com,UK,Portland,platinum,2022-02-14,49346.62
+609,Pete Allen,pete.allen609@example.com,MX,New York,bronze,2018-09-17,386.23
+610,Alice Allen,alice.allen610@example.com,MX,Chicago,bronze,2018-09-06,40647.35
+611,Eve Wright,eve.wright611@example.com,MX,Portland,silver,2025-10-13,23464.75
+612,Grace Martinez,grace.martinez612@example.com,DE,Boston,silver,2022-01-14,266.21
+613,Tina Davis,tina.davis613@example.com,FR,San Francisco,platinum,2019-12-10,46498.16
+614,Eve Smith,eve.smith614@example.com,BR,Atlanta,bronze,2019-05-17,18647.18
+615,Tina Anderson,tina.anderson615@example.com,UK,Austin,silver,2021-07-15,29234.32
+616,Frank Hall,frank.hall616@example.com,MX,Portland,platinum,2024-10-18,49329.74
+617,Eve Lee,eve.lee617@example.com,MX,Boston,bronze,2025-11-28,17831.43
+618,Carol Johnson,carol.johnson618@example.com,JP,Boston,platinum,2020-08-07,19887.78
+619,Mia Wright,mia.wright619@example.com,JP,Atlanta,platinum,2018-02-03,3265.46
+620,Ivy Hill,ivy.hill620@example.com,BR,Denver,silver,2023-01-12,12079.66
+621,Frank Johnson,frank.johnson621@example.com,BR,Seattle,gold,2018-05-15,32111.36
+622,Tina Scott,tina.scott622@example.com,AU,Boston,gold,2018-04-14,22276.64
+623,Leo Allen,leo.allen623@example.com,CA,Portland,gold,2022-02-01,6848.36
+624,Eve Lee,eve.lee624@example.com,DE,Atlanta,bronze,2021-12-19,47699.02
+625,Ivy Taylor,ivy.taylor625@example.com,MX,Portland,platinum,2024-04-05,27421.71
+626,Sam Davis,sam.davis626@example.com,US,Chicago,bronze,2019-02-28,6161.74
+627,Bob Davis,bob.davis627@example.com,MX,Boston,gold,2025-09-22,23405.93
+628,Mia Clark,mia.clark628@example.com,IN,Denver,bronze,2023-07-08,6120.72
+629,Tina Young,tina.young629@example.com,DE,Atlanta,gold,2021-01-21,12556.3
+630,Bob Hill,bob.hill630@example.com,JP,Boston,platinum,2021-11-03,38220.34
+631,Quinn Moore,quinn.moore631@example.com,JP,Boston,bronze,2018-10-22,20090.1
+632,Tina Brown,tina.brown632@example.com,FR,Boston,silver,2020-10-19,24773.97
+633,Nick Anderson,nick.anderson633@example.com,CA,Austin,bronze,2024-08-16,29817.01
+634,Pete Wright,pete.wright634@example.com,AU,Austin,bronze,2020-02-14,10219.26
+635,Jack Moore,jack.moore635@example.com,AU,Austin,gold,2018-01-22,32017.95
+636,Rosa Davis,rosa.davis636@example.com,BR,Atlanta,bronze,2019-04-08,44699.28
+637,Frank Taylor,frank.taylor637@example.com,CA,Atlanta,bronze,2023-09-12,4087.72
+638,Tina Wright,tina.wright638@example.com,AU,Atlanta,gold,2023-10-23,22800.83
+639,Ivy Davis,ivy.davis639@example.com,JP,San Francisco,platinum,2019-06-08,29061.82
+640,Jack Lee,jack.lee640@example.com,JP,Atlanta,silver,2021-04-19,18595.98
+641,Pete Davis,pete.davis641@example.com,US,Austin,bronze,2021-03-04,34448.15
+642,Grace Scott,grace.scott642@example.com,AU,Boston,silver,2020-04-09,33553.83
+643,Eve Brown,eve.brown643@example.com,CA,San Francisco,platinum,2023-01-11,27175.68
+644,Grace King,grace.king644@example.com,IN,Denver,silver,2022-08-13,8784.12
+645,Frank Moore,frank.moore645@example.com,CA,Chicago,gold,2019-04-20,40320.68
+646,Carol Moore,carol.moore646@example.com,IN,Boston,platinum,2025-09-06,12734.18
+647,Pete Johnson,pete.johnson647@example.com,MX,Austin,platinum,2021-12-04,3884.42
+648,Tina Young,tina.young648@example.com,JP,Portland,platinum,2023-01-12,6654.26
+649,Eve Allen,eve.allen649@example.com,UK,Chicago,gold,2023-12-13,24065.52
+650,Eve Taylor,eve.taylor650@example.com,DE,Seattle,platinum,2019-05-14,44609.01
+651,Quinn Hall,quinn.hall651@example.com,MX,Miami,silver,2018-05-22,49165.67
+652,Kate Lee,kate.lee652@example.com,MX,San Francisco,gold,2019-12-21,36224.29
+653,Hank Lee,hank.lee653@example.com,IN,Boston,platinum,2019-12-18,41769.34
+654,Alice Thomas,alice.thomas654@example.com,UK,Miami,gold,2021-09-02,48706.34
+655,Carol Garcia,carol.garcia655@example.com,UK,Chicago,bronze,2024-11-26,40148.44
+656,Sam Anderson,sam.anderson656@example.com,IN,Seattle,silver,2024-12-16,21096.8
+657,Eve Johnson,eve.johnson657@example.com,JP,Portland,bronze,2023-08-19,2441.6
+658,Ivy Moore,ivy.moore658@example.com,US,Seattle,bronze,2021-07-21,28403.66
+659,Dave Scott,dave.scott659@example.com,JP,Chicago,bronze,2025-02-26,1202.82
+660,Quinn Hill,quinn.hill660@example.com,JP,Austin,silver,2023-01-24,40915.27
+661,Hank King,hank.king661@example.com,FR,Atlanta,bronze,2024-10-22,16487.51
+662,Jack Martinez,jack.martinez662@example.com,BR,New York,bronze,2018-08-02,41222.1
+663,Kate Hall,kate.hall663@example.com,DE,Austin,bronze,2018-11-18,30636.22
+664,Eve Smith,eve.smith664@example.com,IN,Atlanta,platinum,2018-01-25,14040.45
+665,Sam Hill,sam.hill665@example.com,AU,Boston,silver,2024-06-17,29232.56
+666,Olivia Hall,olivia.hall666@example.com,UK,Miami,gold,2023-05-10,26397.71
+667,Olivia Wright,olivia.wright667@example.com,CA,Austin,silver,2021-08-09,22196.48
+668,Alice Davis,alice.davis668@example.com,BR,New York,platinum,2024-08-25,16250.8
+669,Frank Brown,frank.brown669@example.com,IN,Chicago,platinum,2020-03-17,3629.76
+670,Mia Moore,mia.moore670@example.com,MX,Seattle,bronze,2021-10-23,29702.3
+671,Leo Scott,leo.scott671@example.com,MX,Denver,platinum,2022-05-17,35268.83
+672,Nick Johnson,nick.johnson672@example.com,BR,Atlanta,bronze,2019-06-13,20142.37
+673,Frank Anderson,frank.anderson673@example.com,MX,Miami,silver,2019-11-17,19901.85
+674,Ivy Lee,ivy.lee674@example.com,IN,Denver,silver,2019-06-17,22105.48
+675,Pete Allen,pete.allen675@example.com,MX,Seattle,platinum,2024-02-14,491.18
+676,Leo King,leo.king676@example.com,CA,Atlanta,silver,2022-09-25,25293.72
+677,Grace Garcia,grace.garcia677@example.com,AU,Atlanta,gold,2024-07-18,23228.59
+678,Eve Wilson,eve.wilson678@example.com,BR,New York,platinum,2021-03-28,2551.96
+679,Dave Martinez,dave.martinez679@example.com,FR,Boston,gold,2022-07-25,42579.81
+680,Olivia Smith,olivia.smith680@example.com,FR,New York,platinum,2024-06-10,15420.73
+681,Bob Thomas,bob.thomas681@example.com,AU,Portland,platinum,2023-03-03,28618.98
+682,Olivia Smith,olivia.smith682@example.com,UK,Boston,bronze,2019-12-25,25091.96
+683,Mia Clark,mia.clark683@example.com,US,New York,platinum,2020-11-21,24728.86
+684,Frank Davis,frank.davis684@example.com,US,San Francisco,silver,2020-01-24,3865.43
+685,Carol Brown,carol.brown685@example.com,BR,Miami,gold,2024-07-24,19493.91
+686,Ivy Allen,ivy.allen686@example.com,IN,San Francisco,platinum,2024-06-08,43814.29
+687,Pete Johnson,pete.johnson687@example.com,US,Denver,bronze,2018-08-14,40432.13
+688,Grace Lee,grace.lee688@example.com,FR,Atlanta,silver,2021-08-06,41670.9
+689,Eve Scott,eve.scott689@example.com,US,Miami,silver,2020-11-08,17604.73
+690,Olivia Young,olivia.young690@example.com,US,Atlanta,gold,2019-12-10,21786.56
+691,Mia Smith,mia.smith691@example.com,IN,Miami,platinum,2023-07-15,37779.43
+692,Alice Young,alice.young692@example.com,JP,Miami,platinum,2021-11-09,44149.99
+693,Carol Young,carol.young693@example.com,CA,Denver,bronze,2020-08-24,19804.08
+694,Eve Garcia,eve.garcia694@example.com,BR,Denver,silver,2023-08-19,20173.43
+695,Pete Garcia,pete.garcia695@example.com,DE,Chicago,platinum,2025-01-18,732.9
+696,Alice King,alice.king696@example.com,BR,New York,bronze,2020-07-09,41965.44
+697,Ivy Wilson,ivy.wilson697@example.com,AU,Atlanta,bronze,2023-06-23,19817.13
+698,Carol Martinez,carol.martinez698@example.com,US,Portland,gold,2020-01-02,28.81
+699,Mia Lee,mia.lee699@example.com,BR,Portland,platinum,2024-11-25,3474.28
+700,Sam Martinez,sam.martinez700@example.com,UK,Boston,silver,2020-12-04,11077.56
+701,Ivy Hill,ivy.hill701@example.com,US,Portland,gold,2024-10-27,49474.75
+702,Quinn Wright,quinn.wright702@example.com,MX,New York,silver,2025-04-21,4127.26
+703,Hank Martinez,hank.martinez703@example.com,DE,Denver,platinum,2021-12-21,24396.8
+704,Tina Thomas,tina.thomas704@example.com,FR,New York,silver,2025-04-07,11719.03
+705,Eve Wright,eve.wright705@example.com,FR,Austin,gold,2025-04-05,8156.79
+706,Pete Brown,pete.brown706@example.com,IN,Boston,silver,2022-03-12,16892.25
+707,Alice Martinez,alice.martinez707@example.com,US,New York,bronze,2025-01-16,10727.61
+708,Sam Martinez,sam.martinez708@example.com,IN,Atlanta,platinum,2018-03-25,4830.49
+709,Dave Thomas,dave.thomas709@example.com,FR,Chicago,gold,2023-08-23,36948.26
+710,Mia King,mia.king710@example.com,JP,Chicago,gold,2025-03-20,10103.17
+711,Sam Davis,sam.davis711@example.com,MX,Portland,bronze,2020-01-28,23447.6
+712,Carol King,carol.king712@example.com,UK,Atlanta,bronze,2019-02-19,29126.29
+713,Quinn King,quinn.king713@example.com,DE,Atlanta,platinum,2024-12-08,13545.73
+714,Bob Hall,bob.hall714@example.com,IN,Seattle,gold,2024-05-03,40342.28
+715,Alice Davis,alice.davis715@example.com,UK,Miami,gold,2021-07-11,4401.47
+716,Sam Brown,sam.brown716@example.com,UK,Austin,platinum,2025-06-27,21744.57
+717,Leo Young,leo.young717@example.com,DE,Austin,platinum,2025-04-24,29616.53
+718,Carol Johnson,carol.johnson718@example.com,UK,Boston,platinum,2020-05-03,47144.56
+719,Olivia Davis,olivia.davis719@example.com,FR,Austin,gold,2024-09-24,22262.85
+720,Carol Anderson,carol.anderson720@example.com,US,Portland,bronze,2018-07-17,39662.09
+721,Frank Hall,frank.hall721@example.com,DE,San Francisco,gold,2024-06-16,1027.78
+722,Tina Brown,tina.brown722@example.com,UK,Boston,platinum,2020-11-08,21954.95
+723,Leo Clark,leo.clark723@example.com,DE,Miami,silver,2023-06-26,15212.81
+724,Tina Wilson,tina.wilson724@example.com,FR,New York,platinum,2018-09-13,30211.76
+725,Olivia Young,olivia.young725@example.com,IN,Denver,silver,2021-07-23,18548.97
+726,Olivia Johnson,olivia.johnson726@example.com,FR,New York,gold,2023-11-23,48929.14
+727,Ivy Martinez,ivy.martinez727@example.com,FR,Chicago,silver,2021-05-13,13951.61
+728,Bob Garcia,bob.garcia728@example.com,US,Seattle,silver,2020-12-02,27765.46
+729,Pete King,pete.king729@example.com,FR,Austin,gold,2025-01-06,16613.92
+730,Leo Wilson,leo.wilson730@example.com,US,New York,bronze,2022-02-05,9644.07
+731,Frank Lee,frank.lee731@example.com,MX,Chicago,silver,2022-02-07,33070.75
+732,Jack Martinez,jack.martinez732@example.com,CA,San Francisco,silver,2024-09-14,16307.93
+733,Leo Clark,leo.clark733@example.com,DE,Atlanta,platinum,2018-12-22,27970.96
+734,Alice King,alice.king734@example.com,IN,San Francisco,silver,2025-03-17,49674.67
+735,Hank Clark,hank.clark735@example.com,JP,Austin,platinum,2018-07-05,40750.31
+736,Olivia Anderson,olivia.anderson736@example.com,AU,New York,gold,2021-04-22,41222.89
+737,Carol Hill,carol.hill737@example.com,MX,Denver,silver,2025-03-22,22463.79
+738,Bob Smith,bob.smith738@example.com,US,Boston,silver,2025-09-05,9247.15
+739,Kate Garcia,kate.garcia739@example.com,IN,Atlanta,silver,2018-02-20,31284.63
+740,Hank Clark,hank.clark740@example.com,BR,Atlanta,platinum,2022-08-16,34331.86
+741,Grace Wright,grace.wright741@example.com,BR,Portland,platinum,2024-02-17,916.65
+742,Ivy Smith,ivy.smith742@example.com,CA,Denver,silver,2022-01-14,17538.69
+743,Hank Allen,hank.allen743@example.com,MX,Denver,bronze,2025-06-03,41063.38
+744,Jack Martinez,jack.martinez744@example.com,UK,Miami,gold,2023-02-07,40472.98
+745,Alice Scott,alice.scott745@example.com,US,Denver,platinum,2025-08-01,24868.41
+746,Bob Moore,bob.moore746@example.com,US,Chicago,silver,2020-03-06,38374.95
+747,Olivia Moore,olivia.moore747@example.com,IN,Portland,gold,2019-02-13,42515.78
+748,Nick Brown,nick.brown748@example.com,JP,Seattle,platinum,2025-02-06,35386.8
+749,Carol Hall,carol.hall749@example.com,JP,Boston,platinum,2022-08-24,40127
+750,Mia Allen,mia.allen750@example.com,FR,Portland,platinum,2019-02-22,4060.47
+751,Frank Brown,frank.brown751@example.com,FR,Portland,gold,2025-04-10,36873.72
+752,Alice Davis,alice.davis752@example.com,DE,Chicago,bronze,2024-07-20,695.01
+753,Grace Wilson,grace.wilson753@example.com,AU,Seattle,platinum,2020-04-22,22753.02
+754,Grace Lee,grace.lee754@example.com,DE,San Francisco,gold,2020-05-21,20238.79
+755,Alice Smith,alice.smith755@example.com,CA,Atlanta,gold,2024-12-22,34378.25
+756,Quinn Brown,quinn.brown756@example.com,UK,Miami,bronze,2024-09-25,26502.34
+757,Carol Clark,carol.clark757@example.com,IN,Miami,platinum,2018-10-16,49890.05
+758,Dave Allen,dave.allen758@example.com,DE,Miami,gold,2022-04-11,4716.09
+759,Bob Hill,bob.hill759@example.com,BR,Austin,gold,2024-08-01,23812.62
+760,Kate Hall,kate.hall760@example.com,AU,Portland,platinum,2019-07-25,29207.93
+761,Carol Clark,carol.clark761@example.com,UK,Boston,silver,2022-11-05,49568.08
+762,Dave King,dave.king762@example.com,CA,Portland,silver,2025-10-13,14033.29
+763,Eve Davis,eve.davis763@example.com,BR,New York,platinum,2025-08-27,14663.55
+764,Grace Anderson,grace.anderson764@example.com,JP,San Francisco,platinum,2018-01-18,12134.96
+765,Rosa Scott,rosa.scott765@example.com,BR,Austin,silver,2025-05-10,24914.04
+766,Kate Moore,kate.moore766@example.com,BR,New York,gold,2025-03-15,37590.89
+767,Kate Thomas,kate.thomas767@example.com,JP,San Francisco,gold,2019-11-23,19567.32
+768,Eve Brown,eve.brown768@example.com,MX,Seattle,platinum,2023-02-08,12269.9
+769,Olivia Davis,olivia.davis769@example.com,US,Seattle,bronze,2018-05-13,36491.93
+770,Ivy Davis,ivy.davis770@example.com,UK,Atlanta,gold,2025-02-06,31706.99
+771,Pete Wright,pete.wright771@example.com,UK,Miami,platinum,2023-02-11,12530.55
+772,Pete Taylor,pete.taylor772@example.com,MX,Atlanta,bronze,2023-07-08,29916.99
+773,Mia Davis,mia.davis773@example.com,UK,Boston,gold,2020-09-07,31475
+774,Pete Lee,pete.lee774@example.com,US,Boston,bronze,2023-01-03,37093.82
+775,Grace Scott,grace.scott775@example.com,IN,New York,platinum,2021-03-09,16671.25
+776,Nick Allen,nick.allen776@example.com,BR,Seattle,bronze,2021-01-08,30589.45
+777,Carol Hall,carol.hall777@example.com,JP,New York,silver,2023-08-03,10218.89
+778,Frank Wright,frank.wright778@example.com,IN,Miami,bronze,2024-06-03,4198.43
+779,Tina Anderson,tina.anderson779@example.com,AU,Chicago,platinum,2022-06-13,35765.03
+780,Olivia Taylor,olivia.taylor780@example.com,MX,San Francisco,platinum,2024-06-24,21597.09
+781,Alice King,alice.king781@example.com,AU,New York,bronze,2025-12-05,952.23
+782,Sam Scott,sam.scott782@example.com,UK,Austin,silver,2019-08-24,1030.7
+783,Leo Taylor,leo.taylor783@example.com,US,Miami,gold,2022-01-16,31757.32
+784,Leo Thomas,leo.thomas784@example.com,BR,Portland,bronze,2019-03-03,9375.41
+785,Grace Martinez,grace.martinez785@example.com,FR,San Francisco,bronze,2022-01-24,29077.11
+786,Pete Wilson,pete.wilson786@example.com,CA,San Francisco,silver,2021-03-20,16329.28
+787,Bob Scott,bob.scott787@example.com,MX,San Francisco,silver,2025-05-25,15453.03
+788,Carol Hall,carol.hall788@example.com,IN,Atlanta,bronze,2025-01-11,46367.7
+789,Tina Anderson,tina.anderson789@example.com,AU,Portland,bronze,2022-02-04,33933.83
+790,Bob Lee,bob.lee790@example.com,US,Seattle,silver,2018-11-02,49915.52
+791,Carol Moore,carol.moore791@example.com,BR,Austin,silver,2021-02-12,35123.16
+792,Carol Wilson,carol.wilson792@example.com,AU,New York,bronze,2023-08-13,18709.18
+793,Jack Thomas,jack.thomas793@example.com,CA,Austin,bronze,2021-12-20,44719.71
+794,Hank Hall,hank.hall794@example.com,JP,Austin,gold,2019-11-23,31378.69
+795,Quinn Martinez,quinn.martinez795@example.com,BR,Portland,platinum,2024-06-05,12355.13
+796,Mia Davis,mia.davis796@example.com,CA,Portland,bronze,2020-09-02,18474.54
+797,Grace Garcia,grace.garcia797@example.com,UK,New York,platinum,2025-12-24,29331.96
+798,Rosa Johnson,rosa.johnson798@example.com,DE,New York,gold,2021-03-21,26684.74
+799,Grace Davis,grace.davis799@example.com,MX,Chicago,bronze,2024-11-23,14673.79
+800,Kate Lee,kate.lee800@example.com,UK,Chicago,bronze,2025-11-14,45078.34
+801,Pete Moore,pete.moore801@example.com,IN,New York,silver,2021-01-10,89.25
+802,Olivia Hall,olivia.hall802@example.com,IN,Miami,bronze,2024-05-25,1747.08
+803,Leo Johnson,leo.johnson803@example.com,MX,Seattle,gold,2024-10-26,49651.23
+804,Carol Wright,carol.wright804@example.com,AU,San Francisco,bronze,2018-05-03,17061.14
+805,Rosa Allen,rosa.allen805@example.com,CA,San Francisco,silver,2022-01-05,15832.29
+806,Kate Scott,kate.scott806@example.com,US,Portland,platinum,2023-11-09,42842.18
+807,Tina Scott,tina.scott807@example.com,CA,Portland,gold,2023-11-28,16216.09
+808,Sam Scott,sam.scott808@example.com,BR,Portland,silver,2021-08-11,17423.34
+809,Sam Brown,sam.brown809@example.com,US,Seattle,silver,2020-11-08,32481.79
+810,Sam Wright,sam.wright810@example.com,US,Denver,silver,2025-03-01,30086.65
+811,Carol Scott,carol.scott811@example.com,IN,Chicago,gold,2020-12-01,6376.84
+812,Quinn Scott,quinn.scott812@example.com,IN,Atlanta,bronze,2025-10-21,14124.23
+813,Rosa Garcia,rosa.garcia813@example.com,UK,Portland,gold,2018-08-22,22237.96
+814,Quinn Davis,quinn.davis814@example.com,US,Austin,bronze,2021-01-20,34574.93
+815,Jack Davis,jack.davis815@example.com,IN,Seattle,platinum,2025-09-08,20733.53
+816,Tina King,tina.king816@example.com,UK,Seattle,silver,2025-02-12,27140.23
+817,Quinn Lee,quinn.lee817@example.com,MX,Miami,silver,2018-11-23,37769.61
+818,Quinn Wilson,quinn.wilson818@example.com,FR,Atlanta,bronze,2024-06-03,25219.85
+819,Dave Hall,dave.hall819@example.com,JP,Chicago,platinum,2024-08-10,9506.36
+820,Eve Clark,eve.clark820@example.com,IN,Boston,gold,2021-09-13,8179.21
+821,Eve Wright,eve.wright821@example.com,UK,Atlanta,gold,2019-06-27,13543.44
+822,Olivia Lee,olivia.lee822@example.com,BR,Seattle,silver,2023-10-26,1280.88
+823,Leo Garcia,leo.garcia823@example.com,MX,New York,platinum,2019-08-18,16651.52
+824,Dave Brown,dave.brown824@example.com,UK,Miami,bronze,2022-11-16,39354.68
+825,Frank Moore,frank.moore825@example.com,UK,Denver,gold,2018-05-11,16432.61
+826,Mia Davis,mia.davis826@example.com,JP,Seattle,gold,2020-11-24,12611.76
+827,Alice Anderson,alice.anderson827@example.com,US,Miami,bronze,2018-03-18,39399.17
+828,Alice Lee,alice.lee828@example.com,US,Denver,platinum,2025-05-17,579.21
+829,Dave Brown,dave.brown829@example.com,UK,Austin,gold,2024-07-21,24545.04
+830,Quinn Smith,quinn.smith830@example.com,CA,Portland,bronze,2024-12-05,44878.63
+831,Rosa King,rosa.king831@example.com,UK,Austin,platinum,2023-04-13,25098.04
+832,Rosa Taylor,rosa.taylor832@example.com,US,Miami,bronze,2021-07-07,1093.76
+833,Olivia Wright,olivia.wright833@example.com,DE,Seattle,silver,2022-05-10,34698.39
+834,Alice Scott,alice.scott834@example.com,FR,Chicago,silver,2022-02-19,20294.56
+835,Tina Moore,tina.moore835@example.com,US,Denver,platinum,2021-01-22,45943.81
+836,Bob Martinez,bob.martinez836@example.com,IN,Portland,bronze,2020-06-09,22797.5
+837,Tina Taylor,tina.taylor837@example.com,FR,Atlanta,silver,2024-10-13,8423.01
+838,Hank Davis,hank.davis838@example.com,DE,Austin,bronze,2023-11-13,23372.72
+839,Bob Wilson,bob.wilson839@example.com,CA,Chicago,bronze,2018-01-17,31914.88
+840,Sam Martinez,sam.martinez840@example.com,FR,Seattle,silver,2023-08-24,39238.33
+841,Leo Moore,leo.moore841@example.com,CA,Atlanta,platinum,2019-09-01,49167.01
+842,Kate Brown,kate.brown842@example.com,UK,Austin,bronze,2021-06-18,938.18
+843,Hank Thomas,hank.thomas843@example.com,FR,New York,bronze,2020-03-05,47557.13
+844,Leo Allen,leo.allen844@example.com,IN,Denver,platinum,2020-10-15,26013.48
+845,Pete Taylor,pete.taylor845@example.com,IN,Denver,bronze,2020-12-04,20995.79
+846,Mia Johnson,mia.johnson846@example.com,UK,San Francisco,silver,2019-07-17,2595.63
+847,Bob Johnson,bob.johnson847@example.com,MX,Seattle,bronze,2024-09-06,31145.88
+848,Hank Brown,hank.brown848@example.com,CA,Chicago,bronze,2022-03-24,4849.58
+849,Jack Taylor,jack.taylor849@example.com,US,San Francisco,platinum,2019-02-16,13945.73
+850,Jack Scott,jack.scott850@example.com,JP,New York,silver,2020-01-17,17661.7
+851,Mia Hall,mia.hall851@example.com,UK,New York,platinum,2021-09-25,17463.93
+852,Ivy Brown,ivy.brown852@example.com,AU,New York,silver,2022-11-13,46063.76
+853,Leo King,leo.king853@example.com,UK,Miami,gold,2019-04-22,873.48
+854,Bob Scott,bob.scott854@example.com,BR,San Francisco,platinum,2018-09-07,41000.74
+855,Rosa Thomas,rosa.thomas855@example.com,MX,Miami,gold,2019-11-25,40040.42
+856,Tina King,tina.king856@example.com,CA,Denver,platinum,2022-08-27,5528.59
+857,Alice Hall,alice.hall857@example.com,BR,Atlanta,gold,2025-03-15,21082.11
+858,Frank Hall,frank.hall858@example.com,CA,Boston,gold,2025-06-13,8665.17
+859,Bob Thomas,bob.thomas859@example.com,IN,New York,platinum,2024-03-13,7015.99
+860,Eve Scott,eve.scott860@example.com,CA,Chicago,platinum,2024-01-12,3183.54
+861,Olivia Johnson,olivia.johnson861@example.com,FR,Portland,platinum,2023-01-22,24313.4
+862,Mia Hill,mia.hill862@example.com,CA,Denver,silver,2023-08-07,24948.19
+863,Leo Wilson,leo.wilson863@example.com,FR,Boston,platinum,2022-09-19,14169.66
+864,Ivy Smith,ivy.smith864@example.com,FR,Seattle,silver,2021-04-10,37762.7
+865,Eve Scott,eve.scott865@example.com,IN,Boston,gold,2021-08-15,46779.76
+866,Ivy Johnson,ivy.johnson866@example.com,JP,Austin,gold,2025-09-07,10794.35
+867,Kate Lee,kate.lee867@example.com,IN,San Francisco,silver,2021-07-21,40607.76
+868,Bob Wright,bob.wright868@example.com,FR,Atlanta,silver,2018-02-27,45606.68
+869,Jack Wilson,jack.wilson869@example.com,IN,Portland,gold,2019-02-04,16514.98
+870,Mia Wright,mia.wright870@example.com,DE,San Francisco,silver,2020-12-18,24975.05
+871,Frank Davis,frank.davis871@example.com,IN,Seattle,silver,2025-06-13,7409.75
+872,Ivy Allen,ivy.allen872@example.com,AU,Denver,gold,2018-02-03,7824.07
+873,Quinn Moore,quinn.moore873@example.com,DE,Atlanta,gold,2019-03-27,13930.56
+874,Bob Allen,bob.allen874@example.com,FR,Chicago,silver,2021-11-13,39578.16
+875,Leo Taylor,leo.taylor875@example.com,CA,Boston,gold,2019-05-18,10829.12
+876,Jack Hall,jack.hall876@example.com,IN,Austin,bronze,2024-03-13,10073.15
+877,Eve Garcia,eve.garcia877@example.com,BR,Denver,bronze,2018-07-13,37045.61
+878,Quinn Davis,quinn.davis878@example.com,IN,New York,platinum,2018-03-15,26379.64
+879,Jack Allen,jack.allen879@example.com,IN,Boston,gold,2022-05-06,4173.01
+880,Hank Anderson,hank.anderson880@example.com,IN,Seattle,bronze,2020-09-27,22225.33
+881,Sam Taylor,sam.taylor881@example.com,FR,Atlanta,bronze,2023-07-24,38514.6
+882,Grace Thomas,grace.thomas882@example.com,IN,Seattle,silver,2019-08-20,22301.89
+883,Quinn Lee,quinn.lee883@example.com,DE,Miami,gold,2019-01-28,39786.35
+884,Ivy Hall,ivy.hall884@example.com,IN,Chicago,gold,2021-03-27,23326.52
+885,Frank Brown,frank.brown885@example.com,DE,Austin,gold,2023-07-19,32977.49
+886,Frank Davis,frank.davis886@example.com,BR,Austin,gold,2018-06-04,26372.14
+887,Frank Garcia,frank.garcia887@example.com,US,Austin,gold,2018-01-04,31474.79
+888,Grace Johnson,grace.johnson888@example.com,IN,Austin,platinum,2018-10-12,16557.01
+889,Ivy Thomas,ivy.thomas889@example.com,JP,Miami,gold,2020-08-02,25522
+890,Nick Clark,nick.clark890@example.com,JP,Boston,gold,2018-06-08,13775.53
+891,Carol Garcia,carol.garcia891@example.com,CA,Chicago,silver,2022-08-05,857.81
+892,Sam Martinez,sam.martinez892@example.com,UK,Seattle,gold,2025-05-17,43061.91
+893,Olivia Scott,olivia.scott893@example.com,JP,Austin,silver,2021-09-28,46573.48
+894,Rosa Garcia,rosa.garcia894@example.com,DE,New York,platinum,2019-03-13,19010.42
+895,Dave Anderson,dave.anderson895@example.com,CA,Seattle,bronze,2024-09-15,28120.87
+896,Nick Johnson,nick.johnson896@example.com,FR,Miami,silver,2021-12-05,41535.08
+897,Alice King,alice.king897@example.com,MX,Miami,bronze,2022-11-10,21529.53
+898,Kate Wilson,kate.wilson898@example.com,UK,Chicago,gold,2023-10-08,1310.19
+899,Rosa Smith,rosa.smith899@example.com,US,Boston,platinum,2023-11-25,31702.4
+900,Leo Martinez,leo.martinez900@example.com,AU,Chicago,silver,2025-10-17,20558.14
+901,Olivia Brown,olivia.brown901@example.com,DE,Atlanta,platinum,2020-08-28,37505.22
+902,Hank Hall,hank.hall902@example.com,AU,Denver,bronze,2021-03-26,9418.18
+903,Rosa Garcia,rosa.garcia903@example.com,AU,Austin,platinum,2023-04-05,36091.04
+904,Hank Brown,hank.brown904@example.com,MX,Miami,bronze,2022-06-28,542.14
+905,Frank Hill,frank.hill905@example.com,US,Miami,bronze,2019-02-20,7432.57
+906,Leo King,leo.king906@example.com,MX,Atlanta,bronze,2025-11-21,5157.97
+907,Kate Johnson,kate.johnson907@example.com,DE,Portland,bronze,2018-09-08,34689.12
+908,Hank Moore,hank.moore908@example.com,UK,Portland,gold,2023-01-06,32315.53
+909,Dave Taylor,dave.taylor909@example.com,MX,Seattle,silver,2022-08-13,22125.95
+910,Tina Smith,tina.smith910@example.com,CA,Denver,bronze,2022-07-19,21488.71
+911,Dave Smith,dave.smith911@example.com,UK,Miami,bronze,2018-09-21,16560.54
+912,Carol Young,carol.young912@example.com,MX,Chicago,bronze,2023-05-12,16385.36
+913,Leo Wilson,leo.wilson913@example.com,AU,San Francisco,gold,2020-12-10,47824.54
+914,Sam Lee,sam.lee914@example.com,BR,Boston,platinum,2023-09-09,12113
+915,Sam Moore,sam.moore915@example.com,IN,Seattle,platinum,2024-01-10,16728.59
+916,Mia Taylor,mia.taylor916@example.com,AU,Miami,silver,2022-10-25,19424.27
+917,Pete Johnson,pete.johnson917@example.com,DE,New York,bronze,2021-06-28,40184.16
+918,Nick Garcia,nick.garcia918@example.com,MX,Denver,gold,2021-08-19,35172.89
+919,Dave Scott,dave.scott919@example.com,UK,San Francisco,platinum,2023-11-03,24944.13
+920,Kate Brown,kate.brown920@example.com,FR,Portland,silver,2019-10-26,21904.87
+921,Bob Scott,bob.scott921@example.com,IN,Denver,silver,2019-08-12,21966.42
+922,Quinn Thomas,quinn.thomas922@example.com,DE,Austin,silver,2025-07-19,38827.68
+923,Dave Brown,dave.brown923@example.com,UK,Boston,silver,2024-02-26,11746.66
+924,Eve Martinez,eve.martinez924@example.com,UK,Seattle,silver,2020-05-10,8296.6
+925,Bob Brown,bob.brown925@example.com,MX,Denver,bronze,2025-05-08,35761.54
+926,Quinn Hill,quinn.hill926@example.com,DE,Austin,gold,2019-11-02,14734.68
+927,Dave Johnson,dave.johnson927@example.com,DE,Miami,silver,2025-05-12,3586.89
+928,Olivia Young,olivia.young928@example.com,UK,Seattle,gold,2022-04-28,16819.99
+929,Nick Smith,nick.smith929@example.com,JP,Miami,silver,2024-07-18,46368.63
+930,Mia Martinez,mia.martinez930@example.com,IN,Miami,gold,2018-03-28,41370.89
+931,Alice Hall,alice.hall931@example.com,IN,Chicago,bronze,2019-08-22,45676.44
+932,Leo Smith,leo.smith932@example.com,MX,Denver,bronze,2018-01-24,31122.72
+933,Alice Davis,alice.davis933@example.com,IN,Boston,platinum,2021-06-01,34343.22
+934,Alice King,alice.king934@example.com,IN,Boston,platinum,2022-10-05,36050.39
+935,Hank Thomas,hank.thomas935@example.com,JP,Miami,silver,2021-08-05,26123.76
+936,Nick Moore,nick.moore936@example.com,BR,Seattle,gold,2023-02-04,34883.6
+937,Eve Martinez,eve.martinez937@example.com,CA,Portland,silver,2019-01-20,14616.18
+938,Frank Johnson,frank.johnson938@example.com,US,Denver,platinum,2020-10-01,890.27
+939,Leo Anderson,leo.anderson939@example.com,IN,Austin,bronze,2021-11-06,16981.45
+940,Carol Moore,carol.moore940@example.com,JP,New York,platinum,2023-03-06,10078.14
+941,Pete Anderson,pete.anderson941@example.com,FR,Seattle,gold,2020-07-09,33462.92
+942,Grace Wilson,grace.wilson942@example.com,MX,Atlanta,silver,2019-07-11,21967.05
+943,Alice Lee,alice.lee943@example.com,FR,Atlanta,gold,2025-11-06,31797.97
+944,Jack Clark,jack.clark944@example.com,UK,Miami,bronze,2025-12-28,25833.87
+945,Carol Smith,carol.smith945@example.com,FR,Boston,bronze,2022-07-13,13736.61
+946,Ivy Davis,ivy.davis946@example.com,IN,Chicago,bronze,2025-09-13,35702.1
+947,Bob Anderson,bob.anderson947@example.com,JP,Miami,platinum,2022-10-23,17451.39
+948,Pete Taylor,pete.taylor948@example.com,IN,Austin,platinum,2024-02-20,29236.73
+949,Eve Hill,eve.hill949@example.com,AU,Miami,platinum,2018-11-26,16935.75
+950,Alice Davis,alice.davis950@example.com,US,Austin,silver,2024-06-16,37302.25
+951,Nick Lee,nick.lee951@example.com,AU,Austin,gold,2018-02-12,12013.34
+952,Quinn Taylor,quinn.taylor952@example.com,BR,Seattle,platinum,2025-08-18,39772.81
+953,Alice Young,alice.young953@example.com,BR,Miami,bronze,2020-06-07,1366.91
+954,Mia Wright,mia.wright954@example.com,UK,Austin,silver,2024-01-03,12275.76
+955,Jack Clark,jack.clark955@example.com,UK,Boston,gold,2023-03-11,27172.29
+956,Hank Wilson,hank.wilson956@example.com,IN,Portland,gold,2024-12-26,26989.61
+957,Hank Scott,hank.scott957@example.com,AU,Austin,gold,2020-02-15,48753.63
+958,Carol Anderson,carol.anderson958@example.com,AU,San Francisco,silver,2024-05-14,39464.1
+959,Pete Brown,pete.brown959@example.com,JP,Chicago,silver,2023-02-21,49978.28
+960,Jack Wilson,jack.wilson960@example.com,BR,Boston,silver,2022-12-18,18776.92
+961,Hank Martinez,hank.martinez961@example.com,DE,New York,bronze,2023-06-19,19598.64
+962,Mia King,mia.king962@example.com,UK,Atlanta,silver,2023-12-06,17073.23
+963,Grace Wilson,grace.wilson963@example.com,FR,San Francisco,platinum,2021-04-05,18140.76
+964,Hank Brown,hank.brown964@example.com,UK,Atlanta,gold,2019-12-23,32720.56
+965,Bob Moore,bob.moore965@example.com,BR,Chicago,bronze,2020-04-04,33102.56
+966,Eve Garcia,eve.garcia966@example.com,BR,San Francisco,gold,2020-02-06,13410.77
+967,Grace Moore,grace.moore967@example.com,BR,Portland,bronze,2022-08-07,17590.55
+968,Ivy Taylor,ivy.taylor968@example.com,US,New York,bronze,2021-07-15,23814.62
+969,Rosa Johnson,rosa.johnson969@example.com,AU,Boston,silver,2025-08-14,33948.67
+970,Tina Anderson,tina.anderson970@example.com,CA,New York,platinum,2019-06-11,15002.58
+971,Frank Thomas,frank.thomas971@example.com,MX,Atlanta,platinum,2018-12-18,9523.51
+972,Alice Hall,alice.hall972@example.com,IN,Austin,gold,2019-04-26,36219.25
+973,Olivia Anderson,olivia.anderson973@example.com,BR,Miami,gold,2025-09-15,27871.81
+974,Sam Young,sam.young974@example.com,UK,San Francisco,platinum,2024-01-09,23253.83
+975,Hank Lee,hank.lee975@example.com,MX,Seattle,gold,2018-09-10,8776.54
+976,Carol Allen,carol.allen976@example.com,JP,Denver,platinum,2024-05-26,35903.24
+977,Carol Hill,carol.hill977@example.com,MX,Seattle,bronze,2020-09-25,48983.97
+978,Mia Lee,mia.lee978@example.com,IN,Atlanta,silver,2019-01-20,27844.4
+979,Ivy Young,ivy.young979@example.com,FR,Miami,silver,2021-10-19,33027.74
+980,Dave Anderson,dave.anderson980@example.com,AU,Portland,silver,2020-10-17,16247.88
+981,Olivia Scott,olivia.scott981@example.com,FR,Boston,silver,2022-09-05,38359.73
+982,Alice Anderson,alice.anderson982@example.com,IN,San Francisco,platinum,2024-05-13,661.85
+983,Pete Taylor,pete.taylor983@example.com,US,San Francisco,silver,2019-06-12,37135.89
+984,Leo Smith,leo.smith984@example.com,US,Denver,platinum,2025-07-20,20926.64
+985,Nick Thomas,nick.thomas985@example.com,DE,Miami,platinum,2020-06-05,1567.06
+986,Sam Taylor,sam.taylor986@example.com,IN,Denver,platinum,2019-08-19,37087.3
+987,Tina Davis,tina.davis987@example.com,UK,New York,gold,2019-07-04,9820
+988,Dave Taylor,dave.taylor988@example.com,IN,Chicago,silver,2023-12-09,39088.83
+989,Quinn Allen,quinn.allen989@example.com,AU,Atlanta,silver,2019-06-21,37939.51
+990,Dave Scott,dave.scott990@example.com,FR,New York,silver,2019-11-14,41347.02
+991,Dave Scott,dave.scott991@example.com,BR,Denver,gold,2021-04-27,45443.48
+992,Ivy Hill,ivy.hill992@example.com,MX,San Francisco,platinum,2024-04-28,42341.83
+993,Mia Garcia,mia.garcia993@example.com,DE,Atlanta,platinum,2025-10-10,20528.44
+994,Dave Young,dave.young994@example.com,CA,Seattle,gold,2021-04-05,32216.12
+995,Frank Martinez,frank.martinez995@example.com,MX,Chicago,bronze,2020-07-13,48271.52
+996,Carol Smith,carol.smith996@example.com,IN,Chicago,silver,2018-03-08,47356.94
+997,Bob Moore,bob.moore997@example.com,AU,Atlanta,silver,2019-03-24,7767.64
+998,Eve Lee,eve.lee998@example.com,IN,Denver,bronze,2019-05-12,21925.17
+999,Carol Johnson,carol.johnson999@example.com,UK,Chicago,bronze,2021-07-04,45083.66
+1000,Mia Wright,mia.wright1000@example.com,US,San Francisco,bronze,2020-04-11,25069.62
+1001,Kate Hall,kate.hall1001@example.com,DE,Portland,gold,2025-10-15,14240.19
+1002,Ivy Brown,ivy.brown1002@example.com,CA,Chicago,platinum,2020-06-28,7610.44
+1003,Quinn Davis,quinn.davis1003@example.com,DE,Seattle,bronze,2021-12-23,29153.92
+1004,Eve Lee,eve.lee1004@example.com,CA,Seattle,platinum,2023-12-16,5672.99
+1005,Dave Lee,dave.lee1005@example.com,JP,Portland,platinum,2023-09-21,23079.45
+1006,Tina Brown,tina.brown1006@example.com,AU,Austin,silver,2023-07-06,13299.75
+1007,Eve Garcia,eve.garcia1007@example.com,DE,Denver,gold,2018-07-22,41056.82
+1008,Tina Johnson,tina.johnson1008@example.com,AU,San Francisco,gold,2018-11-23,19417.12
+1009,Olivia Davis,olivia.davis1009@example.com,JP,Chicago,gold,2020-03-24,1936.22
+1010,Tina Anderson,tina.anderson1010@example.com,MX,New York,silver,2018-11-07,47623.04
+1011,Frank Martinez,frank.martinez1011@example.com,CA,Denver,bronze,2018-02-16,35367.93
+1012,Hank Hill,hank.hill1012@example.com,BR,Portland,bronze,2022-06-18,44935.16
+1013,Eve Wilson,eve.wilson1013@example.com,JP,Portland,silver,2019-02-08,33039.99
+1014,Nick King,nick.king1014@example.com,CA,Chicago,silver,2019-11-01,28720.63
+1015,Leo Hall,leo.hall1015@example.com,FR,Boston,gold,2022-12-22,14238.34
+1016,Mia Lee,mia.lee1016@example.com,BR,Seattle,silver,2021-03-10,29326.36
+1017,Bob Davis,bob.davis1017@example.com,IN,Atlanta,platinum,2018-09-08,30840.6
+1018,Bob Clark,bob.clark1018@example.com,AU,Boston,silver,2020-08-12,7170.85
+1019,Olivia Martinez,olivia.martinez1019@example.com,UK,Seattle,bronze,2021-08-04,6649.42
+1020,Kate Wilson,kate.wilson1020@example.com,US,Chicago,platinum,2022-06-20,26624.76
+1021,Leo Johnson,leo.johnson1021@example.com,IN,Boston,platinum,2023-03-05,14371.78
+1022,Rosa Young,rosa.young1022@example.com,AU,San Francisco,platinum,2025-05-21,49690.15
+1023,Quinn Brown,quinn.brown1023@example.com,DE,New York,gold,2019-11-02,21127.92
+1024,Quinn Hill,quinn.hill1024@example.com,CA,Austin,bronze,2022-01-04,24519.32
+1025,Tina Lee,tina.lee1025@example.com,FR,Seattle,bronze,2019-09-26,6484.76
+1026,Carol Wright,carol.wright1026@example.com,IN,Atlanta,silver,2020-06-26,6587.65
+1027,Leo Anderson,leo.anderson1027@example.com,MX,Boston,platinum,2019-02-22,2002.84
+1028,Dave Scott,dave.scott1028@example.com,UK,Miami,gold,2023-05-17,41914.4
+1029,Alice Taylor,alice.taylor1029@example.com,MX,Portland,gold,2024-01-18,24348.92
+1030,Frank Lee,frank.lee1030@example.com,MX,New York,silver,2023-04-03,28186.36
+1031,Hank Allen,hank.allen1031@example.com,US,Chicago,gold,2021-11-01,30178.38
+1032,Alice Moore,alice.moore1032@example.com,BR,San Francisco,gold,2023-07-20,36716.21
+1033,Bob Moore,bob.moore1033@example.com,AU,Miami,platinum,2023-01-28,5892.06
+1034,Tina Johnson,tina.johnson1034@example.com,US,Denver,platinum,2022-12-21,13288.45
+1035,Jack King,jack.king1035@example.com,US,Austin,bronze,2021-06-26,17503.2
+1036,Alice Lee,alice.lee1036@example.com,MX,Chicago,platinum,2023-08-19,5590.16
+1037,Kate Garcia,kate.garcia1037@example.com,FR,San Francisco,platinum,2025-03-01,7736.7
+1038,Pete Anderson,pete.anderson1038@example.com,UK,Austin,gold,2025-11-02,42645.66
+1039,Sam Lee,sam.lee1039@example.com,UK,Denver,platinum,2019-08-23,31133.32
+1040,Dave Lee,dave.lee1040@example.com,FR,Portland,platinum,2021-06-05,22898.65
+1041,Sam Anderson,sam.anderson1041@example.com,DE,Atlanta,gold,2019-05-27,1516.57
+1042,Frank Thomas,frank.thomas1042@example.com,MX,New York,gold,2024-05-17,487.49
+1043,Alice Davis,alice.davis1043@example.com,DE,Seattle,silver,2024-03-08,10870.37
+1044,Ivy Anderson,ivy.anderson1044@example.com,FR,Boston,silver,2019-02-24,19725
+1045,Bob Scott,bob.scott1045@example.com,CA,Austin,platinum,2021-08-01,10019.14
+1046,Bob King,bob.king1046@example.com,AU,San Francisco,gold,2024-06-14,48326.22
+1047,Grace Brown,grace.brown1047@example.com,BR,Austin,bronze,2018-02-20,46540.79
+1048,Dave Allen,dave.allen1048@example.com,UK,San Francisco,gold,2020-11-03,49544.18
+1049,Carol Martinez,carol.martinez1049@example.com,DE,Seattle,bronze,2022-05-13,11010.27
+1050,Grace Thomas,grace.thomas1050@example.com,JP,Miami,silver,2025-01-27,32716.76
+1051,Dave Lee,dave.lee1051@example.com,MX,Denver,platinum,2018-04-23,8438.01
+1052,Jack Hill,jack.hill1052@example.com,BR,Chicago,silver,2020-03-24,21836.1
+1053,Dave Johnson,dave.johnson1053@example.com,BR,Atlanta,bronze,2019-09-13,16768.11
+1054,Quinn Scott,quinn.scott1054@example.com,FR,Chicago,gold,2021-03-25,24669.22
+1055,Rosa Garcia,rosa.garcia1055@example.com,MX,Seattle,platinum,2025-07-02,28765.23
+1056,Pete Martinez,pete.martinez1056@example.com,UK,Austin,bronze,2021-03-23,28690.65
+1057,Ivy Allen,ivy.allen1057@example.com,FR,Boston,bronze,2020-02-21,23475.74
+1058,Nick Young,nick.young1058@example.com,BR,New York,gold,2018-04-23,2423.2
+1059,Rosa Young,rosa.young1059@example.com,JP,Miami,gold,2022-08-03,22712.14
+1060,Pete Moore,pete.moore1060@example.com,JP,Portland,gold,2019-05-05,47128.06
+1061,Quinn Hall,quinn.hall1061@example.com,DE,Atlanta,bronze,2019-04-16,20905.17
+1062,Eve Allen,eve.allen1062@example.com,MX,Austin,bronze,2021-07-03,41121.53
+1063,Olivia Wilson,olivia.wilson1063@example.com,AU,Atlanta,platinum,2024-02-28,9002.11
+1064,Nick Taylor,nick.taylor1064@example.com,BR,Seattle,bronze,2019-04-18,18920.24
+1065,Bob Lee,bob.lee1065@example.com,UK,Denver,platinum,2024-02-28,31822.63
+1066,Ivy King,ivy.king1066@example.com,US,New York,silver,2025-12-06,28839.69
+1067,Nick Taylor,nick.taylor1067@example.com,DE,Chicago,bronze,2021-12-17,5291.93
+1068,Grace Hill,grace.hill1068@example.com,US,Denver,silver,2018-01-08,1725.71
+1069,Nick Wilson,nick.wilson1069@example.com,AU,Chicago,bronze,2021-12-26,12469.77
+1070,Sam Allen,sam.allen1070@example.com,CA,Austin,gold,2023-08-04,33151.96
+1071,Hank Hill,hank.hill1071@example.com,CA,Portland,bronze,2022-10-06,4360.4
+1072,Quinn Martinez,quinn.martinez1072@example.com,CA,Seattle,gold,2024-01-03,15137.49
+1073,Mia Hall,mia.hall1073@example.com,UK,Austin,platinum,2023-07-18,33605.3
+1074,Dave Martinez,dave.martinez1074@example.com,JP,Denver,silver,2025-02-25,31253.69
+1075,Carol Moore,carol.moore1075@example.com,FR,Atlanta,platinum,2020-11-21,15212.83
+1076,Dave Taylor,dave.taylor1076@example.com,CA,Denver,gold,2024-10-23,30889.78
+1077,Bob Brown,bob.brown1077@example.com,BR,New York,gold,2023-12-28,8270.17
+1078,Bob Davis,bob.davis1078@example.com,DE,Boston,bronze,2020-08-06,24839.84
+1079,Kate Moore,kate.moore1079@example.com,BR,New York,gold,2025-09-03,37421.82
+1080,Ivy King,ivy.king1080@example.com,IN,Austin,bronze,2025-04-18,37898.55
+1081,Carol Thomas,carol.thomas1081@example.com,IN,Austin,platinum,2021-09-16,1463.3
+1082,Sam Davis,sam.davis1082@example.com,MX,Chicago,bronze,2024-10-26,31345.86
+1083,Alice King,alice.king1083@example.com,MX,New York,platinum,2018-03-18,47020.13
+1084,Pete Scott,pete.scott1084@example.com,JP,San Francisco,bronze,2019-02-02,11675.86
+1085,Carol Brown,carol.brown1085@example.com,MX,Denver,bronze,2024-12-07,3418.71
+1086,Carol Davis,carol.davis1086@example.com,BR,Atlanta,bronze,2022-11-08,1716.92
+1087,Grace Brown,grace.brown1087@example.com,FR,Denver,silver,2019-10-26,1332.45
+1088,Quinn Thomas,quinn.thomas1088@example.com,US,Chicago,silver,2025-08-07,909.69
+1089,Grace Smith,grace.smith1089@example.com,MX,San Francisco,gold,2019-12-19,11988.56
+1090,Olivia Hill,olivia.hill1090@example.com,MX,Miami,platinum,2018-12-04,49532.13
+1091,Kate Scott,kate.scott1091@example.com,CA,Austin,silver,2021-03-23,8028.52
+1092,Mia Davis,mia.davis1092@example.com,DE,Austin,bronze,2020-11-27,22162.84
+1093,Ivy Brown,ivy.brown1093@example.com,IN,Miami,gold,2018-10-12,498.8
+1094,Kate Moore,kate.moore1094@example.com,AU,Miami,gold,2019-03-08,29460.61
+1095,Alice Hill,alice.hill1095@example.com,JP,Boston,platinum,2018-01-22,34646.8
+1096,Carol Davis,carol.davis1096@example.com,JP,Miami,gold,2020-01-27,12672.65
+1097,Hank Davis,hank.davis1097@example.com,JP,Miami,silver,2023-03-27,633.48
+1098,Eve Martinez,eve.martinez1098@example.com,UK,Boston,gold,2021-02-19,15575.25
+1099,Rosa Hill,rosa.hill1099@example.com,FR,Chicago,platinum,2018-02-10,30141.13
+1100,Carol Wright,carol.wright1100@example.com,UK,San Francisco,silver,2025-03-25,15350.94
+1101,Frank Moore,frank.moore1101@example.com,BR,Chicago,gold,2021-12-19,22306.54
+1102,Frank Scott,frank.scott1102@example.com,JP,Atlanta,platinum,2025-02-02,27401.64
+1103,Grace Anderson,grace.anderson1103@example.com,BR,San Francisco,platinum,2024-11-25,10700.23
+1104,Carol Hill,carol.hill1104@example.com,IN,Denver,silver,2018-05-20,42840.25
+1105,Tina Taylor,tina.taylor1105@example.com,FR,Denver,gold,2025-09-26,33392.14
+1106,Pete Smith,pete.smith1106@example.com,MX,New York,platinum,2023-06-05,27418.33
+1107,Sam Hall,sam.hall1107@example.com,US,Boston,silver,2023-10-04,22522.49
+1108,Leo Thomas,leo.thomas1108@example.com,US,Atlanta,platinum,2022-10-08,15717.61
+1109,Alice Anderson,alice.anderson1109@example.com,UK,Miami,gold,2020-12-18,8206.42
+1110,Bob Allen,bob.allen1110@example.com,FR,Denver,silver,2024-08-13,7316.96
+1111,Tina Taylor,tina.taylor1111@example.com,IN,Boston,platinum,2021-12-23,25228.67
+1112,Dave Taylor,dave.taylor1112@example.com,FR,Boston,platinum,2022-01-13,28003.35
+1113,Frank Lee,frank.lee1113@example.com,MX,San Francisco,platinum,2022-04-06,35590.4
+1114,Carol Anderson,carol.anderson1114@example.com,BR,Austin,gold,2019-01-26,24268.26
+1115,Alice Clark,alice.clark1115@example.com,MX,Atlanta,bronze,2022-01-05,46518.81
+1116,Nick Moore,nick.moore1116@example.com,DE,Atlanta,bronze,2019-03-15,39314.8
+1117,Carol Garcia,carol.garcia1117@example.com,DE,Boston,platinum,2020-11-24,16860.91
+1118,Tina Lee,tina.lee1118@example.com,CA,Austin,bronze,2023-11-02,14717.93
+1119,Dave Lee,dave.lee1119@example.com,US,San Francisco,silver,2021-03-20,17427.44
+1120,Quinn Brown,quinn.brown1120@example.com,IN,Austin,gold,2018-01-17,12014.47
+1121,Sam Taylor,sam.taylor1121@example.com,US,Seattle,silver,2020-04-21,27364.3
+1122,Jack Hill,jack.hill1122@example.com,DE,Miami,platinum,2018-03-18,25488.27
+1123,Jack Moore,jack.moore1123@example.com,AU,Boston,gold,2021-04-25,22828.04
+1124,Ivy Clark,ivy.clark1124@example.com,IN,Atlanta,platinum,2021-06-07,16724.1
+1125,Sam Wilson,sam.wilson1125@example.com,MX,Chicago,silver,2021-10-28,19727.52
+1126,Rosa Smith,rosa.smith1126@example.com,MX,Chicago,bronze,2025-07-08,39400.2
+1127,Bob Wright,bob.wright1127@example.com,US,Miami,bronze,2023-10-09,34615.77
+1128,Mia King,mia.king1128@example.com,AU,Austin,silver,2025-11-08,10630.79
+1129,Carol Thomas,carol.thomas1129@example.com,IN,San Francisco,bronze,2018-10-03,43158.28
+1130,Mia Hill,mia.hill1130@example.com,AU,Denver,platinum,2025-07-21,29205.87
+1131,Mia Taylor,mia.taylor1131@example.com,DE,Boston,gold,2021-05-07,26433.35
+1132,Hank Thomas,hank.thomas1132@example.com,JP,Portland,silver,2023-11-25,43906.19
+1133,Ivy Brown,ivy.brown1133@example.com,FR,San Francisco,bronze,2022-11-22,3678.94
+1134,Mia Wright,mia.wright1134@example.com,UK,Chicago,silver,2019-10-16,36140.68
+1135,Quinn Johnson,quinn.johnson1135@example.com,IN,Denver,gold,2022-04-21,23897.78
+1136,Eve King,eve.king1136@example.com,MX,Miami,silver,2024-02-21,5964.68
+1137,Nick Clark,nick.clark1137@example.com,AU,New York,gold,2024-03-28,35894.87
+1138,Tina Taylor,tina.taylor1138@example.com,IN,Miami,bronze,2023-01-04,12495.77
+1139,Frank Brown,frank.brown1139@example.com,JP,New York,silver,2022-09-10,22898.88
+1140,Sam Wilson,sam.wilson1140@example.com,BR,San Francisco,platinum,2024-09-16,24878.51
+1141,Pete Martinez,pete.martinez1141@example.com,UK,Seattle,silver,2020-12-28,31501.63
+1142,Alice Garcia,alice.garcia1142@example.com,US,San Francisco,gold,2018-10-09,15886.99
+1143,Dave Wright,dave.wright1143@example.com,BR,New York,platinum,2022-04-22,26933.49
+1144,Sam Davis,sam.davis1144@example.com,UK,Austin,silver,2018-04-03,6727.03
+1145,Leo Moore,leo.moore1145@example.com,FR,Austin,gold,2019-11-19,34092.5
+1146,Hank Hill,hank.hill1146@example.com,AU,Miami,silver,2019-11-13,23800.52
+1147,Olivia Davis,olivia.davis1147@example.com,FR,Austin,bronze,2020-04-09,29163.83
+1148,Mia Hall,mia.hall1148@example.com,US,Denver,bronze,2021-04-27,22246.72
+1149,Frank Clark,frank.clark1149@example.com,US,New York,bronze,2018-05-03,17665.29
+1150,Olivia Lee,olivia.lee1150@example.com,DE,Austin,bronze,2020-06-01,6124.58
+1151,Carol Thomas,carol.thomas1151@example.com,MX,Austin,silver,2021-02-11,4818.15
+1152,Mia Clark,mia.clark1152@example.com,CA,Seattle,gold,2018-12-07,31593.44
+1153,Rosa Wilson,rosa.wilson1153@example.com,BR,Chicago,bronze,2019-12-03,36674.88
+1154,Grace Davis,grace.davis1154@example.com,DE,New York,bronze,2021-03-10,35954.9
+1155,Nick Hill,nick.hill1155@example.com,IN,Portland,platinum,2019-09-14,4656.86
+1156,Ivy Wilson,ivy.wilson1156@example.com,AU,New York,gold,2022-04-14,8743.65
+1157,Frank Smith,frank.smith1157@example.com,CA,Seattle,bronze,2021-02-24,31549.87
+1158,Quinn Hall,quinn.hall1158@example.com,US,Seattle,silver,2024-01-11,43910.81
+1159,Mia Hill,mia.hill1159@example.com,BR,Denver,gold,2022-03-08,10193.44
+1160,Alice Davis,alice.davis1160@example.com,MX,Boston,gold,2024-05-05,25918.8
+1161,Alice Davis,alice.davis1161@example.com,FR,Atlanta,silver,2018-02-25,11078.81
+1162,Rosa Taylor,rosa.taylor1162@example.com,CA,Austin,silver,2025-11-14,39446.91
+1163,Nick Garcia,nick.garcia1163@example.com,JP,New York,bronze,2025-08-27,7466.21
+1164,Mia Clark,mia.clark1164@example.com,UK,Seattle,gold,2023-06-06,2904.85
+1165,Sam Scott,sam.scott1165@example.com,MX,Portland,bronze,2024-01-03,14675.62
+1166,Leo Moore,leo.moore1166@example.com,FR,Miami,gold,2024-10-26,8132.6
+1167,Sam King,sam.king1167@example.com,AU,Miami,bronze,2018-09-03,33885.86
+1168,Nick Smith,nick.smith1168@example.com,FR,Miami,silver,2025-11-03,30483.84
+1169,Kate Smith,kate.smith1169@example.com,IN,Austin,bronze,2022-10-20,49426.1
+1170,Nick Thomas,nick.thomas1170@example.com,BR,Miami,bronze,2020-09-05,1626.46
+1171,Jack King,jack.king1171@example.com,US,Chicago,silver,2018-07-06,25115.88
+1172,Frank Brown,frank.brown1172@example.com,US,Austin,gold,2023-02-08,25978.49
+1173,Alice Davis,alice.davis1173@example.com,JP,Atlanta,silver,2021-07-22,45145.75
+1174,Ivy Martinez,ivy.martinez1174@example.com,MX,New York,platinum,2018-11-07,36148.57
+1175,Hank Brown,hank.brown1175@example.com,DE,Boston,silver,2019-02-06,16497.84
+1176,Jack Hall,jack.hall1176@example.com,UK,Chicago,gold,2021-03-05,19183.12
+1177,Eve Anderson,eve.anderson1177@example.com,MX,New York,gold,2018-04-10,14230.05
+1178,Leo Johnson,leo.johnson1178@example.com,DE,Portland,gold,2025-09-06,13171.51
+1179,Frank Garcia,frank.garcia1179@example.com,IN,Austin,platinum,2020-02-01,9573.89
+1180,Kate Anderson,kate.anderson1180@example.com,BR,San Francisco,silver,2020-11-01,1080.11
+1181,Pete Clark,pete.clark1181@example.com,BR,Portland,gold,2018-03-28,24845.48
+1182,Frank Clark,frank.clark1182@example.com,UK,Chicago,gold,2024-08-11,40967.6
+1183,Tina Taylor,tina.taylor1183@example.com,CA,Boston,bronze,2018-05-14,6276.62
+1184,Ivy Moore,ivy.moore1184@example.com,BR,Portland,gold,2019-02-20,14425.28
+1185,Grace Allen,grace.allen1185@example.com,CA,Chicago,platinum,2024-02-08,36799.69
+1186,Leo Taylor,leo.taylor1186@example.com,CA,San Francisco,silver,2024-03-06,29244.19
+1187,Nick Young,nick.young1187@example.com,BR,Austin,bronze,2018-08-11,15174.73
+1188,Eve Taylor,eve.taylor1188@example.com,CA,Chicago,gold,2020-11-03,15343.22
+1189,Frank Anderson,frank.anderson1189@example.com,JP,Chicago,silver,2021-02-13,15516.94
+1190,Quinn Scott,quinn.scott1190@example.com,FR,Denver,platinum,2022-09-09,40783.73
+1191,Leo Young,leo.young1191@example.com,AU,Portland,gold,2022-01-16,31842.95
+1192,Rosa Anderson,rosa.anderson1192@example.com,BR,New York,platinum,2025-12-05,32498.24
+1193,Pete Anderson,pete.anderson1193@example.com,UK,Boston,gold,2021-04-14,42302.81
+1194,Carol Hill,carol.hill1194@example.com,MX,San Francisco,gold,2018-12-18,5940.93
+1195,Ivy Martinez,ivy.martinez1195@example.com,US,Portland,gold,2019-12-27,10807.56
+1196,Pete Wright,pete.wright1196@example.com,BR,Miami,gold,2021-06-12,13584.42
+1197,Hank Anderson,hank.anderson1197@example.com,CA,Seattle,silver,2020-08-02,32557.48
+1198,Ivy Johnson,ivy.johnson1198@example.com,FR,Miami,bronze,2022-03-06,34765.71
+1199,Frank Smith,frank.smith1199@example.com,IN,Austin,silver,2025-12-11,2978.35
+1200,Mia Anderson,mia.anderson1200@example.com,US,Miami,platinum,2018-06-13,44989.96
+1201,Nick Thomas,nick.thomas1201@example.com,US,Seattle,gold,2024-10-01,27940.38
+1202,Kate Anderson,kate.anderson1202@example.com,BR,Chicago,gold,2020-11-24,11167.75
+1203,Kate Johnson,kate.johnson1203@example.com,FR,Boston,gold,2025-09-05,26675.84
+1204,Carol Smith,carol.smith1204@example.com,UK,Boston,platinum,2020-04-28,48299.94
+1205,Alice Scott,alice.scott1205@example.com,FR,Austin,bronze,2025-08-08,4812.91
+1206,Quinn Scott,quinn.scott1206@example.com,BR,Seattle,silver,2022-11-06,46005.44
+1207,Ivy Wilson,ivy.wilson1207@example.com,US,Atlanta,silver,2023-12-26,38666.67
+1208,Eve Moore,eve.moore1208@example.com,BR,Chicago,platinum,2021-10-17,42938.7
+1209,Frank Martinez,frank.martinez1209@example.com,US,Chicago,bronze,2023-10-13,41779.91
+1210,Hank Thomas,hank.thomas1210@example.com,MX,Chicago,bronze,2020-05-07,12383.76
+1211,Kate Johnson,kate.johnson1211@example.com,FR,New York,platinum,2025-05-14,25645.29
+1212,Quinn King,quinn.king1212@example.com,MX,Boston,bronze,2019-07-09,25832.95
+1213,Leo Anderson,leo.anderson1213@example.com,DE,Seattle,platinum,2022-03-09,10877.64
+1214,Kate Davis,kate.davis1214@example.com,MX,Austin,bronze,2019-01-20,869.12
+1215,Alice Johnson,alice.johnson1215@example.com,FR,Atlanta,silver,2022-05-25,21108.56
+1216,Hank Brown,hank.brown1216@example.com,BR,Denver,platinum,2021-04-21,26113.08
+1217,Bob Allen,bob.allen1217@example.com,DE,San Francisco,platinum,2019-08-08,37848.1
+1218,Leo Johnson,leo.johnson1218@example.com,AU,San Francisco,silver,2021-08-05,7336.25
+1219,Quinn Young,quinn.young1219@example.com,MX,Boston,bronze,2023-03-05,22827.81
+1220,Eve Anderson,eve.anderson1220@example.com,MX,San Francisco,gold,2022-03-13,17841.71
+1221,Bob Lee,bob.lee1221@example.com,US,New York,silver,2023-11-23,28739.79
+1222,Leo Taylor,leo.taylor1222@example.com,AU,Atlanta,gold,2024-08-07,164.06
+1223,Jack Smith,jack.smith1223@example.com,IN,Boston,platinum,2022-07-06,33397.38
+1224,Sam King,sam.king1224@example.com,DE,Boston,bronze,2021-10-09,8270.57
+1225,Ivy Clark,ivy.clark1225@example.com,FR,Boston,bronze,2024-01-11,13709.31
+1226,Pete Johnson,pete.johnson1226@example.com,BR,Portland,bronze,2024-09-17,14894.34
+1227,Tina Wright,tina.wright1227@example.com,JP,Boston,platinum,2019-06-16,654.12
+1228,Hank Young,hank.young1228@example.com,MX,Chicago,silver,2020-11-17,44217.46
+1229,Quinn Scott,quinn.scott1229@example.com,CA,Austin,platinum,2023-10-03,44623.68
+1230,Jack Anderson,jack.anderson1230@example.com,DE,Seattle,bronze,2022-03-17,45860.77
+1231,Nick Davis,nick.davis1231@example.com,CA,Chicago,platinum,2025-03-23,20422.9
+1232,Quinn Davis,quinn.davis1232@example.com,FR,Austin,bronze,2025-11-06,42501.47
+1233,Carol Hall,carol.hall1233@example.com,AU,Seattle,platinum,2023-05-12,47083.1
+1234,Grace Taylor,grace.taylor1234@example.com,BR,Seattle,silver,2018-10-20,28722.68
+1235,Mia Davis,mia.davis1235@example.com,FR,San Francisco,gold,2021-10-13,7258.99
+1236,Pete Johnson,pete.johnson1236@example.com,BR,Portland,silver,2023-12-24,2944.79
+1237,Eve Anderson,eve.anderson1237@example.com,DE,Denver,gold,2023-05-11,47200.68
+1238,Eve Smith,eve.smith1238@example.com,MX,Denver,gold,2024-05-23,19187.32
+1239,Nick Taylor,nick.taylor1239@example.com,UK,Boston,bronze,2025-05-03,16158.11
+1240,Kate Martinez,kate.martinez1240@example.com,AU,Portland,gold,2021-08-13,46765.97
+1241,Ivy Garcia,ivy.garcia1241@example.com,FR,New York,gold,2021-08-13,39801.07
+1242,Kate Brown,kate.brown1242@example.com,UK,Seattle,platinum,2019-04-21,33167.63
+1243,Jack Davis,jack.davis1243@example.com,IN,Seattle,silver,2022-04-15,19517.85
+1244,Quinn Hall,quinn.hall1244@example.com,BR,New York,bronze,2024-09-19,27540.1
+1245,Mia Davis,mia.davis1245@example.com,MX,Boston,bronze,2018-12-20,25084.01
+1246,Ivy Wilson,ivy.wilson1246@example.com,AU,Austin,silver,2022-06-12,25383.68
+1247,Jack Allen,jack.allen1247@example.com,IN,Atlanta,platinum,2025-07-12,48168.33
+1248,Mia Hall,mia.hall1248@example.com,US,Atlanta,gold,2018-04-17,9775.84
+1249,Olivia Lee,olivia.lee1249@example.com,IN,Denver,gold,2020-12-27,33195.02
+1250,Hank Anderson,hank.anderson1250@example.com,JP,Miami,platinum,2022-10-16,49746.13
+1251,Leo Brown,leo.brown1251@example.com,DE,Miami,gold,2025-02-18,22335.45
+1252,Eve Lee,eve.lee1252@example.com,BR,Portland,platinum,2022-01-26,47348.59
+1253,Rosa Allen,rosa.allen1253@example.com,DE,New York,bronze,2018-11-05,28649.66
+1254,Ivy Young,ivy.young1254@example.com,MX,Chicago,gold,2020-12-13,8709.34
+1255,Carol Hall,carol.hall1255@example.com,IN,Atlanta,gold,2022-04-12,38818.3
+1256,Mia Hall,mia.hall1256@example.com,US,Seattle,gold,2019-12-07,13814.5
+1257,Leo Lee,leo.lee1257@example.com,BR,Chicago,gold,2025-08-07,4721.51
+1258,Nick Hall,nick.hall1258@example.com,CA,Chicago,silver,2023-01-13,47309.69
+1259,Pete Davis,pete.davis1259@example.com,BR,Denver,silver,2020-06-24,24501.11
+1260,Olivia Clark,olivia.clark1260@example.com,JP,Atlanta,bronze,2024-09-15,1397.24
+1261,Hank Johnson,hank.johnson1261@example.com,IN,Miami,silver,2018-09-12,27712.15
+1262,Pete Young,pete.young1262@example.com,AU,Miami,silver,2018-09-03,9642.65
+1263,Nick Thomas,nick.thomas1263@example.com,BR,Boston,silver,2019-12-24,49229.46
+1264,Grace Scott,grace.scott1264@example.com,FR,Seattle,bronze,2023-09-12,40964.34
+1265,Tina Davis,tina.davis1265@example.com,MX,Miami,gold,2023-04-13,15391.11
+1266,Eve Wright,eve.wright1266@example.com,JP,Denver,gold,2019-10-03,40064.6
+1267,Pete Wilson,pete.wilson1267@example.com,FR,Austin,platinum,2020-10-09,40538.43
+1268,Tina Wilson,tina.wilson1268@example.com,UK,San Francisco,platinum,2024-10-07,12978.09
+1269,Bob Taylor,bob.taylor1269@example.com,FR,New York,bronze,2022-06-27,39072.19
+1270,Frank Scott,frank.scott1270@example.com,US,Chicago,gold,2025-06-25,3688.47
+1271,Grace Wright,grace.wright1271@example.com,IN,Austin,platinum,2025-12-10,25897.63
+1272,Nick King,nick.king1272@example.com,FR,Chicago,bronze,2023-11-26,14836.01
+1273,Ivy Clark,ivy.clark1273@example.com,US,Denver,silver,2022-10-06,40738.57
+1274,Eve Lee,eve.lee1274@example.com,DE,Austin,bronze,2020-04-23,27375.46
+1275,Olivia Scott,olivia.scott1275@example.com,CA,Miami,gold,2022-01-18,15100.78
+1276,Jack Wilson,jack.wilson1276@example.com,BR,San Francisco,platinum,2023-10-27,13980.28
+1277,Alice Wright,alice.wright1277@example.com,MX,Denver,platinum,2021-09-07,28239.04
+1278,Sam Garcia,sam.garcia1278@example.com,MX,New York,platinum,2024-08-12,14573.4
+1279,Dave Wright,dave.wright1279@example.com,IN,Atlanta,silver,2025-10-12,2311.96
+1280,Grace Brown,grace.brown1280@example.com,JP,Austin,bronze,2023-12-20,39998.41
+1281,Olivia Thomas,olivia.thomas1281@example.com,IN,Atlanta,bronze,2025-04-16,8816.35
+1282,Olivia Moore,olivia.moore1282@example.com,AU,Miami,platinum,2023-03-25,12371.52
+1283,Eve Davis,eve.davis1283@example.com,JP,Atlanta,gold,2020-06-14,9391.65
+1284,Bob Wilson,bob.wilson1284@example.com,US,New York,platinum,2024-10-10,16817.69
+1285,Nick Hall,nick.hall1285@example.com,FR,Seattle,silver,2020-06-02,26019.31
+1286,Rosa Davis,rosa.davis1286@example.com,JP,Atlanta,gold,2025-11-02,13389.29
+1287,Rosa King,rosa.king1287@example.com,MX,Miami,bronze,2021-07-07,6111.06
+1288,Bob Lee,bob.lee1288@example.com,JP,New York,platinum,2024-08-14,1739.29
+1289,Olivia Allen,olivia.allen1289@example.com,US,Chicago,gold,2019-06-06,25776.94
+1290,Tina Thomas,tina.thomas1290@example.com,DE,Austin,bronze,2020-12-17,1538.01
+1291,Alice Scott,alice.scott1291@example.com,BR,Boston,silver,2021-03-14,15953.64
+1292,Bob Young,bob.young1292@example.com,US,Boston,silver,2019-03-02,37928.59
+1293,Alice Wilson,alice.wilson1293@example.com,BR,Boston,silver,2018-12-22,47607.48
+1294,Eve Wilson,eve.wilson1294@example.com,FR,Portland,silver,2018-08-06,41410.73
+1295,Eve Smith,eve.smith1295@example.com,BR,Miami,gold,2024-06-26,2867.87
+1296,Hank Thomas,hank.thomas1296@example.com,BR,New York,silver,2024-03-05,46404.88
+1297,Tina Johnson,tina.johnson1297@example.com,CA,Miami,gold,2022-03-13,32030.12
+1298,Alice Garcia,alice.garcia1298@example.com,FR,Seattle,platinum,2024-12-25,49841.95
+1299,Mia Lee,mia.lee1299@example.com,UK,Denver,gold,2019-06-05,9806.45
+1300,Carol Clark,carol.clark1300@example.com,US,Portland,platinum,2022-02-19,150.13
+1301,Ivy Clark,ivy.clark1301@example.com,US,Boston,gold,2024-10-18,46743.48
+1302,Leo King,leo.king1302@example.com,UK,Boston,gold,2024-06-25,19435.87
+1303,Dave Anderson,dave.anderson1303@example.com,IN,Seattle,platinum,2018-06-15,8138.8
+1304,Dave Scott,dave.scott1304@example.com,US,Portland,gold,2022-10-10,7847.34
+1305,Bob Smith,bob.smith1305@example.com,FR,Chicago,platinum,2019-09-13,32636.16
+1306,Ivy Moore,ivy.moore1306@example.com,UK,San Francisco,bronze,2020-10-10,18348.59
+1307,Quinn Clark,quinn.clark1307@example.com,IN,Portland,gold,2018-11-18,22643.69
+1308,Bob Moore,bob.moore1308@example.com,FR,Denver,gold,2025-05-25,29952.17
+1309,Ivy Young,ivy.young1309@example.com,IN,Chicago,platinum,2023-12-06,34024.31
+1310,Kate Brown,kate.brown1310@example.com,IN,Denver,silver,2022-08-13,15221.84
+1311,Bob King,bob.king1311@example.com,JP,Austin,gold,2024-04-26,24184.66
+1312,Tina Wright,tina.wright1312@example.com,UK,Seattle,bronze,2024-05-10,38084.54
+1313,Jack Johnson,jack.johnson1313@example.com,DE,Seattle,platinum,2019-07-28,28184.56
+1314,Mia Clark,mia.clark1314@example.com,JP,San Francisco,silver,2025-11-11,26542.18
+1315,Jack Martinez,jack.martinez1315@example.com,BR,Boston,platinum,2020-07-15,18705.1
+1316,Eve Wilson,eve.wilson1316@example.com,CA,Atlanta,bronze,2025-04-21,23665.34
+1317,Ivy Thomas,ivy.thomas1317@example.com,FR,Boston,platinum,2023-03-11,46590.36
+1318,Rosa King,rosa.king1318@example.com,CA,Miami,bronze,2023-06-01,15179.49
+1319,Pete Garcia,pete.garcia1319@example.com,DE,Boston,silver,2025-03-26,23763.74
+1320,Olivia Davis,olivia.davis1320@example.com,JP,Chicago,gold,2018-02-16,6729.57
+1321,Nick Brown,nick.brown1321@example.com,US,Portland,platinum,2022-12-10,30782.75
+1322,Rosa Allen,rosa.allen1322@example.com,DE,Boston,platinum,2020-05-05,49014.05
+1323,Carol Davis,carol.davis1323@example.com,BR,San Francisco,bronze,2023-04-13,49018.53
+1324,Frank Martinez,frank.martinez1324@example.com,DE,Austin,silver,2018-08-28,32983.16
+1325,Dave Martinez,dave.martinez1325@example.com,IN,Chicago,gold,2022-07-18,11749.28
+1326,Rosa Garcia,rosa.garcia1326@example.com,AU,Austin,platinum,2024-02-22,37950.78
+1327,Quinn Brown,quinn.brown1327@example.com,US,Seattle,silver,2021-05-02,20329.63
+1328,Tina Garcia,tina.garcia1328@example.com,AU,Miami,bronze,2025-11-28,20444.11
+1329,Carol Johnson,carol.johnson1329@example.com,FR,Chicago,silver,2025-07-02,9105.25
+1330,Mia Wright,mia.wright1330@example.com,AU,Miami,silver,2022-09-05,19631.33
+1331,Nick Young,nick.young1331@example.com,UK,New York,bronze,2025-10-01,22071.67
+1332,Eve Young,eve.young1332@example.com,US,Miami,gold,2021-09-16,29609.17
+1333,Eve Hill,eve.hill1333@example.com,US,New York,gold,2024-12-04,1634.31
+1334,Rosa Wright,rosa.wright1334@example.com,DE,Austin,platinum,2024-07-04,27843.56
+1335,Quinn Johnson,quinn.johnson1335@example.com,IN,Chicago,platinum,2024-06-11,18778.71
+1336,Dave Hall,dave.hall1336@example.com,MX,Miami,platinum,2025-08-21,11497.07
+1337,Dave Thomas,dave.thomas1337@example.com,FR,Seattle,platinum,2025-09-11,30226.02
+1338,Alice Lee,alice.lee1338@example.com,DE,Miami,bronze,2023-12-02,48922.09
+1339,Tina Thomas,tina.thomas1339@example.com,AU,Atlanta,silver,2023-07-25,1181.51
+1340,Dave Thomas,dave.thomas1340@example.com,BR,Atlanta,platinum,2022-09-02,48899.13
+1341,Eve Lee,eve.lee1341@example.com,JP,Denver,bronze,2022-11-12,987.21
+1342,Carol Smith,carol.smith1342@example.com,US,Chicago,gold,2020-11-01,3662.16
+1343,Olivia Scott,olivia.scott1343@example.com,UK,Austin,platinum,2024-09-02,48000.68
+1344,Frank Moore,frank.moore1344@example.com,CA,Chicago,platinum,2019-10-14,15056.21
+1345,Alice Allen,alice.allen1345@example.com,AU,Austin,silver,2019-07-03,7468.7
+1346,Carol Hill,carol.hill1346@example.com,BR,San Francisco,bronze,2024-02-11,24574.68
+1347,Hank Anderson,hank.anderson1347@example.com,DE,Seattle,silver,2021-06-09,41046.28
+1348,Grace King,grace.king1348@example.com,IN,Seattle,bronze,2018-07-27,12534.27
+1349,Tina Young,tina.young1349@example.com,FR,Chicago,bronze,2019-12-26,28209.84
+1350,Leo Anderson,leo.anderson1350@example.com,JP,Seattle,silver,2020-09-12,43419.66
+1351,Quinn Clark,quinn.clark1351@example.com,JP,Boston,gold,2025-10-28,3097.98
+1352,Ivy Lee,ivy.lee1352@example.com,CA,Chicago,platinum,2020-02-24,48435.63
+1353,Nick Thomas,nick.thomas1353@example.com,CA,New York,gold,2018-04-25,20131.37
+1354,Carol Smith,carol.smith1354@example.com,MX,Chicago,silver,2019-11-27,15393.61
+1355,Jack Hall,jack.hall1355@example.com,UK,Boston,bronze,2022-01-10,44211.83
+1356,Pete Garcia,pete.garcia1356@example.com,MX,Miami,platinum,2021-02-01,5943.19
+1357,Nick Moore,nick.moore1357@example.com,DE,Chicago,bronze,2019-03-13,13887.12
+1358,Tina Thomas,tina.thomas1358@example.com,FR,Atlanta,silver,2025-07-17,31409.45
+1359,Dave Johnson,dave.johnson1359@example.com,FR,New York,gold,2018-12-12,10410.38
+1360,Olivia Hall,olivia.hall1360@example.com,BR,Miami,bronze,2025-01-25,2134.71
+1361,Olivia Brown,olivia.brown1361@example.com,CA,San Francisco,platinum,2020-02-26,39483.48
+1362,Ivy Smith,ivy.smith1362@example.com,UK,Chicago,gold,2023-03-10,12050.81
+1363,Quinn Clark,quinn.clark1363@example.com,CA,Portland,platinum,2021-04-10,37426.44
+1364,Nick Clark,nick.clark1364@example.com,CA,Portland,gold,2019-02-12,2704.09
+1365,Sam Smith,sam.smith1365@example.com,BR,New York,silver,2024-01-23,24072.42
+1366,Frank Anderson,frank.anderson1366@example.com,US,Miami,platinum,2022-01-01,19856.68
+1367,Mia Lee,mia.lee1367@example.com,IN,New York,gold,2025-02-28,36174.87
+1368,Ivy Allen,ivy.allen1368@example.com,FR,Portland,gold,2024-02-16,477
+1369,Frank Anderson,frank.anderson1369@example.com,CA,San Francisco,gold,2018-09-12,32372.99
+1370,Leo Lee,leo.lee1370@example.com,BR,San Francisco,silver,2021-07-02,12519.38
+1371,Hank Brown,hank.brown1371@example.com,US,Seattle,gold,2025-06-12,49337.3
+1372,Nick Hill,nick.hill1372@example.com,AU,Denver,silver,2024-12-04,6934.43
+1373,Sam Scott,sam.scott1373@example.com,DE,Austin,bronze,2019-08-11,25457.53
+1374,Grace Scott,grace.scott1374@example.com,IN,Miami,silver,2019-06-02,14946.98
+1375,Alice Hill,alice.hill1375@example.com,AU,New York,bronze,2022-09-26,48746.69
+1376,Grace Martinez,grace.martinez1376@example.com,AU,Miami,bronze,2020-04-11,49559.77
+1377,Leo Scott,leo.scott1377@example.com,BR,Atlanta,silver,2023-12-15,35980.08
+1378,Grace Lee,grace.lee1378@example.com,UK,San Francisco,gold,2024-04-10,49524.64
+1379,Eve Allen,eve.allen1379@example.com,FR,Chicago,platinum,2023-03-25,4430.87
+1380,Jack Allen,jack.allen1380@example.com,IN,Portland,silver,2019-01-11,20850.43
+1381,Tina Moore,tina.moore1381@example.com,AU,Seattle,bronze,2019-03-13,9214.88
+1382,Ivy Wright,ivy.wright1382@example.com,AU,Chicago,silver,2025-07-08,31758.37
+1383,Pete Moore,pete.moore1383@example.com,AU,Portland,bronze,2025-12-04,22472.3
+1384,Pete Davis,pete.davis1384@example.com,IN,Boston,bronze,2020-08-07,35336.25
+1385,Rosa Garcia,rosa.garcia1385@example.com,AU,Portland,platinum,2019-01-16,40956.07
+1386,Carol Wilson,carol.wilson1386@example.com,DE,Miami,platinum,2024-04-11,18008.49
+1387,Carol Anderson,carol.anderson1387@example.com,FR,Seattle,silver,2021-02-12,818.81
+1388,Mia Brown,mia.brown1388@example.com,FR,Seattle,platinum,2021-03-13,21079.99
+1389,Olivia Thomas,olivia.thomas1389@example.com,JP,Seattle,silver,2023-03-17,39114.44
+1390,Jack Lee,jack.lee1390@example.com,AU,Atlanta,platinum,2021-12-07,2104.39
+1391,Sam Smith,sam.smith1391@example.com,JP,Boston,platinum,2023-05-07,44529.62
+1392,Leo King,leo.king1392@example.com,DE,Miami,bronze,2022-02-06,22924.48
+1393,Pete Smith,pete.smith1393@example.com,US,Boston,platinum,2021-10-15,15507.72
+1394,Nick Smith,nick.smith1394@example.com,BR,Atlanta,gold,2020-12-28,44888.38
+1395,Alice Anderson,alice.anderson1395@example.com,UK,Atlanta,silver,2024-12-01,12436.45
+1396,Olivia Scott,olivia.scott1396@example.com,UK,Atlanta,bronze,2021-06-21,2466.25
+1397,Nick Lee,nick.lee1397@example.com,MX,San Francisco,platinum,2023-06-07,6130.82
+1398,Alice Scott,alice.scott1398@example.com,JP,Seattle,gold,2020-04-22,38897.68
+1399,Pete Smith,pete.smith1399@example.com,JP,Chicago,bronze,2024-10-04,1665.99
+1400,Eve Allen,eve.allen1400@example.com,FR,Miami,platinum,2021-11-25,9185.33
+1401,Mia Wilson,mia.wilson1401@example.com,CA,Boston,platinum,2021-03-16,46538.33
+1402,Grace Johnson,grace.johnson1402@example.com,JP,Boston,gold,2020-06-28,14163.66
+1403,Quinn Johnson,quinn.johnson1403@example.com,CA,Boston,silver,2025-10-12,44836.63
+1404,Frank Moore,frank.moore1404@example.com,BR,Portland,platinum,2019-05-25,9194.05
+1405,Dave Young,dave.young1405@example.com,UK,Denver,bronze,2024-12-05,16278.49
+1406,Bob Martinez,bob.martinez1406@example.com,FR,Austin,bronze,2018-04-20,35732.59
+1407,Leo Brown,leo.brown1407@example.com,UK,Portland,bronze,2019-09-12,18376.93
+1408,Dave Moore,dave.moore1408@example.com,AU,Denver,silver,2025-12-22,47169.57
+1409,Leo Lee,leo.lee1409@example.com,DE,Boston,platinum,2024-02-21,25865
+1410,Tina Smith,tina.smith1410@example.com,CA,San Francisco,gold,2022-12-02,42181.91
+1411,Mia King,mia.king1411@example.com,JP,Atlanta,silver,2020-11-10,37387.04
+1412,Alice Hall,alice.hall1412@example.com,MX,New York,platinum,2023-05-05,26704.07
+1413,Jack Taylor,jack.taylor1413@example.com,JP,Miami,platinum,2022-12-06,38955.34
+1414,Frank Allen,frank.allen1414@example.com,JP,San Francisco,platinum,2025-06-15,33820.06
+1415,Rosa Johnson,rosa.johnson1415@example.com,BR,Miami,gold,2018-06-16,10299.19
+1416,Nick King,nick.king1416@example.com,JP,New York,platinum,2018-09-27,3132.42
+1417,Nick Taylor,nick.taylor1417@example.com,US,Denver,bronze,2021-12-01,16062.63
+1418,Eve Martinez,eve.martinez1418@example.com,IN,Portland,silver,2021-10-15,49435.53
+1419,Mia Johnson,mia.johnson1419@example.com,CA,Atlanta,platinum,2018-03-23,26421.45
+1420,Alice Wright,alice.wright1420@example.com,AU,Chicago,silver,2024-04-09,20052.33
+1421,Frank Johnson,frank.johnson1421@example.com,JP,Atlanta,gold,2022-11-09,31584.27
+1422,Dave Smith,dave.smith1422@example.com,MX,Denver,gold,2021-01-11,10907.94
+1423,Jack Moore,jack.moore1423@example.com,US,Seattle,bronze,2024-09-17,18091.9
+1424,Mia Garcia,mia.garcia1424@example.com,UK,Chicago,platinum,2023-11-20,12534.11
+1425,Dave Thomas,dave.thomas1425@example.com,DE,Boston,platinum,2021-11-22,28500.4
+1426,Pete Garcia,pete.garcia1426@example.com,BR,Boston,silver,2019-06-28,33659.27
+1427,Pete Thomas,pete.thomas1427@example.com,AU,Miami,bronze,2023-05-04,40414.86
+1428,Ivy Johnson,ivy.johnson1428@example.com,AU,Denver,gold,2024-01-07,14422.4
+1429,Quinn Young,quinn.young1429@example.com,US,Seattle,bronze,2023-08-28,9142.78
+1430,Sam Clark,sam.clark1430@example.com,FR,Chicago,platinum,2024-07-21,17931.03
+1431,Rosa Lee,rosa.lee1431@example.com,CA,Chicago,gold,2024-12-06,39444.32
+1432,Bob Johnson,bob.johnson1432@example.com,UK,Portland,bronze,2019-02-06,21995.85
+1433,Rosa Smith,rosa.smith1433@example.com,DE,Austin,silver,2020-11-22,17738.1
+1434,Nick Lee,nick.lee1434@example.com,FR,Boston,gold,2019-01-01,36663.29
+1435,Pete King,pete.king1435@example.com,IN,New York,gold,2023-09-20,43486.82
+1436,Ivy Thomas,ivy.thomas1436@example.com,DE,Austin,silver,2020-08-25,4820.92
+1437,Leo Martinez,leo.martinez1437@example.com,US,San Francisco,gold,2018-02-14,41140.43
+1438,Tina King,tina.king1438@example.com,AU,New York,bronze,2025-01-22,41497.34
+1439,Olivia Wright,olivia.wright1439@example.com,US,Chicago,bronze,2022-06-27,1116
+1440,Olivia Thomas,olivia.thomas1440@example.com,US,San Francisco,bronze,2023-02-09,24156.36
+1441,Mia Clark,mia.clark1441@example.com,US,Seattle,platinum,2019-11-14,29961.32
+1442,Leo Allen,leo.allen1442@example.com,AU,San Francisco,bronze,2019-03-13,6423.46
+1443,Ivy Allen,ivy.allen1443@example.com,MX,Boston,silver,2022-07-12,20082.93
+1444,Eve Scott,eve.scott1444@example.com,AU,New York,bronze,2019-11-06,17757.82
+1445,Alice Martinez,alice.martinez1445@example.com,CA,Seattle,bronze,2020-01-13,49258.98
+1446,Rosa Garcia,rosa.garcia1446@example.com,UK,Portland,platinum,2023-05-08,27388.07
+1447,Tina Smith,tina.smith1447@example.com,IN,Atlanta,silver,2019-11-23,47640.72
+1448,Alice Davis,alice.davis1448@example.com,BR,Denver,gold,2018-11-16,7611.18
+1449,Sam Allen,sam.allen1449@example.com,UK,Portland,platinum,2020-11-08,6788.36
+1450,Mia Young,mia.young1450@example.com,AU,Denver,gold,2024-07-13,41666.23
+1451,Olivia Clark,olivia.clark1451@example.com,UK,Chicago,silver,2024-10-18,14585.73
+1452,Mia Brown,mia.brown1452@example.com,DE,Seattle,platinum,2024-09-13,22687.38
+1453,Eve Hill,eve.hill1453@example.com,MX,Miami,gold,2018-12-11,17579.81
+1454,Eve Garcia,eve.garcia1454@example.com,IN,Chicago,gold,2018-07-11,29451.53
+1455,Olivia Moore,olivia.moore1455@example.com,AU,Austin,silver,2020-05-05,25307.17
+1456,Sam Lee,sam.lee1456@example.com,BR,San Francisco,gold,2025-09-26,32094.12
+1457,Kate Lee,kate.lee1457@example.com,IN,Denver,bronze,2022-02-01,45145.33
+1458,Carol Garcia,carol.garcia1458@example.com,US,Atlanta,gold,2022-10-21,15906.7
+1459,Leo Wright,leo.wright1459@example.com,DE,Seattle,platinum,2023-10-28,30054.8
+1460,Olivia Anderson,olivia.anderson1460@example.com,FR,New York,platinum,2021-12-12,24759.7
+1461,Olivia Davis,olivia.davis1461@example.com,JP,Miami,silver,2019-03-10,15271.89
+1462,Kate Davis,kate.davis1462@example.com,JP,Denver,silver,2018-10-18,41725.49
+1463,Bob Martinez,bob.martinez1463@example.com,CA,Austin,platinum,2021-11-25,32600.85
+1464,Leo Wright,leo.wright1464@example.com,IN,Seattle,bronze,2021-03-03,43416.61
+1465,Hank Johnson,hank.johnson1465@example.com,FR,Atlanta,gold,2020-11-27,5150.22
+1466,Alice Hill,alice.hill1466@example.com,MX,San Francisco,bronze,2025-03-13,42341.32
+1467,Sam Martinez,sam.martinez1467@example.com,IN,Denver,gold,2022-05-01,17795.11
+1468,Carol Johnson,carol.johnson1468@example.com,DE,Boston,platinum,2019-06-05,1221.69
+1469,Nick Lee,nick.lee1469@example.com,MX,Denver,gold,2022-07-15,29472.03
+1470,Nick Smith,nick.smith1470@example.com,IN,Denver,bronze,2021-03-04,1067.59
+1471,Grace Anderson,grace.anderson1471@example.com,US,Atlanta,platinum,2022-06-28,43953.48
+1472,Frank Smith,frank.smith1472@example.com,CA,Miami,silver,2023-06-07,19825.42
+1473,Bob Smith,bob.smith1473@example.com,DE,Atlanta,bronze,2025-10-16,18874.42
+1474,Grace Young,grace.young1474@example.com,UK,Chicago,silver,2021-11-17,1652.51
+1475,Sam Wright,sam.wright1475@example.com,FR,Austin,bronze,2021-03-23,43212.5
+1476,Jack Young,jack.young1476@example.com,MX,Boston,silver,2023-08-26,14278.16
+1477,Frank Davis,frank.davis1477@example.com,JP,Seattle,silver,2020-06-28,29800.39
+1478,Rosa Wright,rosa.wright1478@example.com,MX,Portland,platinum,2019-05-17,13634.46
+1479,Alice Brown,alice.brown1479@example.com,AU,Miami,silver,2023-10-12,2361.39
+1480,Sam Taylor,sam.taylor1480@example.com,MX,Seattle,bronze,2020-05-14,35645.45
+1481,Frank Wright,frank.wright1481@example.com,AU,Atlanta,silver,2022-04-28,42816.94
+1482,Quinn Lee,quinn.lee1482@example.com,UK,Austin,platinum,2018-08-19,28008.62
+1483,Frank King,frank.king1483@example.com,DE,New York,bronze,2023-08-04,37770.51
+1484,Mia Garcia,mia.garcia1484@example.com,AU,Austin,bronze,2024-02-25,16381.08
+1485,Eve Brown,eve.brown1485@example.com,CA,Atlanta,silver,2025-08-03,1248.86
+1486,Pete Martinez,pete.martinez1486@example.com,DE,San Francisco,gold,2022-06-03,31603.94
+1487,Carol Moore,carol.moore1487@example.com,JP,New York,platinum,2020-12-11,32392.06
+1488,Eve Davis,eve.davis1488@example.com,US,Portland,bronze,2021-08-03,37295.72
+1489,Carol Garcia,carol.garcia1489@example.com,BR,New York,bronze,2025-11-13,18373.42
+1490,Bob King,bob.king1490@example.com,US,Miami,gold,2023-02-25,913.98
+1491,Hank Hill,hank.hill1491@example.com,UK,New York,silver,2021-09-24,5612.92
+1492,Bob Taylor,bob.taylor1492@example.com,BR,Seattle,bronze,2019-12-12,12386.08
+1493,Mia Hill,mia.hill1493@example.com,FR,Miami,gold,2022-04-03,29168.94
+1494,Frank King,frank.king1494@example.com,BR,Portland,silver,2022-10-17,8765.72
+1495,Nick Young,nick.young1495@example.com,IN,Denver,platinum,2018-03-22,43313.62
+1496,Grace Moore,grace.moore1496@example.com,US,Denver,bronze,2024-10-13,17172.7
+1497,Mia Davis,mia.davis1497@example.com,FR,Chicago,gold,2021-07-05,41906.92
+1498,Carol King,carol.king1498@example.com,US,Atlanta,bronze,2023-02-15,23880.73
+1499,Pete Anderson,pete.anderson1499@example.com,JP,Boston,platinum,2021-04-15,38361.94
+1500,Ivy Martinez,ivy.martinez1500@example.com,JP,Boston,gold,2024-09-20,40716.8
+1501,Hank Anderson,hank.anderson1501@example.com,UK,Atlanta,bronze,2019-08-06,4786.95
+1502,Bob Allen,bob.allen1502@example.com,IN,Austin,bronze,2019-03-06,3781.12
+1503,Quinn Hill,quinn.hill1503@example.com,AU,Denver,silver,2023-02-18,24458.71
+1504,Pete Allen,pete.allen1504@example.com,CA,Atlanta,gold,2024-06-23,46763.85
+1505,Ivy Martinez,ivy.martinez1505@example.com,AU,Atlanta,silver,2022-01-02,43565.87
+1506,Mia Lee,mia.lee1506@example.com,MX,Portland,bronze,2023-03-06,28287.27
+1507,Hank Hill,hank.hill1507@example.com,BR,Chicago,gold,2018-08-13,23449.88
+1508,Sam Johnson,sam.johnson1508@example.com,FR,Miami,bronze,2021-03-07,48309.49
+1509,Olivia Thomas,olivia.thomas1509@example.com,FR,Seattle,silver,2024-09-13,27185.29
+1510,Pete Clark,pete.clark1510@example.com,DE,Seattle,silver,2022-02-19,12045.63
+1511,Tina Anderson,tina.anderson1511@example.com,AU,Miami,gold,2024-11-09,6508.8
+1512,Rosa Anderson,rosa.anderson1512@example.com,BR,Chicago,silver,2025-10-22,29448.28
+1513,Hank Scott,hank.scott1513@example.com,DE,Denver,gold,2019-05-11,11647.99
+1514,Dave Hall,dave.hall1514@example.com,IN,Miami,bronze,2025-05-07,44451.89
+1515,Leo Moore,leo.moore1515@example.com,MX,Portland,bronze,2020-05-01,38388.23
+1516,Jack Thomas,jack.thomas1516@example.com,AU,Miami,platinum,2023-01-09,47833.06
+1517,Quinn Thomas,quinn.thomas1517@example.com,FR,San Francisco,platinum,2022-09-12,28299.87
+1518,Olivia Martinez,olivia.martinez1518@example.com,FR,New York,gold,2024-05-06,28648.53
+1519,Bob Taylor,bob.taylor1519@example.com,CA,New York,platinum,2019-04-26,36919.95
+1520,Carol Scott,carol.scott1520@example.com,DE,San Francisco,bronze,2023-05-20,13219.82
+1521,Dave Brown,dave.brown1521@example.com,JP,San Francisco,gold,2019-09-08,20592.94
+1522,Hank Taylor,hank.taylor1522@example.com,US,Austin,silver,2021-11-10,23114.38
+1523,Olivia Moore,olivia.moore1523@example.com,JP,San Francisco,gold,2020-09-18,16921.04
+1524,Tina Moore,tina.moore1524@example.com,IN,Seattle,bronze,2025-02-20,37901.54
+1525,Grace Hill,grace.hill1525@example.com,UK,Austin,bronze,2021-06-02,41576.44
+1526,Ivy Hall,ivy.hall1526@example.com,DE,Seattle,gold,2024-12-19,37517.74
+1527,Hank Clark,hank.clark1527@example.com,FR,Chicago,silver,2019-07-06,14198.01
+1528,Dave Anderson,dave.anderson1528@example.com,UK,Austin,bronze,2022-01-05,48943.2
+1529,Hank Wright,hank.wright1529@example.com,AU,Seattle,platinum,2024-01-12,41413.33
+1530,Eve Davis,eve.davis1530@example.com,CA,Miami,gold,2025-06-19,1116.79
+1531,Eve Lee,eve.lee1531@example.com,AU,Miami,bronze,2019-05-25,411.51
+1532,Jack Davis,jack.davis1532@example.com,JP,Austin,bronze,2023-10-11,9269.58
+1533,Bob Young,bob.young1533@example.com,UK,Seattle,silver,2022-10-21,39131.75
+1534,Carol Anderson,carol.anderson1534@example.com,CA,Atlanta,gold,2021-02-21,22629.36
+1535,Bob Brown,bob.brown1535@example.com,US,Seattle,gold,2018-04-17,24098.69
+1536,Rosa King,rosa.king1536@example.com,UK,Seattle,platinum,2022-11-14,14357.14
+1537,Bob Davis,bob.davis1537@example.com,CA,Chicago,platinum,2023-03-21,19289.57
+1538,Hank Smith,hank.smith1538@example.com,IN,New York,gold,2022-12-09,21114.78
+1539,Quinn Anderson,quinn.anderson1539@example.com,DE,Miami,bronze,2023-03-15,7606.27
+1540,Rosa Wilson,rosa.wilson1540@example.com,BR,New York,platinum,2018-07-21,36546.81
+1541,Rosa Moore,rosa.moore1541@example.com,CA,Atlanta,bronze,2019-05-12,2801.4
+1542,Olivia Moore,olivia.moore1542@example.com,UK,Denver,gold,2025-05-02,18316.69
+1543,Leo Thomas,leo.thomas1543@example.com,DE,New York,bronze,2023-07-05,17071.8
+1544,Tina Lee,tina.lee1544@example.com,AU,Miami,gold,2022-03-09,39227.97
+1545,Hank Davis,hank.davis1545@example.com,MX,Denver,silver,2022-11-22,48125.24
+1546,Kate Hall,kate.hall1546@example.com,IN,San Francisco,bronze,2025-09-17,24648.07
+1547,Jack Johnson,jack.johnson1547@example.com,AU,Chicago,silver,2020-03-02,3717.79
+1548,Tina Wilson,tina.wilson1548@example.com,AU,Austin,bronze,2021-08-07,44784.02
+1549,Pete Garcia,pete.garcia1549@example.com,BR,Denver,gold,2019-10-21,47509.99
+1550,Hank Clark,hank.clark1550@example.com,AU,Chicago,gold,2021-12-08,31096.75
+1551,Rosa Moore,rosa.moore1551@example.com,US,Chicago,bronze,2019-11-11,48123.47
+1552,Hank Taylor,hank.taylor1552@example.com,US,New York,platinum,2018-04-23,388.71
+1553,Kate Brown,kate.brown1553@example.com,UK,Chicago,silver,2024-12-02,39611.84
+1554,Quinn Brown,quinn.brown1554@example.com,DE,New York,bronze,2018-06-14,2363.33
+1555,Jack Davis,jack.davis1555@example.com,UK,Portland,platinum,2019-10-17,45041.07
+1556,Mia Clark,mia.clark1556@example.com,FR,Denver,silver,2023-03-26,31464.79
+1557,Leo Wright,leo.wright1557@example.com,DE,New York,bronze,2022-09-15,22978.53
+1558,Grace Johnson,grace.johnson1558@example.com,FR,Chicago,bronze,2019-04-12,5487.28
+1559,Quinn Martinez,quinn.martinez1559@example.com,IN,Denver,gold,2022-04-11,45649.08
+1560,Rosa Hill,rosa.hill1560@example.com,US,Portland,gold,2021-11-22,40967.55
+1561,Leo Davis,leo.davis1561@example.com,DE,New York,silver,2018-10-17,43256.52
+1562,Grace Thomas,grace.thomas1562@example.com,DE,Seattle,platinum,2020-08-17,22965.1
+1563,Frank Allen,frank.allen1563@example.com,DE,New York,gold,2021-11-20,39154.66
+1564,Sam Taylor,sam.taylor1564@example.com,FR,Boston,platinum,2024-05-06,35684
+1565,Quinn King,quinn.king1565@example.com,CA,Atlanta,platinum,2020-05-16,24852.35
+1566,Alice Johnson,alice.johnson1566@example.com,JP,Portland,silver,2025-12-06,17197.77
+1567,Dave Anderson,dave.anderson1567@example.com,MX,Atlanta,silver,2019-08-17,46841.23
+1568,Leo Moore,leo.moore1568@example.com,UK,Atlanta,bronze,2020-05-26,10491.5
+1569,Frank Scott,frank.scott1569@example.com,UK,Boston,platinum,2018-12-09,37123.48
+1570,Alice Brown,alice.brown1570@example.com,AU,Atlanta,gold,2019-04-18,27982.77
+1571,Nick Clark,nick.clark1571@example.com,US,Atlanta,bronze,2024-02-09,33225.7
+1572,Jack Wright,jack.wright1572@example.com,JP,Atlanta,bronze,2021-02-18,47972.48
+1573,Pete Hill,pete.hill1573@example.com,MX,Austin,bronze,2023-09-15,6396.85
+1574,Jack Hill,jack.hill1574@example.com,IN,Atlanta,gold,2021-08-19,27526.55
+1575,Leo Thomas,leo.thomas1575@example.com,UK,Chicago,silver,2025-11-26,33609.53
+1576,Carol Thomas,carol.thomas1576@example.com,US,Denver,platinum,2022-04-02,30130.7
+1577,Alice Moore,alice.moore1577@example.com,US,Portland,bronze,2024-10-02,19116.02
+1578,Eve Smith,eve.smith1578@example.com,FR,Seattle,silver,2018-09-05,16983.96
+1579,Sam Anderson,sam.anderson1579@example.com,UK,Atlanta,gold,2025-06-09,28288.09
+1580,Hank Taylor,hank.taylor1580@example.com,FR,Miami,platinum,2020-10-04,26162.97
+1581,Grace Wright,grace.wright1581@example.com,FR,Austin,bronze,2018-10-06,11504.16
+1582,Nick Thomas,nick.thomas1582@example.com,JP,San Francisco,silver,2020-07-07,11917.28
+1583,Sam Moore,sam.moore1583@example.com,BR,Boston,platinum,2020-09-25,1490.93
+1584,Pete Davis,pete.davis1584@example.com,MX,Boston,platinum,2024-10-20,41111.54
+1585,Eve Young,eve.young1585@example.com,CA,Boston,platinum,2019-09-09,44299.18
+1586,Grace Moore,grace.moore1586@example.com,IN,Boston,silver,2018-04-14,21996.33
+1587,Leo Wilson,leo.wilson1587@example.com,AU,New York,gold,2024-11-26,42683.38
+1588,Hank Hall,hank.hall1588@example.com,CA,Chicago,gold,2019-05-16,42492.71
+1589,Frank Martinez,frank.martinez1589@example.com,IN,Denver,gold,2022-01-06,18880.54
+1590,Mia Young,mia.young1590@example.com,BR,Miami,silver,2018-12-05,40350.05
+1591,Eve Allen,eve.allen1591@example.com,IN,Portland,platinum,2024-08-14,48176.85
+1592,Bob Davis,bob.davis1592@example.com,AU,Miami,platinum,2019-06-09,9164.26
+1593,Tina Clark,tina.clark1593@example.com,BR,San Francisco,gold,2018-12-22,29873.45
+1594,Eve Anderson,eve.anderson1594@example.com,CA,Atlanta,platinum,2024-07-18,46267.56
+1595,Nick Thomas,nick.thomas1595@example.com,AU,San Francisco,gold,2022-06-07,23021.1
+1596,Bob Wilson,bob.wilson1596@example.com,US,New York,bronze,2023-08-16,3850.68
+1597,Nick Lee,nick.lee1597@example.com,BR,Seattle,platinum,2023-05-25,21519.8
+1598,Carol Johnson,carol.johnson1598@example.com,MX,Denver,bronze,2022-03-23,34705.03
+1599,Sam Lee,sam.lee1599@example.com,MX,Chicago,silver,2020-02-10,7019.02
+1600,Eve Wilson,eve.wilson1600@example.com,CA,Austin,bronze,2024-07-16,20527.34
+1601,Nick Moore,nick.moore1601@example.com,AU,Miami,bronze,2023-01-16,19514.63
+1602,Eve Hall,eve.hall1602@example.com,CA,New York,gold,2020-02-01,30973.74
+1603,Olivia Wilson,olivia.wilson1603@example.com,IN,Portland,platinum,2023-02-11,28649.55
+1604,Nick Thomas,nick.thomas1604@example.com,DE,Boston,bronze,2020-04-12,33238.63
+1605,Quinn Davis,quinn.davis1605@example.com,CA,Atlanta,silver,2025-06-07,9424.94
+1606,Bob Lee,bob.lee1606@example.com,AU,Austin,bronze,2020-06-04,9394.84
+1607,Frank Hill,frank.hill1607@example.com,US,Denver,platinum,2025-01-10,11639.45
+1608,Bob Wilson,bob.wilson1608@example.com,UK,Portland,bronze,2024-01-06,43376.45
+1609,Mia Hall,mia.hall1609@example.com,AU,Boston,gold,2022-07-01,28784.37
+1610,Hank Hill,hank.hill1610@example.com,JP,Portland,platinum,2024-06-16,40427.35
+1611,Quinn Wilson,quinn.wilson1611@example.com,AU,Austin,silver,2025-10-07,47172.21
+1612,Pete Moore,pete.moore1612@example.com,FR,Atlanta,silver,2022-07-05,376.63
+1613,Kate Wilson,kate.wilson1613@example.com,DE,San Francisco,silver,2025-01-19,42586.34
+1614,Frank Martinez,frank.martinez1614@example.com,US,Atlanta,silver,2023-09-07,5108.66
+1615,Grace Hill,grace.hill1615@example.com,BR,Chicago,silver,2018-05-17,3648.29
+1616,Olivia Garcia,olivia.garcia1616@example.com,US,Chicago,platinum,2021-09-28,43857.74
+1617,Sam Wright,sam.wright1617@example.com,UK,Miami,silver,2020-09-03,20207.07
+1618,Dave Thomas,dave.thomas1618@example.com,FR,Portland,platinum,2025-10-01,15581.44
+1619,Frank Garcia,frank.garcia1619@example.com,US,Austin,gold,2024-10-04,18746.43
+1620,Pete Davis,pete.davis1620@example.com,BR,San Francisco,silver,2022-03-06,42614.4
+1621,Leo Thomas,leo.thomas1621@example.com,IN,Denver,bronze,2019-04-28,21971.89
+1622,Leo Hill,leo.hill1622@example.com,UK,Atlanta,silver,2021-05-27,9659.55
+1623,Tina Martinez,tina.martinez1623@example.com,BR,Seattle,bronze,2021-11-22,4650.17
+1624,Dave Scott,dave.scott1624@example.com,CA,New York,gold,2024-02-19,29003.85
+1625,Frank King,frank.king1625@example.com,FR,Austin,platinum,2024-03-10,28258.58
+1626,Tina Scott,tina.scott1626@example.com,MX,Seattle,silver,2022-03-06,10732.05
+1627,Grace Moore,grace.moore1627@example.com,US,Austin,bronze,2021-12-02,47129.14
+1628,Eve Clark,eve.clark1628@example.com,US,Boston,bronze,2025-06-11,42890.1
+1629,Bob Thomas,bob.thomas1629@example.com,US,Portland,bronze,2020-12-25,13386.93
+1630,Jack Moore,jack.moore1630@example.com,MX,Portland,bronze,2022-07-26,33388.69
+1631,Pete Garcia,pete.garcia1631@example.com,UK,Portland,silver,2022-03-22,24982.54
+1632,Nick Smith,nick.smith1632@example.com,AU,Chicago,silver,2023-07-07,28539.24
+1633,Olivia Thomas,olivia.thomas1633@example.com,FR,Atlanta,silver,2019-09-27,14181.23
+1634,Kate Allen,kate.allen1634@example.com,UK,Chicago,silver,2025-03-24,20940.29
+1635,Tina Wilson,tina.wilson1635@example.com,IN,Atlanta,bronze,2023-10-16,41210.37
+1636,Nick Davis,nick.davis1636@example.com,CA,Boston,gold,2025-03-26,48420.7
+1637,Eve Smith,eve.smith1637@example.com,FR,Seattle,silver,2020-12-20,22290.04
+1638,Grace Anderson,grace.anderson1638@example.com,JP,Atlanta,bronze,2020-07-02,41759.13
+1639,Jack Garcia,jack.garcia1639@example.com,JP,New York,bronze,2023-10-24,149.87
+1640,Quinn Smith,quinn.smith1640@example.com,US,Denver,gold,2024-08-06,40469.43
+1641,Kate Moore,kate.moore1641@example.com,BR,Seattle,platinum,2021-08-05,15187.5
+1642,Carol Martinez,carol.martinez1642@example.com,DE,Denver,bronze,2018-05-22,27454.85
+1643,Tina Wright,tina.wright1643@example.com,BR,Portland,bronze,2018-11-24,9806.3
+1644,Jack Garcia,jack.garcia1644@example.com,FR,New York,platinum,2024-05-18,6574.76
+1645,Bob Scott,bob.scott1645@example.com,MX,Chicago,gold,2025-02-24,7110.11
+1646,Nick King,nick.king1646@example.com,DE,Austin,gold,2022-11-17,13407.29
+1647,Pete King,pete.king1647@example.com,JP,Chicago,silver,2025-02-18,41910.86
+1648,Grace Johnson,grace.johnson1648@example.com,JP,San Francisco,platinum,2018-05-07,38155.13
+1649,Hank Lee,hank.lee1649@example.com,MX,Chicago,bronze,2020-06-13,19890.89
+1650,Grace Scott,grace.scott1650@example.com,DE,Seattle,gold,2022-07-04,34260.14
+1651,Ivy Martinez,ivy.martinez1651@example.com,DE,Atlanta,bronze,2023-03-12,23746.17
+1652,Bob Garcia,bob.garcia1652@example.com,JP,Chicago,platinum,2023-11-19,2113.11
+1653,Dave Thomas,dave.thomas1653@example.com,UK,Atlanta,gold,2019-05-13,34829.81
+1654,Rosa Clark,rosa.clark1654@example.com,IN,Portland,silver,2023-11-19,21265.49
+1655,Bob Wright,bob.wright1655@example.com,CA,Seattle,silver,2020-04-14,41103.98
+1656,Eve Allen,eve.allen1656@example.com,AU,San Francisco,bronze,2019-05-13,903.83
+1657,Ivy Wilson,ivy.wilson1657@example.com,DE,Boston,silver,2018-09-10,38792.09
+1658,Sam Allen,sam.allen1658@example.com,BR,Chicago,bronze,2024-01-16,42486.8
+1659,Sam Hall,sam.hall1659@example.com,DE,Austin,platinum,2023-03-12,18777.81
+1660,Eve Wright,eve.wright1660@example.com,AU,New York,gold,2025-07-18,1174.83
+1661,Ivy Anderson,ivy.anderson1661@example.com,JP,New York,silver,2023-02-25,33219.61
+1662,Carol Martinez,carol.martinez1662@example.com,JP,Boston,silver,2020-01-24,4566.14
+1663,Leo Young,leo.young1663@example.com,AU,Denver,bronze,2021-03-02,33491.42
+1664,Dave Clark,dave.clark1664@example.com,CA,Boston,silver,2022-05-07,21093.58
+1665,Jack Garcia,jack.garcia1665@example.com,UK,New York,bronze,2021-07-26,48101.01
+1666,Dave Thomas,dave.thomas1666@example.com,AU,San Francisco,platinum,2021-08-08,31129.81
+1667,Nick Hill,nick.hill1667@example.com,MX,Miami,bronze,2018-10-02,17670.19
+1668,Eve Moore,eve.moore1668@example.com,BR,Boston,silver,2018-01-18,34661.19
+1669,Kate Garcia,kate.garcia1669@example.com,MX,New York,silver,2020-08-25,43054.47
+1670,Eve Martinez,eve.martinez1670@example.com,AU,New York,platinum,2024-07-23,7391.82
+1671,Pete Young,pete.young1671@example.com,BR,New York,gold,2022-11-25,14532.88
+1672,Olivia King,olivia.king1672@example.com,UK,Seattle,silver,2022-06-24,37750.91
+1673,Eve Scott,eve.scott1673@example.com,BR,San Francisco,bronze,2022-04-08,26285.79
+1674,Nick Smith,nick.smith1674@example.com,CA,San Francisco,bronze,2023-01-02,38909.11
+1675,Olivia Garcia,olivia.garcia1675@example.com,BR,Boston,gold,2019-12-14,8939.26
+1676,Dave Hill,dave.hill1676@example.com,IN,San Francisco,silver,2024-11-26,16846.41
+1677,Leo Anderson,leo.anderson1677@example.com,CA,New York,silver,2025-02-11,15959.3
+1678,Rosa Martinez,rosa.martinez1678@example.com,DE,Austin,gold,2020-03-28,43498.93
+1679,Bob Johnson,bob.johnson1679@example.com,CA,Miami,silver,2018-01-27,19359.92
+1680,Ivy King,ivy.king1680@example.com,UK,Chicago,gold,2019-04-16,35999.02
+1681,Rosa Wilson,rosa.wilson1681@example.com,MX,Boston,gold,2018-09-12,9263.43
+1682,Eve Young,eve.young1682@example.com,DE,New York,silver,2021-08-05,8544.88
+1683,Mia Wright,mia.wright1683@example.com,BR,San Francisco,gold,2018-05-08,20359.68
+1684,Frank Smith,frank.smith1684@example.com,MX,Atlanta,gold,2021-02-08,15110.49
+1685,Nick Taylor,nick.taylor1685@example.com,MX,Miami,bronze,2020-07-11,43787.8
+1686,Quinn Allen,quinn.allen1686@example.com,JP,Chicago,silver,2022-11-25,529.99
+1687,Frank Allen,frank.allen1687@example.com,UK,Austin,bronze,2018-08-10,33877.67
+1688,Bob Brown,bob.brown1688@example.com,BR,Denver,platinum,2021-11-12,8542.59
+1689,Quinn Allen,quinn.allen1689@example.com,AU,Denver,bronze,2019-11-10,1056.48
+1690,Olivia Wright,olivia.wright1690@example.com,JP,Austin,gold,2023-03-24,24037.09
+1691,Olivia Brown,olivia.brown1691@example.com,IN,Portland,silver,2024-08-24,12994.33
+1692,Frank Young,frank.young1692@example.com,FR,Portland,silver,2019-04-18,23924.52
+1693,Frank Martinez,frank.martinez1693@example.com,AU,Seattle,silver,2024-01-17,26379.59
+1694,Kate Moore,kate.moore1694@example.com,US,New York,silver,2018-07-17,3891.83
+1695,Quinn Garcia,quinn.garcia1695@example.com,AU,Atlanta,silver,2022-10-08,43057.06
+1696,Mia Hill,mia.hill1696@example.com,MX,New York,platinum,2018-01-24,34292.39
+1697,Bob Hall,bob.hall1697@example.com,AU,San Francisco,platinum,2019-09-04,18342.91
+1698,Frank Anderson,frank.anderson1698@example.com,JP,Chicago,gold,2023-06-05,15590.45
+1699,Hank Allen,hank.allen1699@example.com,CA,Seattle,gold,2025-09-02,18982.45
+1700,Nick Johnson,nick.johnson1700@example.com,AU,Portland,silver,2018-03-06,16086.17
+1701,Mia Smith,mia.smith1701@example.com,UK,Denver,gold,2020-09-06,16978.81
+1702,Hank King,hank.king1702@example.com,FR,San Francisco,platinum,2019-01-20,12077.9
+1703,Olivia Smith,olivia.smith1703@example.com,MX,Austin,gold,2022-02-16,41916.01
+1704,Rosa Clark,rosa.clark1704@example.com,CA,San Francisco,bronze,2021-05-23,30274.43
+1705,Dave King,dave.king1705@example.com,IN,Denver,platinum,2023-01-25,42652.95
+1706,Pete Moore,pete.moore1706@example.com,JP,New York,platinum,2022-04-03,20904.14
+1707,Kate Lee,kate.lee1707@example.com,US,Miami,platinum,2020-10-04,37037.81
+1708,Olivia Young,olivia.young1708@example.com,IN,Seattle,platinum,2018-05-05,34184.17
+1709,Rosa Martinez,rosa.martinez1709@example.com,BR,Atlanta,gold,2022-12-20,16018.38
+1710,Nick Wright,nick.wright1710@example.com,UK,Austin,silver,2025-01-06,32321.24
+1711,Mia Hill,mia.hill1711@example.com,US,San Francisco,platinum,2022-02-21,33259.65
+1712,Bob Hall,bob.hall1712@example.com,BR,Boston,bronze,2025-08-02,15570.96
+1713,Olivia Thomas,olivia.thomas1713@example.com,UK,Austin,bronze,2022-10-11,46783.6
+1714,Olivia Thomas,olivia.thomas1714@example.com,UK,San Francisco,platinum,2022-12-10,24063.4
+1715,Nick Brown,nick.brown1715@example.com,BR,Miami,platinum,2021-01-07,15738.93
+1716,Leo Smith,leo.smith1716@example.com,BR,San Francisco,gold,2021-03-22,32405.8
+1717,Grace Taylor,grace.taylor1717@example.com,DE,Denver,bronze,2019-08-21,31905.06
+1718,Olivia Johnson,olivia.johnson1718@example.com,JP,Miami,silver,2023-11-01,19658.63
+1719,Pete Thomas,pete.thomas1719@example.com,CA,New York,bronze,2023-05-02,46827.44
+1720,Sam Hill,sam.hill1720@example.com,US,San Francisco,platinum,2018-10-15,32165.38
+1721,Alice Smith,alice.smith1721@example.com,CA,Seattle,bronze,2023-03-20,42098.31
+1722,Olivia Clark,olivia.clark1722@example.com,AU,Austin,gold,2025-04-20,38493.04
+1723,Bob Taylor,bob.taylor1723@example.com,AU,Chicago,silver,2024-02-17,25441.61
+1724,Pete Lee,pete.lee1724@example.com,US,San Francisco,silver,2021-08-13,40109.35
+1725,Quinn Garcia,quinn.garcia1725@example.com,BR,Denver,bronze,2023-11-16,9736.82
+1726,Eve Thomas,eve.thomas1726@example.com,DE,Atlanta,silver,2021-10-28,22732.29
+1727,Tina Hill,tina.hill1727@example.com,IN,Denver,platinum,2020-03-10,42169.43
+1728,Carol Martinez,carol.martinez1728@example.com,JP,Seattle,bronze,2022-03-17,24662.94
+1729,Sam Martinez,sam.martinez1729@example.com,JP,Atlanta,gold,2018-09-27,48922.91
+1730,Jack Clark,jack.clark1730@example.com,CA,San Francisco,silver,2018-02-05,49338.39
+1731,Grace Scott,grace.scott1731@example.com,FR,San Francisco,bronze,2023-09-10,24150.1
+1732,Grace Thomas,grace.thomas1732@example.com,AU,San Francisco,gold,2021-07-28,45831.88
+1733,Hank Wright,hank.wright1733@example.com,MX,Austin,silver,2023-07-22,24717.12
+1734,Pete Hill,pete.hill1734@example.com,IN,Austin,silver,2020-04-13,28942.35
+1735,Sam Garcia,sam.garcia1735@example.com,MX,Miami,bronze,2018-02-10,3153.47
+1736,Carol Hill,carol.hill1736@example.com,FR,Chicago,silver,2024-10-24,38308.32
+1737,Eve Clark,eve.clark1737@example.com,JP,Seattle,gold,2022-11-11,2182.16
+1738,Rosa Johnson,rosa.johnson1738@example.com,JP,San Francisco,gold,2025-03-16,21674.36
+1739,Eve Davis,eve.davis1739@example.com,JP,Denver,silver,2020-02-14,21047.61
+1740,Bob Scott,bob.scott1740@example.com,FR,Chicago,platinum,2021-07-28,23293.98
+1741,Frank Lee,frank.lee1741@example.com,IN,Chicago,bronze,2023-03-19,13735.75
+1742,Grace Wilson,grace.wilson1742@example.com,DE,New York,bronze,2025-04-12,48882.52
+1743,Bob Smith,bob.smith1743@example.com,AU,Portland,gold,2023-01-17,30196.8
+1744,Kate Hill,kate.hill1744@example.com,CA,Chicago,silver,2019-01-14,47668.12
+1745,Jack Hall,jack.hall1745@example.com,AU,Miami,platinum,2018-03-15,32201.83
+1746,Pete Lee,pete.lee1746@example.com,DE,Miami,gold,2024-02-18,12172.68
+1747,Mia Young,mia.young1747@example.com,FR,Denver,bronze,2020-05-25,18930.91
+1748,Olivia Allen,olivia.allen1748@example.com,AU,Chicago,gold,2018-01-25,22162.94
+1749,Frank Smith,frank.smith1749@example.com,FR,Boston,silver,2019-11-09,19129.04
+1750,Sam Smith,sam.smith1750@example.com,MX,San Francisco,gold,2019-10-08,48312.51
+1751,Ivy Lee,ivy.lee1751@example.com,FR,Boston,platinum,2018-08-25,35654.81
+1752,Mia Wilson,mia.wilson1752@example.com,IN,Denver,gold,2019-04-08,20698.9
+1753,Olivia Brown,olivia.brown1753@example.com,IN,Seattle,silver,2025-07-16,32183.25
+1754,Frank Young,frank.young1754@example.com,FR,Denver,platinum,2025-04-18,43603.07
+1755,Sam Anderson,sam.anderson1755@example.com,FR,Austin,platinum,2025-04-09,37922.56
+1756,Leo Anderson,leo.anderson1756@example.com,BR,Austin,silver,2022-12-13,19654.5
+1757,Grace Anderson,grace.anderson1757@example.com,FR,Boston,silver,2022-05-17,26566.68
+1758,Jack Hill,jack.hill1758@example.com,US,San Francisco,platinum,2020-06-09,43903.37
+1759,Carol Martinez,carol.martinez1759@example.com,AU,Miami,platinum,2018-08-06,30344.99
+1760,Grace Thomas,grace.thomas1760@example.com,AU,Miami,platinum,2021-07-21,49451.06
+1761,Alice Hall,alice.hall1761@example.com,AU,Miami,bronze,2021-03-19,10237.06
+1762,Leo Garcia,leo.garcia1762@example.com,IN,Atlanta,bronze,2020-11-05,43856.4
+1763,Frank Thomas,frank.thomas1763@example.com,US,San Francisco,gold,2025-01-16,15328.9
+1764,Bob Clark,bob.clark1764@example.com,US,Atlanta,platinum,2025-03-02,6175.31
+1765,Kate Anderson,kate.anderson1765@example.com,UK,Chicago,bronze,2019-09-04,20094.32
+1766,Olivia Smith,olivia.smith1766@example.com,MX,San Francisco,gold,2019-05-20,4684.43
+1767,Grace Wright,grace.wright1767@example.com,IN,Portland,gold,2018-01-25,41995.85
+1768,Pete Garcia,pete.garcia1768@example.com,FR,Atlanta,platinum,2021-01-02,21595.8
+1769,Grace Taylor,grace.taylor1769@example.com,US,Atlanta,bronze,2019-04-14,27312.6
+1770,Carol Smith,carol.smith1770@example.com,AU,Denver,gold,2018-07-22,22869.15
+1771,Olivia Lee,olivia.lee1771@example.com,IN,Atlanta,gold,2018-06-28,37555.65
+1772,Olivia Scott,olivia.scott1772@example.com,US,New York,bronze,2023-07-01,2039.17
+1773,Olivia Hill,olivia.hill1773@example.com,CA,San Francisco,bronze,2023-03-23,10309.56
+1774,Rosa Hill,rosa.hill1774@example.com,IN,Chicago,platinum,2024-06-14,17436
+1775,Leo Taylor,leo.taylor1775@example.com,JP,Austin,gold,2018-06-01,48649.38
+1776,Eve Thomas,eve.thomas1776@example.com,UK,Miami,bronze,2025-05-27,12220.14
+1777,Alice Allen,alice.allen1777@example.com,MX,New York,bronze,2020-08-11,49785.55
+1778,Ivy Brown,ivy.brown1778@example.com,DE,Austin,silver,2022-07-17,14785.18
+1779,Nick Hill,nick.hill1779@example.com,IN,Miami,platinum,2024-08-28,11155.18
+1780,Carol Hill,carol.hill1780@example.com,JP,New York,platinum,2025-12-10,6364.5
+1781,Bob Martinez,bob.martinez1781@example.com,JP,Atlanta,silver,2022-03-12,30732.3
+1782,Rosa Martinez,rosa.martinez1782@example.com,MX,Atlanta,bronze,2018-01-02,21356.73
+1783,Sam Young,sam.young1783@example.com,AU,Chicago,gold,2018-05-07,14782.21
+1784,Bob Allen,bob.allen1784@example.com,FR,Miami,bronze,2021-07-18,49747.75
+1785,Tina Hall,tina.hall1785@example.com,JP,Denver,bronze,2020-06-13,29350.33
+1786,Olivia Wilson,olivia.wilson1786@example.com,IN,Denver,gold,2019-01-04,10296.87
+1787,Carol Moore,carol.moore1787@example.com,MX,New York,silver,2025-08-27,22020.86
+1788,Hank Scott,hank.scott1788@example.com,IN,Atlanta,platinum,2020-02-16,46345.54
+1789,Eve Smith,eve.smith1789@example.com,CA,Chicago,bronze,2019-12-04,2952.91
+1790,Eve Scott,eve.scott1790@example.com,JP,Denver,platinum,2023-10-14,30961.34
+1791,Mia King,mia.king1791@example.com,AU,Chicago,gold,2022-04-04,49708.55
+1792,Pete Taylor,pete.taylor1792@example.com,MX,Boston,silver,2018-09-08,4485.61
+1793,Sam Garcia,sam.garcia1793@example.com,JP,Atlanta,silver,2024-02-22,40887.92
+1794,Grace Garcia,grace.garcia1794@example.com,JP,New York,bronze,2024-10-12,49001.22
+1795,Dave Thomas,dave.thomas1795@example.com,JP,Austin,silver,2024-09-14,34717.01
+1796,Ivy Davis,ivy.davis1796@example.com,DE,Chicago,platinum,2022-07-17,38552.84
+1797,Rosa Hall,rosa.hall1797@example.com,DE,New York,silver,2018-06-06,22825.81
+1798,Grace Hall,grace.hall1798@example.com,DE,Miami,bronze,2018-10-18,43057.01
+1799,Eve Young,eve.young1799@example.com,MX,New York,bronze,2020-04-26,13862
+1800,Hank Wilson,hank.wilson1800@example.com,MX,New York,gold,2023-06-03,49550.02
+1801,Rosa Hall,rosa.hall1801@example.com,MX,Denver,gold,2024-10-13,22204.49
+1802,Eve Garcia,eve.garcia1802@example.com,UK,Atlanta,bronze,2021-04-17,23461.16
+1803,Carol Martinez,carol.martinez1803@example.com,MX,Austin,silver,2020-08-11,39022.83
+1804,Eve Smith,eve.smith1804@example.com,DE,San Francisco,silver,2019-02-20,16675.7
+1805,Tina Hall,tina.hall1805@example.com,JP,Austin,silver,2020-04-19,11743.63
+1806,Dave Davis,dave.davis1806@example.com,UK,Portland,gold,2018-05-16,17001.35
+1807,Quinn King,quinn.king1807@example.com,AU,Austin,gold,2022-06-05,13370.96
+1808,Grace Wilson,grace.wilson1808@example.com,CA,Denver,bronze,2020-09-23,5843.35
+1809,Grace Wright,grace.wright1809@example.com,JP,Atlanta,platinum,2023-03-08,39642.16
+1810,Bob Scott,bob.scott1810@example.com,DE,Atlanta,silver,2025-02-03,49109.78
+1811,Pete Martinez,pete.martinez1811@example.com,IN,Portland,gold,2018-05-04,10129.36
+1812,Olivia Lee,olivia.lee1812@example.com,CA,Miami,gold,2025-06-14,10287.79
+1813,Hank Taylor,hank.taylor1813@example.com,FR,Portland,bronze,2021-06-25,41660.96
+1814,Nick Hill,nick.hill1814@example.com,BR,Seattle,bronze,2021-10-28,25641.14
+1815,Carol Scott,carol.scott1815@example.com,UK,Denver,bronze,2025-09-21,19556.66
+1816,Carol King,carol.king1816@example.com,JP,Atlanta,bronze,2025-08-24,2330.79
+1817,Jack Brown,jack.brown1817@example.com,BR,Miami,silver,2023-01-28,6606.76
+1818,Kate Lee,kate.lee1818@example.com,CA,San Francisco,platinum,2025-11-23,45446.32
+1819,Ivy Wright,ivy.wright1819@example.com,FR,Austin,platinum,2025-07-12,10489.18
+1820,Bob Garcia,bob.garcia1820@example.com,IN,San Francisco,gold,2023-08-02,22406.37
+1821,Grace Smith,grace.smith1821@example.com,FR,New York,silver,2022-09-16,7891.67
+1822,Tina Garcia,tina.garcia1822@example.com,CA,Chicago,platinum,2019-12-01,40338.77
+1823,Sam Garcia,sam.garcia1823@example.com,DE,Austin,gold,2018-11-23,19130.41
+1824,Quinn Thomas,quinn.thomas1824@example.com,MX,New York,platinum,2024-10-10,24525.89
+1825,Leo Allen,leo.allen1825@example.com,US,New York,bronze,2023-01-24,25340.7
+1826,Nick Moore,nick.moore1826@example.com,DE,New York,bronze,2025-08-18,10756.47
+1827,Alice King,alice.king1827@example.com,MX,Portland,bronze,2018-11-08,45628.7
+1828,Sam Clark,sam.clark1828@example.com,JP,Chicago,platinum,2021-07-17,35613.38
+1829,Nick Brown,nick.brown1829@example.com,BR,Miami,gold,2021-04-15,36725.14
+1830,Rosa Wilson,rosa.wilson1830@example.com,DE,Austin,silver,2023-04-13,1301.77
+1831,Eve Young,eve.young1831@example.com,US,Atlanta,platinum,2023-11-10,14870.28
+1832,Dave King,dave.king1832@example.com,CA,Portland,silver,2019-08-03,30199.39
+1833,Grace Scott,grace.scott1833@example.com,FR,New York,silver,2024-10-17,27605.29
+1834,Tina Hill,tina.hill1834@example.com,AU,Miami,gold,2021-08-20,33611.94
+1835,Bob Allen,bob.allen1835@example.com,MX,San Francisco,bronze,2021-06-12,14447.52
+1836,Ivy Scott,ivy.scott1836@example.com,BR,Seattle,bronze,2024-08-12,21862.78
+1837,Carol King,carol.king1837@example.com,AU,Chicago,bronze,2021-08-13,39832
+1838,Olivia Hill,olivia.hill1838@example.com,FR,Atlanta,platinum,2019-06-01,27907.63
+1839,Quinn Davis,quinn.davis1839@example.com,MX,Austin,gold,2023-11-15,17324.58
+1840,Kate Hall,kate.hall1840@example.com,MX,Boston,platinum,2022-08-14,11878.29
+1841,Frank Allen,frank.allen1841@example.com,US,Portland,silver,2019-12-02,7595.18
+1842,Leo Thomas,leo.thomas1842@example.com,JP,Boston,gold,2022-11-24,35699.86
+1843,Alice Thomas,alice.thomas1843@example.com,US,Atlanta,platinum,2021-05-09,4318.6
+1844,Jack Hall,jack.hall1844@example.com,IN,Portland,gold,2019-01-17,35144.08
+1845,Alice Brown,alice.brown1845@example.com,JP,New York,bronze,2025-11-15,30616.97
+1846,Mia Johnson,mia.johnson1846@example.com,US,Portland,silver,2024-09-14,14104.31
+1847,Eve Smith,eve.smith1847@example.com,UK,Seattle,silver,2018-11-03,6293.39
+1848,Dave Allen,dave.allen1848@example.com,BR,Boston,platinum,2022-11-11,20591.23
+1849,Olivia King,olivia.king1849@example.com,UK,Miami,platinum,2021-04-25,39179.48
+1850,Bob Smith,bob.smith1850@example.com,AU,New York,bronze,2022-06-23,16837.7
+1851,Carol Anderson,carol.anderson1851@example.com,MX,Chicago,silver,2023-03-24,10880.9
+1852,Tina Johnson,tina.johnson1852@example.com,BR,Austin,silver,2025-04-10,35251.54
+1853,Pete Johnson,pete.johnson1853@example.com,MX,Miami,bronze,2025-04-13,32175.36
+1854,Alice King,alice.king1854@example.com,BR,Atlanta,gold,2022-07-22,11.04
+1855,Pete Martinez,pete.martinez1855@example.com,BR,Portland,silver,2024-04-25,6358.47
+1856,Pete Davis,pete.davis1856@example.com,AU,San Francisco,silver,2022-11-12,11949.88
+1857,Kate Allen,kate.allen1857@example.com,AU,Seattle,gold,2023-09-12,37588.29
+1858,Kate Moore,kate.moore1858@example.com,CA,Atlanta,platinum,2018-08-01,1907.73
+1859,Quinn Allen,quinn.allen1859@example.com,US,New York,silver,2022-04-24,21327.64
+1860,Frank Hall,frank.hall1860@example.com,MX,Chicago,gold,2021-10-12,6835.84
+1861,Leo Smith,leo.smith1861@example.com,IN,Denver,silver,2018-01-01,30347.01
+1862,Carol Young,carol.young1862@example.com,IN,Miami,platinum,2024-11-02,46934.46
+1863,Leo Lee,leo.lee1863@example.com,JP,Austin,silver,2025-02-07,21955.57
+1864,Sam Johnson,sam.johnson1864@example.com,IN,Boston,platinum,2024-12-28,41194.25
+1865,Rosa Scott,rosa.scott1865@example.com,US,Austin,platinum,2020-09-03,19330.07
+1866,Leo Taylor,leo.taylor1866@example.com,AU,Portland,silver,2025-09-14,49610.44
+1867,Jack Thomas,jack.thomas1867@example.com,US,Seattle,platinum,2020-03-07,12490.55
+1868,Rosa Thomas,rosa.thomas1868@example.com,DE,Denver,platinum,2020-02-05,37893.33
+1869,Dave King,dave.king1869@example.com,JP,Austin,gold,2019-06-10,478.42
+1870,Leo Smith,leo.smith1870@example.com,US,New York,platinum,2018-07-07,45377.7
+1871,Leo Wright,leo.wright1871@example.com,MX,Miami,bronze,2019-11-03,8341.49
+1872,Jack Anderson,jack.anderson1872@example.com,CA,Miami,gold,2022-10-21,31263.57
+1873,Quinn Garcia,quinn.garcia1873@example.com,CA,Denver,platinum,2019-09-06,45292.06
+1874,Eve Scott,eve.scott1874@example.com,IN,New York,silver,2018-12-14,5181.71
+1875,Quinn Lee,quinn.lee1875@example.com,MX,New York,bronze,2019-08-17,40329.48
+1876,Quinn Taylor,quinn.taylor1876@example.com,MX,Atlanta,platinum,2025-04-08,4450.92
+1877,Nick Wright,nick.wright1877@example.com,FR,Boston,platinum,2020-02-23,173.51
+1878,Eve Brown,eve.brown1878@example.com,BR,Miami,silver,2022-05-03,46423.03
+1879,Dave Lee,dave.lee1879@example.com,DE,Atlanta,platinum,2021-12-13,29857.24
+1880,Pete Taylor,pete.taylor1880@example.com,DE,Atlanta,platinum,2020-10-17,6480.16
+1881,Bob Brown,bob.brown1881@example.com,JP,Portland,silver,2021-02-27,36831.28
+1882,Eve Anderson,eve.anderson1882@example.com,DE,Denver,platinum,2023-11-13,6463.93
+1883,Ivy Johnson,ivy.johnson1883@example.com,IN,New York,bronze,2022-08-23,12907.76
+1884,Nick Taylor,nick.taylor1884@example.com,UK,Miami,platinum,2021-07-01,49598.58
+1885,Dave Lee,dave.lee1885@example.com,JP,Atlanta,silver,2025-04-13,28667.63
+1886,Mia Taylor,mia.taylor1886@example.com,BR,Seattle,gold,2021-12-09,47899.95
+1887,Frank Thomas,frank.thomas1887@example.com,US,Miami,bronze,2023-06-17,35816.39
+1888,Pete Wright,pete.wright1888@example.com,AU,Seattle,silver,2022-10-11,35043.13
+1889,Bob Thomas,bob.thomas1889@example.com,US,Denver,gold,2024-10-28,22278.33
+1890,Leo Thomas,leo.thomas1890@example.com,CA,Chicago,silver,2021-06-08,3379.75
+1891,Kate Smith,kate.smith1891@example.com,FR,Seattle,silver,2025-01-16,39139.16
+1892,Quinn Thomas,quinn.thomas1892@example.com,DE,Boston,platinum,2018-03-10,29968.33
+1893,Frank Johnson,frank.johnson1893@example.com,US,Chicago,gold,2018-02-06,14233.43
+1894,Carol Hill,carol.hill1894@example.com,CA,Austin,gold,2018-03-19,22816.81
+1895,Leo Wilson,leo.wilson1895@example.com,UK,Austin,platinum,2023-06-10,29197.58
+1896,Mia Moore,mia.moore1896@example.com,MX,Atlanta,bronze,2025-10-16,1044.15
+1897,Quinn King,quinn.king1897@example.com,UK,Austin,platinum,2019-08-28,19169.04
+1898,Mia Garcia,mia.garcia1898@example.com,DE,Atlanta,bronze,2022-03-23,35932.91
+1899,Ivy Hall,ivy.hall1899@example.com,US,Denver,silver,2020-10-24,6146.06
+1900,Sam Scott,sam.scott1900@example.com,AU,Seattle,platinum,2019-10-13,3219.81
+1901,Alice Johnson,alice.johnson1901@example.com,JP,Chicago,platinum,2023-03-06,25919.78
+1902,Kate King,kate.king1902@example.com,MX,Austin,bronze,2019-09-18,18710.29
+1903,Mia Young,mia.young1903@example.com,MX,Miami,gold,2022-07-20,16654.03
+1904,Rosa Allen,rosa.allen1904@example.com,IN,Portland,platinum,2019-07-01,21628.82
+1905,Alice Wilson,alice.wilson1905@example.com,AU,Seattle,gold,2018-06-10,18040.8
+1906,Olivia Hill,olivia.hill1906@example.com,AU,San Francisco,platinum,2021-01-23,24512.83
+1907,Leo Lee,leo.lee1907@example.com,BR,Denver,gold,2018-03-23,1106.36
+1908,Tina Johnson,tina.johnson1908@example.com,AU,Atlanta,platinum,2023-01-14,3935.81
+1909,Grace Johnson,grace.johnson1909@example.com,CA,Austin,silver,2019-03-22,36323.06
+1910,Grace Wright,grace.wright1910@example.com,IN,Miami,bronze,2018-06-24,34929.36
+1911,Dave Garcia,dave.garcia1911@example.com,FR,Atlanta,platinum,2018-03-20,5780.97
+1912,Nick Garcia,nick.garcia1912@example.com,JP,Portland,gold,2023-11-23,32067.47
+1913,Olivia Thomas,olivia.thomas1913@example.com,IN,Portland,bronze,2018-10-03,14265.22
+1914,Dave Thomas,dave.thomas1914@example.com,IN,Boston,platinum,2020-05-21,1218.41
+1915,Eve Taylor,eve.taylor1915@example.com,CA,Chicago,platinum,2022-09-01,16957.95
+1916,Frank Hall,frank.hall1916@example.com,FR,Atlanta,silver,2020-10-13,15590.17
+1917,Carol Moore,carol.moore1917@example.com,UK,Denver,silver,2020-09-12,1432.76
+1918,Alice Wilson,alice.wilson1918@example.com,MX,Boston,platinum,2025-10-20,41901.65
+1919,Dave Lee,dave.lee1919@example.com,BR,New York,platinum,2023-11-15,7032.44
+1920,Mia King,mia.king1920@example.com,BR,Atlanta,bronze,2024-07-28,9787.33
+1921,Olivia Moore,olivia.moore1921@example.com,BR,Boston,gold,2020-05-03,2955.11
+1922,Sam Allen,sam.allen1922@example.com,DE,Boston,platinum,2023-01-14,26271.76
+1923,Nick Clark,nick.clark1923@example.com,IN,Atlanta,bronze,2022-11-17,6769.19
+1924,Mia Lee,mia.lee1924@example.com,JP,Chicago,gold,2024-02-28,7762.99
+1925,Quinn Davis,quinn.davis1925@example.com,IN,Seattle,platinum,2024-06-08,12063.38
+1926,Eve Young,eve.young1926@example.com,US,Atlanta,platinum,2023-12-09,16445.23
+1927,Ivy Martinez,ivy.martinez1927@example.com,UK,Atlanta,bronze,2018-08-07,42913.27
+1928,Tina Allen,tina.allen1928@example.com,DE,Seattle,platinum,2021-04-14,25045.77
+1929,Grace Young,grace.young1929@example.com,US,Miami,platinum,2019-07-22,27165.11
+1930,Jack Garcia,jack.garcia1930@example.com,UK,Denver,bronze,2025-10-11,10050.34
+1931,Dave Scott,dave.scott1931@example.com,FR,Atlanta,gold,2019-04-07,37238.93
+1932,Eve Johnson,eve.johnson1932@example.com,FR,San Francisco,bronze,2021-06-21,20694.42
+1933,Eve Lee,eve.lee1933@example.com,MX,Denver,platinum,2018-03-18,37795.45
+1934,Rosa Brown,rosa.brown1934@example.com,BR,Portland,gold,2019-05-08,39982.21
+1935,Hank Scott,hank.scott1935@example.com,MX,New York,gold,2022-04-17,32467.07
+1936,Eve Lee,eve.lee1936@example.com,JP,Boston,silver,2023-03-18,39728.06
+1937,Carol Johnson,carol.johnson1937@example.com,JP,San Francisco,gold,2018-01-21,15046.89
+1938,Tina Wright,tina.wright1938@example.com,US,Atlanta,silver,2019-04-10,34393.3
+1939,Olivia Young,olivia.young1939@example.com,FR,New York,silver,2018-04-18,5313.5
+1940,Nick Garcia,nick.garcia1940@example.com,US,Austin,gold,2023-01-06,14459.73
+1941,Rosa Wright,rosa.wright1941@example.com,BR,New York,platinum,2021-01-03,49446.36
+1942,Ivy Hall,ivy.hall1942@example.com,CA,Portland,gold,2021-06-21,35717.44
+1943,Hank Scott,hank.scott1943@example.com,UK,Atlanta,platinum,2021-11-13,2499.6
+1944,Quinn Hall,quinn.hall1944@example.com,US,Chicago,platinum,2025-02-01,45138.18
+1945,Tina Lee,tina.lee1945@example.com,DE,Seattle,bronze,2023-10-01,29210.1
+1946,Hank Smith,hank.smith1946@example.com,BR,Denver,gold,2018-07-18,27630.82
+1947,Jack Young,jack.young1947@example.com,IN,San Francisco,bronze,2019-01-06,16851.15
+1948,Leo Thomas,leo.thomas1948@example.com,UK,New York,gold,2018-11-17,39665.54
+1949,Frank Davis,frank.davis1949@example.com,UK,Seattle,silver,2019-09-10,3161.73
+1950,Tina Hill,tina.hill1950@example.com,UK,Chicago,platinum,2021-11-09,6045.49
+1951,Nick King,nick.king1951@example.com,MX,San Francisco,platinum,2018-05-26,47848.43
+1952,Ivy Hall,ivy.hall1952@example.com,IN,New York,gold,2018-02-20,3242.15
+1953,Carol Smith,carol.smith1953@example.com,FR,Austin,bronze,2025-01-28,5339.35
+1954,Grace Allen,grace.allen1954@example.com,DE,Seattle,silver,2018-05-20,5133.44
+1955,Frank Clark,frank.clark1955@example.com,US,San Francisco,gold,2022-06-11,24262.14
+1956,Jack Wilson,jack.wilson1956@example.com,DE,Chicago,silver,2025-09-26,19728.03
+1957,Nick Martinez,nick.martinez1957@example.com,DE,Miami,bronze,2024-10-18,41450.2
+1958,Leo Young,leo.young1958@example.com,IN,Portland,platinum,2021-02-07,31022.27
+1959,Eve Davis,eve.davis1959@example.com,IN,Chicago,silver,2023-01-11,16241.93
+1960,Kate Brown,kate.brown1960@example.com,US,Portland,platinum,2025-11-17,43039.45
+1961,Bob Moore,bob.moore1961@example.com,US,Boston,silver,2019-09-15,15094.16
+1962,Eve Hill,eve.hill1962@example.com,CA,San Francisco,platinum,2025-10-09,26061.19
+1963,Carol Brown,carol.brown1963@example.com,CA,San Francisco,platinum,2024-06-26,38677.02
+1964,Grace Wright,grace.wright1964@example.com,US,Seattle,silver,2018-05-01,37225.09
+1965,Nick King,nick.king1965@example.com,BR,San Francisco,platinum,2020-11-01,29985.59
+1966,Bob Scott,bob.scott1966@example.com,FR,Boston,platinum,2024-12-28,5545.08
+1967,Rosa Hall,rosa.hall1967@example.com,UK,Chicago,bronze,2020-01-10,43336.84
+1968,Olivia Wilson,olivia.wilson1968@example.com,UK,Austin,gold,2018-02-09,25885.02
+1969,Tina Johnson,tina.johnson1969@example.com,IN,Miami,gold,2025-04-24,47907.6
+1970,Tina Wilson,tina.wilson1970@example.com,IN,Denver,gold,2024-12-10,45385.84
+1971,Tina Young,tina.young1971@example.com,IN,Austin,silver,2022-05-10,45970.92
+1972,Dave Johnson,dave.johnson1972@example.com,FR,Seattle,silver,2025-04-19,46264.86
+1973,Rosa Smith,rosa.smith1973@example.com,AU,Seattle,platinum,2019-01-17,6926.56
+1974,Tina King,tina.king1974@example.com,CA,Denver,silver,2025-01-04,41610.67
+1975,Tina King,tina.king1975@example.com,MX,San Francisco,platinum,2024-09-08,43972.13
+1976,Kate Brown,kate.brown1976@example.com,IN,Miami,bronze,2023-10-13,41765.92
+1977,Eve Smith,eve.smith1977@example.com,DE,San Francisco,silver,2018-09-20,24850.07
+1978,Eve King,eve.king1978@example.com,FR,Miami,platinum,2023-04-12,47537.38
+1979,Quinn Lee,quinn.lee1979@example.com,FR,Seattle,platinum,2018-05-16,42053.05
+1980,Carol Scott,carol.scott1980@example.com,BR,Seattle,bronze,2024-10-22,40297.78
+1981,Frank Anderson,frank.anderson1981@example.com,MX,New York,platinum,2021-02-15,7548.12
+1982,Nick Martinez,nick.martinez1982@example.com,CA,Portland,platinum,2022-04-06,10686.58
+1983,Mia Wright,mia.wright1983@example.com,JP,Boston,silver,2023-06-05,10906.91
+1984,Rosa Brown,rosa.brown1984@example.com,MX,Boston,bronze,2021-12-08,35961.73
+1985,Carol Young,carol.young1985@example.com,FR,Seattle,gold,2024-11-01,28727.53
+1986,Kate Scott,kate.scott1986@example.com,US,Portland,bronze,2022-08-10,7942.33
+1987,Dave Lee,dave.lee1987@example.com,BR,New York,gold,2025-07-23,14575.17
+1988,Grace Lee,grace.lee1988@example.com,AU,Boston,bronze,2021-05-10,31517.02
+1989,Eve Martinez,eve.martinez1989@example.com,FR,Miami,silver,2024-11-08,1592.39
+1990,Ivy Smith,ivy.smith1990@example.com,BR,Chicago,bronze,2019-08-23,1528.95
+1991,Carol Johnson,carol.johnson1991@example.com,AU,Portland,platinum,2020-08-01,7668.28
+1992,Dave Lee,dave.lee1992@example.com,DE,Boston,platinum,2022-09-14,42285.62
+1993,Alice Wilson,alice.wilson1993@example.com,IN,New York,platinum,2025-02-26,43751.14
+1994,Quinn Lee,quinn.lee1994@example.com,DE,Atlanta,gold,2020-06-15,43303.59
+1995,Hank Johnson,hank.johnson1995@example.com,BR,New York,silver,2022-03-01,36540.99
+1996,Rosa Moore,rosa.moore1996@example.com,FR,Seattle,gold,2020-05-20,2095.6
+1997,Tina Thomas,tina.thomas1997@example.com,CA,Chicago,gold,2018-08-12,49173.87
+1998,Grace Johnson,grace.johnson1998@example.com,AU,Atlanta,silver,2018-10-26,4469.66
+1999,Leo King,leo.king1999@example.com,IN,San Francisco,silver,2021-04-13,47617.11
+2000,Hank Anderson,hank.anderson2000@example.com,MX,Seattle,platinum,2024-06-05,19639.98
