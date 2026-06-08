@@ -60,6 +60,14 @@ export class LogicalPlanner {
       }
     }
 
+    for (let i = 0; i < bound.selectItems.length; i++) {
+      const { expr, subqueryJoins } = this.extractSubqueries(bound.selectItems[i].expr, node);
+      for (const sj of subqueryJoins) {
+        node = sj(node);
+      }
+      bound.selectItems[i] = { ...bound.selectItems[i], expr };
+    }
+
     const windowExprs = [];
     for (const item of bound.selectItems) {
       this._collectWindows(item.expr, windowExprs);
@@ -69,14 +77,18 @@ export class LogicalPlanner {
     }
 
     if (bound.distinct) {
+      const projections = bound.selectItems.map(item => item.expr);
+      node = LP.LogicalProject(projections, node);
       node = LP.LogicalDistinct(node);
-    }
-
-    const projections = bound.selectItems.map(item => item.expr);
-    node = LP.LogicalProject(projections, node);
-
-    if (bound.orderBy) {
-      node = LP.LogicalSort(bound.orderBy, node);
+      if (bound.orderBy) {
+        node = LP.LogicalSort(bound.orderBy, node);
+      }
+    } else {
+      if (bound.orderBy) {
+        node = LP.LogicalSort(bound.orderBy, node);
+      }
+      const projections = bound.selectItems.map(item => item.expr);
+      node = LP.LogicalProject(projections, node);
     }
 
     if (bound.limit) {

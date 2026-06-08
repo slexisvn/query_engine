@@ -22,6 +22,7 @@ import { DataChunk } from '../storage/chunk.js';
 import { Column } from '../storage/column.js';
 import { PipelineGraph, CancelToken } from './pipeline.js';
 import { TaskScheduler } from './scheduler.js';
+import { Config } from '../config.js';
 
 export class QueryExecutor {
   constructor(catalog, tempManager) {
@@ -277,9 +278,9 @@ export class QueryExecutor {
       idx++;
     }
 
-    const { buildKeys, probeKeys, residualCondition } = isSemiAnti || isMark
-      ? extractJoinKeys(node.condition, right.columnMapping, left.columnMapping)
-      : extractJoinKeys(node.condition, left.columnMapping, right.columnMapping);
+    const { buildKeys, probeKeys, residualCondition } = extractJoinKeys(
+      node.condition, buildInput.columnMapping, probeInput.columnMapping
+    );
 
     const conditionEvaluator = residualCondition
       ? compileExpression(residualCondition, combinedMapping)
@@ -392,25 +393,50 @@ export class QueryExecutor {
     }
 
     if (node.physicalStrategy === PhysicalStrategy.NESTED_LOOP) {
+      const nlOuter = buildInput === left ? buildInput : probeInput;
+      const nlInner = buildInput === left ? probeInput : buildInput;
+      const nlMapping = new Map();
+      let nlIdx = 0;
+      for (const col of nlOuter.schema) {
+        const key = `${col.tableAlias}.${col.name}`.toUpperCase();
+        nlMapping.set(key, nlIdx);
+        if (!nlMapping.has(col.name.toUpperCase())) nlMapping.set(col.name.toUpperCase(), nlIdx);
+        nlIdx++;
+      }
+      for (const col of nlInner.schema) {
+        const key = `${col.tableAlias}.${col.name}`.toUpperCase();
+        nlMapping.set(key, nlIdx);
+        if (!nlMapping.has(col.name.toUpperCase())) nlMapping.set(col.name.toUpperCase(), nlIdx);
+        nlIdx++;
+      }
+      const nlCondition = node.condition
+        ? compileExpression(node.condition, nlMapping)
+        : null;
+      const nlSchema = [...nlOuter.schema, ...nlInner.schema];
+      const nlResultMapping = isSemiAnti ? left.columnMapping : nlMapping;
+      const nlResultSchema = isSemiAnti ? left.schema : isMark ? markSchema : nlSchema;
       return {
-        schema: resultSchema,
-        columnMapping: resultMapping,
+        schema: nlResultSchema,
+        columnMapping: nlResultMapping,
         register: (graph, currentPipelineId, currentSink) => {
-          const buildChunks = [];
-          const probeChunks = [];
-          const buildSink = { consume: async (c) => buildChunks.push(c), finalize: async () => {} };
-          const probeSink = { consume: async (c) => probeChunks.push(c), finalize: async () => {} };
-          const buildPipelineId = graph.createPipeline(buildSink);
-          const probePipelineId = graph.createPipeline(probeSink);
-          buildInput.register(graph, buildPipelineId, buildSink);
-          probeInput.register(graph, probePipelineId, probeSink);
-          graph.addDependency(currentPipelineId, buildPipelineId);
-          graph.addDependency(currentPipelineId, probePipelineId);
+          const leftChunks = [];
+          const rightChunks = [];
+          const leftSink = { consume: async (c) => leftChunks.push(c), finalize: async () => {} };
+          const rightSink = { consume: async (c) => rightChunks.push(c), finalize: async () => {} };
+          const leftPipelineId = graph.createPipeline(leftSink);
+          const rightPipelineId = graph.createPipeline(rightSink);
+          left.register(graph, leftPipelineId, leftSink);
+          right.register(graph, rightPipelineId, rightSink);
+          graph.addDependency(currentPipelineId, leftPipelineId);
+          graph.addDependency(currentPipelineId, rightPipelineId);
           graph.setSource(currentPipelineId, async function* () {
             const nlJoin = new NestedLoopJoinOperator(
-              buildChunks, probeChunks,
-              buildInput.schema.length, probeInput.schema.length,
-              node.joinType, conditionEvaluator
+              nlOuter === left ? leftChunks : rightChunks,
+              nlInner === left ? leftChunks : rightChunks,
+              nlOuter.schema.length,
+              nlInner.schema.length,
+              node.joinType,
+              nlCondition
             );
             const resultChunks = await nlJoin.execute();
             for (const chunk of resultChunks) {
@@ -954,13 +980,24 @@ export class QueryExecutor {
 
                 graph.setSource(currentPipelineId, async function* () {
           const runtimeOp = new DependentJoinOperator(node.subqueryType, outer.schema);
+          const isCorrelated = (node.correlatedColumns || []).length > 0;
+          let cachedInnerChunks = null;
 
-                    for (const outerChunk of outerChunks) {
+          for (const outerChunk of outerChunks) {
             const outerRows = outerChunk.toRows();
             for (const outerRow of outerRows) {
+              if (!isCorrelated && cachedInnerChunks !== null) {
+                await runtimeOp.processOuterRow(outerRow, cachedInnerChunks);
+                continue;
+              }
               const innerPipeline = await self.buildPipeline(node.children[1]);
               const innerChunks = [];
-              await innerPipeline.register(graph, currentPipelineId, { consume: async (c) => innerChunks.push(c) });
+              const innerGraph = new PipelineGraph();
+              const innerSink = { consume: async (c) => innerChunks.push(c) };
+              const innerPipelineId = innerGraph.createPipeline(innerSink);
+              innerPipeline.register(innerGraph, innerPipelineId, innerSink);
+              await new TaskScheduler(Config.dependentJoinConcurrency).schedule(innerGraph);
+              if (!isCorrelated) cachedInnerChunks = innerChunks;
               await runtimeOp.processOuterRow(outerRow, innerChunks);
             }
           }

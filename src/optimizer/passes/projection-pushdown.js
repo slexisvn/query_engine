@@ -73,10 +73,10 @@ function pruneAggregate(node) {
 }
 
 function pruneSort(node, required) {
-  if (!required) return pruneUnary(node, null);
   let childRequired = copyRefs(required);
   for (const key of node.orderKeys || []) childRequired = addExprRefs(childRequired, key.expr);
-  return pruneUnary(node, childRequired);
+  if (!required && childRequired.size === 0) return pruneUnary(node, null);
+  return pruneUnary(node, childRequired.size > 0 ? childRequired : null);
 }
 
 function pruneJoin(node, required) {
@@ -169,6 +169,7 @@ function addOutputRefs(node, refs) {
   }
   if (node.type === PlanNodeType.PROJECT) {
     for (const expr of node.expressions || []) refs.columns.add(outputName(expr));
+    for (const child of getChildren(node)) addOutputRefs(child, refs);
     return;
   }
   if (node.type === PlanNodeType.AGGREGATE) {

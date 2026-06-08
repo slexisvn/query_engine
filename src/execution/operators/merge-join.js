@@ -16,8 +16,14 @@ export class MergeJoinOperator {
   }
 
   async execute() {
-    const buildRows = this._flattenChunks(this.buildChunks);
-    const probeRows = this._flattenChunks(this.probeChunks);
+    const isSemiAnti = this.joinType === JoinType.SEMI || this.joinType === JoinType.ANTI;
+    const isMark = this.joinType === JoinType.MARK;
+
+    const buildRows = this._flattenAndExtractKeys(this.buildChunks, this.buildKeyExtractors);
+    const probeRows = this._flattenAndExtractKeys(this.probeChunks, this.probeKeyExtractors);
+
+    buildRows.sort((a, b) => this._compareKeys(a.key, b.key));
+    probeRows.sort((a, b) => this._compareKeys(a.key, b.key));
 
     const outputRows = [];
     const adapter = this.conditionEvaluator ? this.createAdapter() : null;
@@ -29,52 +35,71 @@ export class MergeJoinOperator {
       const bRow = buildRows[b];
       const pRow = probeRows[p];
 
-      const bKey = this._extractKey(bRow.chunk, bRow.idx, this.buildKeyExtractors);
-      const pKey = this._extractKey(pRow.chunk, pRow.idx, this.probeKeyExtractors);
-
-      const cmp = this._compareKeys(bKey, pKey);
+      const cmp = this._compareKeys(bRow.key, pRow.key);
 
       if (cmp < 0) {
-        if (this.joinType === JoinType.LEFT || this.joinType === JoinType.FULL || this.joinType === JoinType.ANTI) {
-          if (this.joinType !== JoinType.ANTI) {
-             const row = this._combineRowWithNulls(bRow, true);
-             outputRows.push(row);
-          }
+        if (this.joinType === JoinType.LEFT || this.joinType === JoinType.FULL) {
+          outputRows.push(this._combineRowWithNulls(bRow, true));
         }
         b++;
       } else if (cmp > 0) {
-        if (this.joinType === JoinType.RIGHT || this.joinType === JoinType.FULL) {
-          const row = this._combineRowWithNulls(pRow, false);
-          outputRows.push(row);
+        if (isSemiAnti && this.joinType === JoinType.ANTI) {
+          outputRows.push(this._extractProbeRow(pRow));
+        } else if (isMark) {
+          outputRows.push(this._extractProbeRow(pRow).concat([false]));
+        } else if (this.joinType === JoinType.RIGHT || this.joinType === JoinType.FULL) {
+          outputRows.push(this._combineRowWithNulls(pRow, false));
         }
         p++;
       } else {
         let bEnd = b;
-        while (bEnd < buildRows.length && this._compareKeys(bKey, this._extractKey(buildRows[bEnd].chunk, buildRows[bEnd].idx, this.buildKeyExtractors)) === 0) {
+        while (bEnd < buildRows.length && this._compareKeys(bRow.key, buildRows[bEnd].key) === 0) {
           bEnd++;
         }
         let pEnd = p;
-        while (pEnd < probeRows.length && this._compareKeys(pKey, this._extractKey(probeRows[pEnd].chunk, probeRows[pEnd].idx, this.probeKeyExtractors)) === 0) {
+        while (pEnd < probeRows.length && this._compareKeys(pRow.key, probeRows[pEnd].key) === 0) {
           pEnd++;
         }
 
-        for (let i = b; i < bEnd; i++) {
-          let matchedAny = false;
+        if (isSemiAnti || isMark) {
           for (let j = p; j < pEnd; j++) {
-            const row = this._combineRow(buildRows[i], probeRows[j]);
-            if (adapter) {
-              adapter.setRow(row);
-              if (!this.conditionEvaluator(adapter, 0)) continue;
+            let matched = false;
+            for (let i = b; i < bEnd; i++) {
+              if (adapter) {
+                const row = this._combineRow(buildRows[i], probeRows[j]);
+                adapter.setRow(row);
+                if (!this.conditionEvaluator(adapter, 0)) continue;
+              }
+              matched = true;
+              break;
             }
-            outputRows.push(row);
-            matchedAny = true;
+            if (this.joinType === JoinType.SEMI && matched) {
+              outputRows.push(this._extractProbeRow(probeRows[j]));
+            } else if (this.joinType === JoinType.ANTI && !matched) {
+              outputRows.push(this._extractProbeRow(probeRows[j]));
+            } else if (isMark) {
+              outputRows.push(this._extractProbeRow(probeRows[j]).concat([matched]));
+            }
           }
-          if (!matchedAny && (this.joinType === JoinType.LEFT || this.joinType === JoinType.FULL)) {
-            outputRows.push(this._combineRowWithNulls(buildRows[i], true));
+        } else {
+          for (let i = b; i < bEnd; i++) {
+            let matchedAny = false;
+            for (let j = p; j < pEnd; j++) {
+              const row = this._combineRow(buildRows[i], probeRows[j]);
+              if (adapter) {
+                adapter.setRow(row);
+                if (!this.conditionEvaluator(adapter, 0)) continue;
+              }
+              outputRows.push(row);
+              matchedAny = true;
+            }
+            if (!matchedAny && (this.joinType === JoinType.LEFT || this.joinType === JoinType.FULL)) {
+              outputRows.push(this._combineRowWithNulls(buildRows[i], true));
+            }
           }
         }
 
-                b = bEnd;
+        b = bEnd;
         p = pEnd;
       }
     }
@@ -87,7 +112,11 @@ export class MergeJoinOperator {
     }
 
     while (p < probeRows.length) {
-      if (this.joinType === JoinType.RIGHT || this.joinType === JoinType.FULL) {
+      if (isSemiAnti && this.joinType === JoinType.ANTI) {
+        outputRows.push(this._extractProbeRow(probeRows[p]));
+      } else if (isMark) {
+        outputRows.push(this._extractProbeRow(probeRows[p]).concat([false]));
+      } else if (this.joinType === JoinType.RIGHT || this.joinType === JoinType.FULL) {
         outputRows.push(this._combineRowWithNulls(probeRows[p], false));
       }
       p++;
@@ -98,19 +127,18 @@ export class MergeJoinOperator {
     return [this._buildOutputChunk(outputRows)];
   }
 
-  _flattenChunks(chunks) {
+  _flattenAndExtractKeys(chunks, extractors) {
     const rows = [];
     for (const chunk of chunks) {
       for (let i = 0; i < chunk.size; i++) {
-        rows.push({ chunk, idx: chunk.activeRowIndex(i) });
+        const idx = chunk.activeRowIndex(i);
+        const key = extractors.length === 1
+          ? extractors[0](chunk, idx)
+          : extractors.map(fn => fn(chunk, idx));
+        rows.push({ chunk, idx, key });
       }
     }
     return rows;
-  }
-
-  _extractKey(chunk, idx, extractors) {
-    if (extractors.length === 1) return extractors[0](chunk, idx);
-    return extractors.map(fn => fn(chunk, idx));
   }
 
   _compareKeys(k1, k2) {
@@ -141,6 +169,14 @@ export class MergeJoinOperator {
     return row;
   }
 
+  _extractProbeRow(rowObj) {
+    const row = [];
+    for (let c = 0; c < rowObj.chunk.columns.length; c++) {
+      row.push(rowObj.chunk.columns[c].get(rowObj.idx));
+    }
+    return row;
+  }
+
   _combineRowWithNulls(rowObj, isBuild) {
     const row = [];
     if (isBuild) {
@@ -159,17 +195,24 @@ export class MergeJoinOperator {
 
   _buildOutputChunk(outputRows) {
     if (outputRows.length === 0) return null;
-    const colCount = this.buildColCount + this.probeColCount;
+    const isSemiAnti = this.joinType === JoinType.SEMI || this.joinType === JoinType.ANTI;
+    const isMark = this.joinType === JoinType.MARK;
+    const colCount = isSemiAnti ? this.probeColCount
+      : isMark ? this.probeColCount + 1
+      : this.buildColCount + this.probeColCount;
     const columns = [];
-
-        let dtSource = null;
-    if (this.buildChunks.length > 0) dtSource = this.buildChunks[0].columns;
-    else if (this.probeChunks.length > 0) dtSource = this.probeChunks[0].columns;
 
     for (let c = 0; c < colCount; c++) {
       let dt = DataType.VARCHAR;
-      if (c < this.buildColCount && this.buildChunks.length > 0) dt = this.buildChunks[0].columns[c].dataType;
-      else if (c >= this.buildColCount && this.probeChunks.length > 0) dt = this.probeChunks[0].columns[c - this.buildColCount].dataType;
+      if (isSemiAnti) {
+        if (this.probeChunks.length > 0 && c < this.probeChunks[0].columns.length) dt = this.probeChunks[0].columns[c].dataType;
+      } else if (isMark) {
+        if (c < this.probeColCount && this.probeChunks.length > 0 && c < this.probeChunks[0].columns.length) dt = this.probeChunks[0].columns[c].dataType;
+        else if (c === this.probeColCount) dt = DataType.BOOLEAN;
+      } else {
+        if (c < this.buildColCount && this.buildChunks.length > 0) dt = this.buildChunks[0].columns[c].dataType;
+        else if (c >= this.buildColCount && this.probeChunks.length > 0) dt = this.probeChunks[0].columns[c - this.buildColCount].dataType;
+      }
       columns.push(new Column(dt, outputRows.length));
     }
 

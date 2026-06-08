@@ -158,11 +158,20 @@ export class WindowOperator {
 
         case 'SUM': {
           const valueEval = this.compileExpression(wExpr.args[0], this.childColumnMapping);
-          let sum = 0;
-          for (let i = 0; i < partition.length; i++) {
-            const v = getVal(partition[i], valueEval);
-            if (v !== null) sum += typeof v === 'bigint' ? Number(v) : v;
-            result[partition[i]] = sum;
+          if (orderKeys.length === 0) {
+            let total = 0;
+            for (let i = 0; i < partition.length; i++) {
+              const v = getVal(partition[i], valueEval);
+              if (v !== null) total += typeof v === 'bigint' ? Number(v) : v;
+            }
+            for (let i = 0; i < partition.length; i++) result[partition[i]] = total;
+          } else {
+            let sum = 0;
+            for (let i = 0; i < partition.length; i++) {
+              const v = getVal(partition[i], valueEval);
+              if (v !== null) sum += typeof v === 'bigint' ? Number(v) : v;
+              result[partition[i]] = sum;
+            }
           }
           break;
         }
@@ -171,37 +180,68 @@ export class WindowOperator {
           const valueEval = wExpr.args.length > 0
             ? this.compileExpression(wExpr.args[0], this.childColumnMapping)
             : null;
-          let count = 0;
-          for (let i = 0; i < partition.length; i++) {
-            if (valueEval) {
-              const v = getVal(partition[i], valueEval);
-              if (v !== null) count++;
-            } else {
-              count++;
+          if (orderKeys.length === 0) {
+            let total = 0;
+            for (let i = 0; i < partition.length; i++) {
+              if (valueEval) {
+                const v = getVal(partition[i], valueEval);
+                if (v !== null) total++;
+              } else {
+                total++;
+              }
             }
-            result[partition[i]] = count;
+            for (let i = 0; i < partition.length; i++) result[partition[i]] = total;
+          } else {
+            let count = 0;
+            for (let i = 0; i < partition.length; i++) {
+              if (valueEval) {
+                const v = getVal(partition[i], valueEval);
+                if (v !== null) count++;
+              } else {
+                count++;
+              }
+              result[partition[i]] = count;
+            }
           }
           break;
         }
 
         case 'MIN': {
           const valueEval = this.compileExpression(wExpr.args[0], this.childColumnMapping);
-          let min = null;
-          for (let i = 0; i < partition.length; i++) {
-            const v = getVal(partition[i], valueEval);
-            if (v !== null && (min === null || v < min)) min = v;
-            result[partition[i]] = min;
+          if (orderKeys.length === 0) {
+            let min = null;
+            for (let i = 0; i < partition.length; i++) {
+              const v = getVal(partition[i], valueEval);
+              if (v !== null && (min === null || v < min)) min = v;
+            }
+            for (let i = 0; i < partition.length; i++) result[partition[i]] = min;
+          } else {
+            let min = null;
+            for (let i = 0; i < partition.length; i++) {
+              const v = getVal(partition[i], valueEval);
+              if (v !== null && (min === null || v < min)) min = v;
+              result[partition[i]] = min;
+            }
           }
           break;
         }
 
         case 'MAX': {
           const valueEval = this.compileExpression(wExpr.args[0], this.childColumnMapping);
-          let max = null;
-          for (let i = 0; i < partition.length; i++) {
-            const v = getVal(partition[i], valueEval);
-            if (v !== null && (max === null || v > max)) max = v;
-            result[partition[i]] = max;
+          if (orderKeys.length === 0) {
+            let max = null;
+            for (let i = 0; i < partition.length; i++) {
+              const v = getVal(partition[i], valueEval);
+              if (v !== null && (max === null || v > max)) max = v;
+            }
+            for (let i = 0; i < partition.length; i++) result[partition[i]] = max;
+          } else {
+            let max = null;
+            for (let i = 0; i < partition.length; i++) {
+              const v = getVal(partition[i], valueEval);
+              if (v !== null && (max === null || v > max)) max = v;
+              result[partition[i]] = max;
+            }
           }
           break;
         }

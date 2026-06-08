@@ -26,7 +26,7 @@ class LimitPushdownRewriter extends PlanRewriter {
       const leftLimit = { ...node, children: [child.children[0]] };
       const rightLimit = { ...node, children: [child.children[1]] };
 
-            const newUnion = { 
+      const newUnion = { 
         ...child, 
         children: [
           this.rewrite(leftLimit), 
@@ -51,6 +51,6 @@ class LimitPushdownRewriter extends PlanRewriter {
       return { ...node, children: [child] };
     }
 
-        return node;
+    return node;
   }
 }

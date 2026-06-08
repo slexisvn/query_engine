@@ -14,4 +14,5 @@ export const Config = {
   sinkQueueCapacity: env('QE_SINK_QUEUE_CAPACITY', 8),
   btreeOrder: env('QE_BTREE_ORDER', 128),
   indexScanSelectivityThreshold: parseFloat(process.env.QE_INDEX_SELECTIVITY_THRESHOLD || '0.3'),
+  dependentJoinConcurrency: env('QE_DEPENDENT_JOIN_CONCURRENCY', 1),
 };

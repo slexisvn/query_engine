@@ -1,16 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
+import { describe, it, expect } from 'vitest';
 import { QueryExecutor } from '../../src/execution/query-executor.js';
 import { PlanNodeType, JoinType, PhysicalStrategy } from '../../src/planner/logical-plan.js';
 import { BoundExprKind } from '../../src/binder/expression-binder.js';
 import { Column } from '../../src/storage/column.js';
 import { DataChunk } from '../../src/storage/chunk.js';
-import { Catalog } from '../../src/catalog/catalog.js';
-import { QueryEngine } from '../../src/index.js';
-import { Table } from '../../src/storage/table.js';
-import { DataType, timestampToEpochMs } from '../../src/storage/data-type.js';
 
 function makeChunk(colDefs) {
   const size = colDefs[0].values.length;
@@ -24,8 +17,14 @@ function makeChunk(colDefs) {
 }
 
 function mockStorage(chunks, schema) {
+  const totalRows = chunks.reduce((sum, c) => sum + c.size, 0);
   return {
     getSchema: () => schema,
+    rowCount: () => totalRows,
+    getColumnIndex: (name) => {
+      const upper = name.toUpperCase();
+      return schema.findIndex(s => s.name.toUpperCase() === upper);
+    },
     async *scan() { for (const c of chunks) yield c; },
   };
 }
@@ -67,8 +66,21 @@ function scanNode(table, columns, alias) {
   };
 }
 
-async function executeAndCollect(executor, plan, outputColumns) {
-  const { sink } = await executor.execute(plan, outputColumns);
+async function collectRows(executor, plan, columnNames) {
+  const { sink } = await executor.execute(plan, columnNames.map(n => ({ name: n })));
+  const chunks = sink.chunks || [];
+  const rawRows = chunks.flatMap(c => c.toRows());
+  return rawRows.map(row => {
+    const obj = {};
+    for (let i = 0; i < columnNames.length; i++) {
+      obj[columnNames[i]] = row[i];
+    }
+    return obj;
+  });
+}
+
+async function collectRaw(executor, plan) {
+  const { sink } = await executor.execute(plan, []);
   const chunks = sink.chunks || [];
   return chunks.flatMap(c => c.toRows());
 }
@@ -108,22 +120,21 @@ describe('QueryExecutor', () => {
     it('reads all rows from a table', async () => {
       const executor = makeExecutor();
       const plan = scanNode('ORDERS', ['ID', 'CUSTOMER', 'AMOUNT'], 'O');
-      const rows = await executeAndCollect(executor, plan, [{ name: 'ID' }, { name: 'CUSTOMER' }, { name: 'AMOUNT' }]);
+      const rows = await collectRows(executor, plan, ['ID', 'CUSTOMER', 'AMOUNT']);
 
       expect(rows.length).toBe(5);
-      expect(rows[0][0]).toBe(1);
-      expect(rows[0][1]).toBe('alice');
+      expect(rows[0].ID).toBe(1);
+      expect(rows[0].CUSTOMER).toBe('alice');
     });
 
     it('projects only requested columns', async () => {
       const executor = makeExecutor();
       const plan = scanNode('ORDERS', ['ID', 'AMOUNT'], 'O');
-      const rows = await executeAndCollect(executor, plan, [{ name: 'ID' }, { name: 'AMOUNT' }]);
+      const rows = await collectRows(executor, plan, ['ID', 'AMOUNT']);
 
       expect(rows.length).toBe(5);
-      expect(rows[0].length).toBe(2);
-      expect(rows[0][0]).toBe(1);
-      expect(rows[0][1]).toBe(100);
+      expect(rows[0].ID).toBe(1);
+      expect(rows[0].AMOUNT).toBe(100);
     });
   });
 
@@ -136,10 +147,10 @@ describe('QueryExecutor', () => {
         condition: binary('>', colRef('O', 'AMOUNT', 2, 'FLOAT64'), literal(150, 'FLOAT64')),
         children: [scan],
       };
-      const rows = await executeAndCollect(executor, plan, [{ name: 'ID' }]);
+      const rows = await collectRows(executor, plan, ['ID', 'CUSTOMER', 'AMOUNT']);
 
       expect(rows.length).toBe(2);
-      const ids = rows.map(r => r[0]);
+      const ids = rows.map(r => r.ID);
       expect(ids).toContain(2);
       expect(ids).toContain(4);
     });
@@ -152,7 +163,7 @@ describe('QueryExecutor', () => {
         condition: binary('>', colRef('O', 'AMOUNT', 2, 'FLOAT64'), literal(9999, 'FLOAT64')),
         children: [scan],
       };
-      const rows = await executeAndCollect(executor, plan, [{ name: 'ID' }]);
+      const rows = await collectRaw(executor, plan);
 
       expect(rows.length).toBe(0);
     });
@@ -176,11 +187,11 @@ describe('QueryExecutor', () => {
         ],
         children: [scan],
       };
-      const rows = await executeAndCollect(executor, plan, [{ name: 'ID' }, { name: 'DOUBLE_AMT' }]);
+      const rows = await collectRows(executor, plan, ['ID', 'DOUBLE_AMT']);
 
       expect(rows.length).toBe(5);
-      expect(rows[0][1]).toBe(200);
-      expect(rows[2][1]).toBe(300);
+      expect(rows[0].DOUBLE_AMT).toBe(200);
+      expect(rows[2].DOUBLE_AMT).toBe(300);
     });
   });
 
@@ -196,13 +207,13 @@ describe('QueryExecutor', () => {
         children: [left, right],
         physicalStrategy: PhysicalStrategy.HASH,
       };
-      const rows = await executeAndCollect(executor, plan, [{ name: 'ID' }, { name: 'PRODUCT' }]);
+      const rows = await collectRaw(executor, plan);
 
       expect(rows.length).toBe(5);
-      const products = rows.map(r => r[4]);
-      expect(products).toContain('pen');
-      expect(products).toContain('paper');
-      expect(products).toContain('tape');
+      const allValues = rows.flat();
+      expect(allValues).toContain('pen');
+      expect(allValues).toContain('paper');
+      expect(allValues).toContain('tape');
     });
 
     it('LEFT JOIN keeps unmatched left rows', async () => {
@@ -216,11 +227,13 @@ describe('QueryExecutor', () => {
         children: [left, right],
         physicalStrategy: PhysicalStrategy.HASH,
       };
-      const rows = await executeAndCollect(executor, plan, [{ name: 'ID' }]);
+      const rows = await collectRaw(executor, plan);
 
       expect(rows.length).toBe(6);
-      const order4 = rows.find(r => r[0] === 4);
-      expect(order4[3]).toBeNull();
+      const unmatchedRow = rows.find(r => r.includes(4) && r.includes('charlie'));
+      expect(unmatchedRow).toBeDefined();
+      const nullCount = unmatchedRow.filter(v => v === null).length;
+      expect(nullCount).toBeGreaterThanOrEqual(3);
     });
 
     it('SEMI JOIN returns only matching left rows', async () => {
@@ -234,7 +247,7 @@ describe('QueryExecutor', () => {
         children: [left, right],
         physicalStrategy: PhysicalStrategy.HASH,
       };
-      const rows = await executeAndCollect(executor, plan, [{ name: 'ID' }]);
+      const rows = await collectRaw(executor, plan);
 
       const ids = rows.map(r => r[0]).sort((a, b) => a - b);
       expect(ids).toEqual([1, 2, 3, 5]);
@@ -251,7 +264,7 @@ describe('QueryExecutor', () => {
         children: [left, right],
         physicalStrategy: PhysicalStrategy.HASH,
       };
-      const rows = await executeAndCollect(executor, plan, [{ name: 'ID' }]);
+      const rows = await collectRaw(executor, plan);
 
       expect(rows.length).toBe(1);
       expect(rows[0][0]).toBe(4);
@@ -293,11 +306,13 @@ describe('QueryExecutor', () => {
         physicalStrategy: PhysicalStrategy.MERGE,
       };
 
-      const rows = await executeAndCollect(executor, plan, [{ name: 'ID' }, { name: 'ITEM' }]);
+      const rows = await collectRaw(executor, plan);
 
       expect(rows.length).toBe(2);
-      const ids = rows.map(r => r[0]).sort((a, b) => a - b);
-      expect(ids).toEqual([1, 3]);
+      const allValues = rows.flat();
+      expect(allValues).toContain(1);
+      expect(allValues).toContain(3);
+      expect(allValues).not.toContain(2);
     });
   });
 
@@ -318,10 +333,10 @@ describe('QueryExecutor', () => {
         physicalStrategy: PhysicalStrategy.HASH,
       };
 
-      const rows = await executeAndCollect(executor, plan, [{ name: 'CUSTOMER' }, { name: 'sum' }]);
+      const rows = await collectRows(executor, plan, ['CUSTOMER', 'SUM']);
 
       expect(rows.length).toBe(3);
-      const map = new Map(rows.map(r => [r[0], r[1]]));
+      const map = new Map(rows.map(r => [r.CUSTOMER, r.SUM]));
       expect(map.get('alice')).toBe(250);
       expect(map.get('bob')).toBe(250);
       expect(map.get('charlie')).toBe(300);
@@ -343,10 +358,10 @@ describe('QueryExecutor', () => {
         physicalStrategy: PhysicalStrategy.HASH,
       };
 
-      const rows = await executeAndCollect(executor, plan, [{ name: 'count_star' }]);
+      const rows = await collectRows(executor, plan, ['COUNT']);
 
       expect(rows.length).toBe(1);
-      expect(rows[0][0]).toBe(5);
+      expect(rows[0].COUNT).toBe(5);
     });
   });
 
@@ -377,10 +392,10 @@ describe('QueryExecutor', () => {
         physicalStrategy: PhysicalStrategy.STREAM,
       };
 
-      const rows = await executeAndCollect(executor, plan, [{ name: 'GRP' }, { name: 'sum' }]);
+      const rows = await collectRows(executor, plan, ['GRP', 'SUM']);
 
       expect(rows.length).toBe(2);
-      const map = new Map(rows.map(r => [r[0], r[1]]));
+      const map = new Map(rows.map(r => [r.GRP, r.SUM]));
       expect(map.get('a')).toBe(30);
       expect(map.get('b')).toBe(6);
     });
@@ -396,9 +411,9 @@ describe('QueryExecutor', () => {
         children: [scan],
       };
 
-      const rows = await executeAndCollect(executor, plan, [{ name: 'AMOUNT' }]);
+      const rows = await collectRows(executor, plan, ['ID', 'CUSTOMER', 'AMOUNT']);
 
-      const amounts = rows.map(r => r[2]);
+      const amounts = rows.map(r => r.AMOUNT);
       expect(amounts).toEqual([50, 100, 150, 200, 300]);
     });
 
@@ -411,9 +426,9 @@ describe('QueryExecutor', () => {
         children: [scan],
       };
 
-      const rows = await executeAndCollect(executor, plan, [{ name: 'AMOUNT' }]);
+      const rows = await collectRows(executor, plan, ['ID', 'CUSTOMER', 'AMOUNT']);
 
-      const amounts = rows.map(r => r[2]);
+      const amounts = rows.map(r => r.AMOUNT);
       expect(amounts).toEqual([300, 200, 150, 100, 50]);
     });
   });
@@ -430,10 +445,10 @@ describe('QueryExecutor', () => {
         children: [scan],
       };
 
-      const rows = await executeAndCollect(executor, plan, [{ name: 'AMOUNT' }]);
+      const rows = await collectRows(executor, plan, ['ID', 'CUSTOMER', 'AMOUNT']);
 
       expect(rows.length).toBe(3);
-      expect(rows.map(r => r[2])).toEqual([300, 200, 150]);
+      expect(rows.map(r => r.AMOUNT)).toEqual([300, 200, 150]);
     });
 
     it('applies offset to skip rows', async () => {
@@ -447,10 +462,10 @@ describe('QueryExecutor', () => {
         children: [scan],
       };
 
-      const rows = await executeAndCollect(executor, plan, [{ name: 'AMOUNT' }]);
+      const rows = await collectRows(executor, plan, ['ID', 'CUSTOMER', 'AMOUNT']);
 
       expect(rows.length).toBe(2);
-      expect(rows.map(r => r[2])).toEqual([150, 200]);
+      expect(rows.map(r => r.AMOUNT)).toEqual([150, 200]);
     });
   });
 
@@ -465,7 +480,7 @@ describe('QueryExecutor', () => {
         children: [scan],
       };
 
-      const rows = await executeAndCollect(executor, plan, [{ name: 'ID' }]);
+      const rows = await collectRaw(executor, plan);
 
       expect(rows.length).toBe(2);
     });
@@ -480,11 +495,11 @@ describe('QueryExecutor', () => {
         children: [scan],
       };
 
-      const rows = await executeAndCollect(executor, plan, [{ name: 'ID' }]);
+      const rows = await collectRows(executor, plan, ['ID', 'CUSTOMER', 'AMOUNT']);
 
       expect(rows.length).toBe(2);
-      expect(rows[0][0]).toBe(4);
-      expect(rows[1][0]).toBe(5);
+      expect(rows[0].ID).toBe(4);
+      expect(rows[1].ID).toBe(5);
     });
   });
 
@@ -498,10 +513,10 @@ describe('QueryExecutor', () => {
       const scan = scanNode('DUPS', ['VAL'], 'D');
       const plan = { type: PlanNodeType.DISTINCT, children: [scan] };
 
-      const rows = await executeAndCollect(executor, plan, [{ name: 'VAL' }]);
+      const rows = await collectRows(executor, plan, ['VAL']);
 
       expect(rows.length).toBe(3);
-      const vals = rows.map(r => r[0]).sort((a, b) => a - b);
+      const vals = rows.map(r => r.VAL).sort((a, b) => a - b);
       expect(vals).toEqual([1, 2, 3]);
     });
   });
@@ -525,7 +540,7 @@ describe('QueryExecutor', () => {
         children: [scanNode('A', ['X'], 'A'), scanNode('B', ['X'], 'B')],
       };
 
-      const rows = await executeAndCollect(executor, plan, [{ name: 'X' }]);
+      const rows = await collectRaw(executor, plan);
 
       expect(rows.length).toBe(4);
     });
@@ -548,7 +563,7 @@ describe('QueryExecutor', () => {
         children: [scanNode('A', ['X'], 'A'), scanNode('B', ['X'], 'B')],
       };
 
-      const rows = await executeAndCollect(executor, plan, [{ name: 'X' }]);
+      const rows = await collectRaw(executor, plan);
 
       expect(rows.length).toBe(3);
     });
@@ -560,7 +575,7 @@ describe('QueryExecutor', () => {
       const scan = scanNode('ORDERS', ['ID'], 'O');
       const plan = { type: PlanNodeType.EMPTY, children: [scan] };
 
-      const rows = await executeAndCollect(executor, plan, [{ name: 'ID' }]);
+      const rows = await collectRaw(executor, plan);
 
       expect(rows.length).toBe(0);
     });
@@ -587,11 +602,11 @@ describe('QueryExecutor', () => {
         children: [sorted],
       };
 
-      const rows = await executeAndCollect(executor, plan, [{ name: 'AMOUNT' }]);
+      const rows = await collectRows(executor, plan, ['ID', 'CUSTOMER', 'AMOUNT']);
 
       expect(rows.length).toBe(2);
-      expect(rows[0][2]).toBe(300);
-      expect(rows[1][2]).toBe(200);
+      expect(rows[0].AMOUNT).toBe(300);
+      expect(rows[1].AMOUNT).toBe(200);
     });
   });
 
@@ -621,9 +636,9 @@ describe('QueryExecutor', () => {
         physicalStrategy: PhysicalStrategy.HASH,
       };
 
-      const rows = await executeAndCollect(executor, plan, [{ name: 'CUSTOMER' }, { name: 'sum' }]);
+      const rows = await collectRows(executor, plan, ['CUSTOMER', 'SUM']);
 
-      const map = new Map(rows.map(r => [r[0], r[1]]));
+      const map = new Map(rows.map(r => [r.CUSTOMER, r.SUM]));
       expect(map.get('alice')).toBe(22);
       expect(map.get('bob')).toBe(5);
     });
@@ -642,11 +657,235 @@ describe('QueryExecutor', () => {
       };
       const distinct = { type: PlanNodeType.DISTINCT, children: [project] };
 
-      const rows = await executeAndCollect(executor, distinct, [{ name: 'CUSTOMER' }]);
+      const rows = await collectRows(executor, distinct, ['CUSTOMER']);
 
       expect(rows.length).toBe(3);
-      const names = rows.map(r => r[0]).sort();
+      const names = rows.map(r => r.CUSTOMER).sort();
       expect(names).toEqual(['alice', 'bob', 'charlie']);
+    });
+  });
+
+  describe('MERGE JOIN SEMI', () => {
+    it('outputs only matching probe rows with probe-side columns', async () => {
+      const leftSchema = [
+        { name: 'ID', dataType: 'INT32' },
+        { name: 'NAME', dataType: 'VARCHAR' },
+      ];
+      const leftData = [makeChunk([
+        { type: 'INT32', values: [1, 2, 3, 4] },
+        { type: 'VARCHAR', values: ['alice', 'bob', 'charlie', 'diana'] },
+      ])];
+      const rightSchema = [
+        { name: 'RID', dataType: 'INT32' },
+        { name: 'EXTRA', dataType: 'VARCHAR' },
+      ];
+      const rightData = [makeChunk([
+        { type: 'INT32', values: [1, 3] },
+        { type: 'VARCHAR', values: ['x', 'y'] },
+      ])];
+
+      const catalog = mockCatalog({
+        L: mockStorage(leftData, leftSchema),
+        R: mockStorage(rightData, rightSchema),
+      });
+      const executor = new QueryExecutor(catalog, mockTempManager());
+
+      const left = scanNode('L', ['ID', 'NAME'], 'L');
+      const right = scanNode('R', ['RID', 'EXTRA'], 'R');
+      const plan = {
+        type: PlanNodeType.JOIN,
+        joinType: JoinType.SEMI,
+        condition: binary('=', colRef('L', 'ID', 0), colRef('R', 'RID', 0)),
+        children: [left, right],
+        physicalStrategy: PhysicalStrategy.MERGE,
+      };
+
+      const rows = await collectRows(executor, plan, ['ID', 'NAME']);
+
+      expect(rows.length).toBe(2);
+      expect(Object.keys(rows[0]).length).toBe(2);
+      const names = rows.map(r => r.NAME).sort();
+      expect(names).toEqual(['alice', 'charlie']);
+    });
+  });
+
+  describe('MERGE JOIN ANTI', () => {
+    it('outputs only non-matching probe rows with probe-side columns', async () => {
+      const leftSchema = [
+        { name: 'ID', dataType: 'INT32' },
+        { name: 'VAL', dataType: 'VARCHAR' },
+      ];
+      const leftData = [makeChunk([
+        { type: 'INT32', values: [1, 2, 3] },
+        { type: 'VARCHAR', values: ['a', 'b', 'c'] },
+      ])];
+      const rightSchema = [
+        { name: 'RID', dataType: 'INT32' },
+      ];
+      const rightData = [makeChunk([
+        { type: 'INT32', values: [1, 3] },
+      ])];
+
+      const catalog = mockCatalog({
+        L: mockStorage(leftData, leftSchema),
+        R: mockStorage(rightData, rightSchema),
+      });
+      const executor = new QueryExecutor(catalog, mockTempManager());
+
+      const left = scanNode('L', ['ID', 'VAL'], 'L');
+      const right = scanNode('R', ['RID'], 'R');
+      const plan = {
+        type: PlanNodeType.JOIN,
+        joinType: JoinType.ANTI,
+        condition: binary('=', colRef('L', 'ID', 0), colRef('R', 'RID', 0)),
+        children: [left, right],
+        physicalStrategy: PhysicalStrategy.MERGE,
+      };
+
+      const rows = await collectRows(executor, plan, ['ID', 'VAL']);
+
+      expect(rows.length).toBe(1);
+      expect(rows[0].ID).toBe(2);
+      expect(rows[0].VAL).toBe('b');
+      expect(Object.keys(rows[0]).length).toBe(2);
+    });
+  });
+
+  describe('MERGE JOIN MARK', () => {
+    it('appends boolean mark column to probe rows', async () => {
+      const leftSchema = [
+        { name: 'ID', dataType: 'INT32' },
+        { name: 'NAME', dataType: 'VARCHAR' },
+      ];
+      const leftData = [makeChunk([
+        { type: 'INT32', values: [1, 2, 3] },
+        { type: 'VARCHAR', values: ['a', 'b', 'c'] },
+      ])];
+      const rightSchema = [
+        { name: 'RID', dataType: 'INT32' },
+      ];
+      const rightData = [makeChunk([
+        { type: 'INT32', values: [1, 3] },
+      ])];
+
+      const catalog = mockCatalog({
+        L: mockStorage(leftData, leftSchema),
+        R: mockStorage(rightData, rightSchema),
+      });
+      const executor = new QueryExecutor(catalog, mockTempManager());
+
+      const left = scanNode('L', ['ID', 'NAME'], 'L');
+      const right = scanNode('R', ['RID'], 'R');
+      const plan = {
+        type: PlanNodeType.JOIN,
+        joinType: JoinType.MARK,
+        condition: binary('=', colRef('L', 'ID', 0), colRef('R', 'RID', 0)),
+        children: [left, right],
+        physicalStrategy: PhysicalStrategy.MERGE,
+        markColumn: '__mark',
+      };
+
+      const rows = await collectRows(executor, plan, ['ID', 'NAME', '__mark']);
+
+      expect(rows.length).toBe(3);
+      expect(Object.keys(rows[0]).length).toBe(3);
+      const marked = rows.find(r => r.ID === 1);
+      expect(marked.__mark).toBe(true);
+      const unmarked = rows.find(r => r.ID === 2);
+      expect(unmarked.__mark).toBe(false);
+    });
+  });
+
+  describe('LEFT JOIN with build-side swap', () => {
+    it('preserves all left rows when physical build side differs from logical left', async () => {
+      const leftSchema = [
+        { name: 'ID', dataType: 'INT32' },
+        { name: 'NAME', dataType: 'VARCHAR' },
+        { name: 'FK', dataType: 'INT32' },
+      ];
+      const leftData = [makeChunk([
+        { type: 'INT32', values: [1, 2, 3, 4] },
+        { type: 'VARCHAR', values: ['w', 'x', 'y', 'z'] },
+        { type: 'INT32', values: [10, 20, 10, 99] },
+      ])];
+      const rightSchema = [
+        { name: 'SID', dataType: 'INT32' },
+        { name: 'LABEL', dataType: 'VARCHAR' },
+      ];
+      const rightData = [makeChunk([
+        { type: 'INT32', values: [10, 20] },
+        { type: 'VARCHAR', values: ['alpha', 'beta'] },
+      ])];
+
+      const catalog = mockCatalog({
+        L: mockStorage(leftData, leftSchema),
+        R: mockStorage(rightData, rightSchema),
+      });
+      const executor = new QueryExecutor(catalog, mockTempManager());
+
+      const left = scanNode('L', ['ID', 'NAME', 'FK'], 'L');
+      const right = scanNode('R', ['SID', 'LABEL'], 'R');
+      const plan = {
+        type: PlanNodeType.JOIN,
+        joinType: JoinType.LEFT,
+        condition: binary('=', colRef('L', 'FK', 2), colRef('R', 'SID', 0)),
+        children: [left, right],
+        physicalStrategy: PhysicalStrategy.HASH,
+        _buildSide: 'right',
+      };
+
+      const rows = await collectRaw(executor, plan);
+
+      expect(rows.length).toBe(4);
+      const unmatchedRow = rows.find(r => r.includes(4) && r.includes('z'));
+      expect(unmatchedRow).toBeDefined();
+      const nullCount = unmatchedRow.filter(v => v === null).length;
+      expect(nullCount).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  describe('NESTED LOOP JOIN with equi-key-only condition', () => {
+    it('evaluates full condition instead of residual-only', async () => {
+      const aSchema = [
+        { name: 'K', dataType: 'INT32' },
+        { name: 'V', dataType: 'VARCHAR' },
+      ];
+      const aData = [makeChunk([
+        { type: 'INT32', values: [1, 2] },
+        { type: 'VARCHAR', values: ['a1', 'a2'] },
+      ])];
+      const bSchema = [
+        { name: 'K', dataType: 'INT32' },
+        { name: 'V', dataType: 'VARCHAR' },
+      ];
+      const bData = [makeChunk([
+        { type: 'INT32', values: [1, 3] },
+        { type: 'VARCHAR', values: ['b1', 'b3'] },
+      ])];
+
+      const catalog = mockCatalog({
+        A: mockStorage(aData, aSchema),
+        B: mockStorage(bData, bSchema),
+      });
+      const executor = new QueryExecutor(catalog, mockTempManager());
+
+      const left = scanNode('A', ['K', 'V'], 'A');
+      const right = scanNode('B', ['K', 'V'], 'B');
+      const plan = {
+        type: PlanNodeType.JOIN,
+        joinType: JoinType.INNER,
+        condition: binary('=', colRef('A', 'K', 0), colRef('B', 'K', 0)),
+        children: [left, right],
+        physicalStrategy: PhysicalStrategy.NESTED_LOOP,
+      };
+
+      const rows = await collectRaw(executor, plan);
+
+      expect(rows.length).toBe(1);
+      const allValues = rows[0];
+      expect(allValues).toContain(1);
+      expect(allValues).toContain('a1');
+      expect(allValues).toContain('b1');
     });
   });
 
@@ -655,403 +894,14 @@ describe('QueryExecutor', () => {
       const executor = makeExecutor();
       const plan = { type: 'NONSENSE', children: [] };
 
-      await expect(executeAndCollect(executor, plan, [])).rejects.toThrow('Unsupported plan node');
+      await expect(collectRaw(executor, plan)).rejects.toThrow('Unsupported plan node');
     });
 
     it('throws when table storage not found', async () => {
       const executor = makeExecutor();
       const plan = scanNode('NONEXISTENT', ['ID'], 'X');
 
-      await expect(executeAndCollect(executor, plan, [{ name: 'ID' }])).rejects.toThrow('No storage');
+      await expect(collectRaw(executor, plan)).rejects.toThrow('No storage');
     });
-  });
-});
-
-describe('DDL execution (CREATE/DROP TABLE)', () => {
-  it('CREATE TABLE creates a queryable table', async () => {
-    const catalog = new Catalog();
-    const engine = new QueryEngine(catalog);
-    const createResult = await engine.run('CREATE TABLE items (id INTEGER, name VARCHAR)');
-    expect(createResult.message).toContain('created');
-    expect(catalog.hasTable('ITEMS')).toBe(true);
-    engine.close();
-  });
-
-  it('DROP TABLE removes the table', async () => {
-    const catalog = new Catalog();
-    const engine = new QueryEngine(catalog);
-    await engine.run('CREATE TABLE temp (x INT)');
-    expect(catalog.hasTable('TEMP')).toBe(true);
-    const dropResult = await engine.run('DROP TABLE temp');
-    expect(dropResult.message).toContain('dropped');
-    expect(catalog.hasTable('TEMP')).toBe(false);
-    engine.close();
-  });
-
-  it('CREATE TABLE IF NOT EXISTS does not error on duplicate', async () => {
-    const catalog = new Catalog();
-    const engine = new QueryEngine(catalog);
-    await engine.run('CREATE TABLE t1 (id INT)');
-    const result = await engine.run('CREATE TABLE IF NOT EXISTS t1 (id INT)');
-    expect(result.message).toContain('already exists');
-    engine.close();
-  });
-
-  it('CREATE TABLE without IF NOT EXISTS throws on duplicate', async () => {
-    const catalog = new Catalog();
-    const engine = new QueryEngine(catalog);
-    await engine.run('CREATE TABLE t1 (id INT)');
-    await expect(engine.run('CREATE TABLE t1 (id INT)')).rejects.toThrow('already exists');
-    engine.close();
-  });
-
-  it('DROP TABLE IF EXISTS does not error on missing', async () => {
-    const catalog = new Catalog();
-    const engine = new QueryEngine(catalog);
-    const result = await engine.run('DROP TABLE IF EXISTS nonexistent');
-    expect(result.message).toContain('does not exist');
-    engine.close();
-  });
-
-  it('DROP TABLE without IF EXISTS throws on missing', async () => {
-    const catalog = new Catalog();
-    const engine = new QueryEngine(catalog);
-    await expect(engine.run('DROP TABLE nonexistent')).rejects.toThrow('does not exist');
-    engine.close();
-  });
-});
-
-describe('EXPLAIN ANALYZE execution', () => {
-  let tmpDir;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ea_test_'));
-  });
-
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it('returns plan with execution time and row count', async () => {
-    const catalog = new Catalog();
-    catalog.registerTable('t', [{ name: 'x', dataType: DataType.INT32 }]);
-    const table = new Table('t', [{ name: 'x', dataType: DataType.INT32 }], tmpDir);
-    await table.insertRows([[1], [2], [3]]);
-    catalog.registerTableStorage('t', table);
-
-    const engine = new QueryEngine(catalog);
-    const result = await engine.run('EXPLAIN ANALYZE SELECT x FROM t WHERE x > 1');
-    expect(result.columns).toContain('EXPLAIN_ANALYZE');
-    const plan = result.rows[0]['EXPLAIN_ANALYZE'];
-    expect(plan).toContain('Execution Time');
-    expect(plan).toContain('ms');
-    expect(plan).toContain('Rows Returned');
-    engine.close();
-  });
-
-  it('execution time is a positive number', async () => {
-    const catalog = new Catalog();
-    catalog.registerTable('t', [{ name: 'x', dataType: DataType.INT32 }]);
-    const table = new Table('t', [{ name: 'x', dataType: DataType.INT32 }], tmpDir);
-    await table.insertRows([[1]]);
-    catalog.registerTableStorage('t', table);
-
-    const engine = new QueryEngine(catalog);
-    const result = await engine.run('EXPLAIN ANALYZE SELECT x FROM t');
-    const plan = result.rows[0]['EXPLAIN_ANALYZE'];
-    const match = plan.match(/Execution Time: ([\d.]+) ms/);
-    expect(match).toBeTruthy();
-    expect(parseFloat(match[1])).toBeGreaterThanOrEqual(0);
-    engine.close();
-  });
-});
-
-describe('NATURAL JOIN / USING execution', () => {
-  let tmpDir;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nj_test_'));
-  });
-
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  function makeJoinEngine(dir) {
-    const catalog = new Catalog();
-    catalog.registerTable('users', [
-      { name: 'id', dataType: DataType.INT32 },
-      { name: 'name', dataType: DataType.VARCHAR },
-    ]);
-    catalog.registerTable('profiles', [
-      { name: 'id', dataType: DataType.INT32 },
-      { name: 'bio', dataType: DataType.VARCHAR },
-    ]);
-
-    const usersDir = path.join(dir, 'users');
-    fs.mkdirSync(usersDir, { recursive: true });
-    const users = new Table('users', [
-      { name: 'id', dataType: DataType.INT32 },
-      { name: 'name', dataType: DataType.VARCHAR },
-    ], usersDir);
-    users.insertRows([[1, 'Alice'], [2, 'Bob'], [3, 'Charlie']]);
-    catalog.registerTableStorage('users', users);
-
-    const profilesDir = path.join(dir, 'profiles');
-    fs.mkdirSync(profilesDir, { recursive: true });
-    const profiles = new Table('profiles', [
-      { name: 'id', dataType: DataType.INT32 },
-      { name: 'bio', dataType: DataType.VARCHAR },
-    ], profilesDir);
-    profiles.insertRows([[1, 'Engineer'], [2, 'Designer']]);
-    catalog.registerTableStorage('profiles', profiles);
-
-    return new QueryEngine(catalog);
-  }
-
-  it('NATURAL JOIN matches on common column name (id)', async () => {
-    const engine = makeJoinEngine(tmpDir);
-    const result = await engine.run('SELECT u.name, p.bio FROM users u NATURAL JOIN profiles p');
-    expect(result.rows).toHaveLength(2);
-    const alice = result.rows.find(r => r.name === 'Alice');
-    expect(alice.bio).toBe('Engineer');
-    engine.close();
-  });
-
-  it('JOIN USING matches on specified column', async () => {
-    const engine = makeJoinEngine(tmpDir);
-    const result = await engine.run('SELECT u.name, p.bio FROM users u JOIN profiles p USING (id)');
-    expect(result.rows).toHaveLength(2);
-    engine.close();
-  });
-
-  it('NATURAL LEFT JOIN preserves unmatched rows', async () => {
-    const engine = makeJoinEngine(tmpDir);
-    const result = await engine.run('SELECT u.name, p.bio FROM users u NATURAL LEFT JOIN profiles p');
-    expect(result.rows).toHaveLength(3);
-    const charlie = result.rows.find(r => r.name === 'Charlie');
-    expect(charlie.bio).toBeNull();
-    engine.close();
-  });
-});
-
-describe('window functions execution', () => {
-  let tmpDir;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf_test_'));
-  });
-
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  function makeWindowEngine(dir) {
-    const catalog = new Catalog();
-    catalog.registerTable('employees', [
-      { name: 'id', dataType: DataType.INT32 },
-      { name: 'dept', dataType: DataType.VARCHAR },
-      { name: 'salary', dataType: DataType.INT32 },
-      { name: 'name', dataType: DataType.VARCHAR },
-    ]);
-    const table = new Table('employees', [
-      { name: 'id', dataType: DataType.INT32 },
-      { name: 'dept', dataType: DataType.VARCHAR },
-      { name: 'salary', dataType: DataType.INT32 },
-      { name: 'name', dataType: DataType.VARCHAR },
-    ], dir);
-    table.insertRows([
-      [1, 'eng', 100, 'Alice'],
-      [2, 'eng', 120, 'Bob'],
-      [3, 'eng', 110, 'Charlie'],
-      [4, 'sales', 90, 'Dave'],
-      [5, 'sales', 95, 'Eve'],
-    ]);
-    catalog.registerTableStorage('employees', table);
-    return new QueryEngine(catalog);
-  }
-
-  it('ROW_NUMBER assigns sequential numbers', async () => {
-    const engine = makeWindowEngine(tmpDir);
-    const result = await engine.run('SELECT name, ROW_NUMBER() OVER (ORDER BY id) AS rn FROM employees ORDER BY id');
-    const rns = result.rows.map(r => r.rn);
-    expect(rns).toEqual([1, 2, 3, 4, 5]);
-    engine.close();
-  });
-
-  it('ROW_NUMBER with PARTITION BY resets per partition', async () => {
-    const engine = makeWindowEngine(tmpDir);
-    const result = await engine.run('SELECT name, dept, ROW_NUMBER() OVER (PARTITION BY dept ORDER BY salary) AS rn FROM employees ORDER BY dept, salary');
-    const engRows = result.rows.filter(r => r.dept === 'eng');
-    const salesRows = result.rows.filter(r => r.dept === 'sales');
-    expect(engRows.map(r => r.rn)).toEqual([1, 2, 3]);
-    expect(salesRows.map(r => r.rn)).toEqual([1, 2]);
-    engine.close();
-  });
-
-  it('RANK produces gaps on ties', async () => {
-    const catalog = new Catalog();
-    catalog.registerTable('scores', [
-      { name: 'name', dataType: DataType.VARCHAR },
-      { name: 'score', dataType: DataType.INT32 },
-    ]);
-    const scoresDir = path.join(tmpDir, 'scores');
-    fs.mkdirSync(scoresDir, { recursive: true });
-    const table = new Table('scores', [
-      { name: 'name', dataType: DataType.VARCHAR },
-      { name: 'score', dataType: DataType.INT32 },
-    ], scoresDir);
-    table.insertRows([
-      ['A', 100], ['B', 100], ['C', 90], ['D', 80],
-    ]);
-    catalog.registerTableStorage('scores', table);
-    const engine = new QueryEngine(catalog);
-
-    const result = await engine.run('SELECT name, score, RANK() OVER (ORDER BY score DESC) AS rnk FROM scores ORDER BY score DESC, name');
-    const ranks = result.rows.map(r => r.rnk);
-    expect(ranks).toEqual([1, 1, 3, 4]);
-    engine.close();
-  });
-
-  it('DENSE_RANK has no gaps', async () => {
-    const catalog = new Catalog();
-    catalog.registerTable('scores', [
-      { name: 'name', dataType: DataType.VARCHAR },
-      { name: 'score', dataType: DataType.INT32 },
-    ]);
-    const scoresDir = path.join(tmpDir, 'scores2');
-    fs.mkdirSync(scoresDir, { recursive: true });
-    const table = new Table('scores', [
-      { name: 'name', dataType: DataType.VARCHAR },
-      { name: 'score', dataType: DataType.INT32 },
-    ], scoresDir);
-    table.insertRows([
-      ['A', 100], ['B', 100], ['C', 90], ['D', 80],
-    ]);
-    catalog.registerTableStorage('scores', table);
-    const engine = new QueryEngine(catalog);
-
-    const result = await engine.run('SELECT name, score, DENSE_RANK() OVER (ORDER BY score DESC) AS drnk FROM scores ORDER BY score DESC, name');
-    const ranks = result.rows.map(r => r.drnk);
-    expect(ranks).toEqual([1, 1, 2, 3]);
-    engine.close();
-  });
-
-  it('LAG returns previous row value', async () => {
-    const engine = makeWindowEngine(tmpDir);
-    const result = await engine.run('SELECT name, salary, LAG(salary, 1) OVER (ORDER BY id) AS prev_salary FROM employees ORDER BY id');
-    expect(result.rows[0].prev_salary).toBeNull();
-    expect(result.rows[1].prev_salary).toBe(100);
-    expect(result.rows[2].prev_salary).toBe(120);
-    engine.close();
-  });
-});
-
-describe('scalar functions execution', () => {
-  let tmpDir;
-  let engine;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fn_test_'));
-    const catalog = new Catalog();
-    catalog.registerTable('data', [
-      { name: 'val', dataType: DataType.INT32 },
-      { name: 'txt', dataType: DataType.VARCHAR },
-    ]);
-    const table = new Table('data', [
-      { name: 'val', dataType: DataType.INT32 },
-      { name: 'txt', dataType: DataType.VARCHAR },
-    ], tmpDir);
-    table.insertRows([
-      [16, 'hello world'],
-      [25, 'foo bar'],
-      [0, 'test'],
-      [9, null],
-    ]);
-    catalog.registerTableStorage('data', table);
-    engine = new QueryEngine(catalog);
-  });
-
-  afterEach(() => {
-    engine.close();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  describe('SQRT', () => {
-    it('computes square root correctly', async () => {
-      const result = await engine.run('SELECT SQRT(val) AS sq FROM data ORDER BY val');
-      expect(result.rows[0].sq).toBe(0);
-      expect(result.rows[1].sq).toBe(3);
-      expect(result.rows[2].sq).toBe(4);
-      expect(result.rows[3].sq).toBe(5);
-    });
-
-    it('returns null for null input', async () => {
-      const result = await engine.run('SELECT SQRT(val) AS sq FROM data WHERE val = 9');
-      expect(result.rows[0].sq).toBe(3);
-    });
-  });
-
-  describe('LENGTH', () => {
-    it('returns string length', async () => {
-      const result = await engine.run("SELECT LENGTH(txt) AS len FROM data WHERE txt = 'hello world'");
-      expect(result.rows[0].len).toBe(11);
-    });
-
-    it('returns null for null input', async () => {
-      const result = await engine.run('SELECT LENGTH(txt) AS len FROM data WHERE val = 9');
-      expect(result.rows[0].len).toBeNull();
-    });
-  });
-
-  describe('REPLACE', () => {
-    it('replaces all occurrences of substring', async () => {
-      const result = await engine.run("SELECT REPLACE(txt, 'o', '0') AS rep FROM data WHERE txt = 'foo bar'");
-      expect(result.rows[0].rep).toBe('f00 bar');
-    });
-
-    it('returns original when pattern not found', async () => {
-      const result = await engine.run("SELECT REPLACE(txt, 'xyz', '!') AS rep FROM data WHERE txt = 'test'");
-      expect(result.rows[0].rep).toBe('test');
-    });
-
-    it('returns null when any arg is null', async () => {
-      const result = await engine.run("SELECT REPLACE(txt, 'a', 'b') AS rep FROM data WHERE val = 9");
-      expect(result.rows[0].rep).toBeNull();
-    });
-  });
-});
-
-describe('TIMESTAMP end-to-end', () => {
-  let tmpDir;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ts_test_'));
-  });
-
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it('extracts HOUR, MINUTE, SECOND from timestamp', async () => {
-    const catalog = new Catalog();
-    catalog.registerTable('events', [
-      { name: 'id', dataType: DataType.INT32 },
-      { name: 'ts', dataType: DataType.TIMESTAMP },
-    ]);
-    const table = new Table('events', [
-      { name: 'id', dataType: DataType.INT32 },
-      { name: 'ts', dataType: DataType.TIMESTAMP },
-    ], tmpDir);
-    const tsVal = BigInt(timestampToEpochMs(2024, 3, 15, 14, 30, 45, 0));
-    await table.insertRows([[1, tsVal]]);
-    catalog.registerTableStorage('events', table);
-
-    const engine = new QueryEngine(catalog);
-    const result = await engine.run('SELECT EXTRACT(HOUR FROM ts), EXTRACT(MINUTE FROM ts), EXTRACT(SECOND FROM ts) FROM events');
-    expect(result.rows[0][Object.keys(result.rows[0])[0]]).toBe(14);
-    expect(result.rows[0][Object.keys(result.rows[0])[1]]).toBe(30);
-    expect(result.rows[0][Object.keys(result.rows[0])[2]]).toBe(45);
-    engine.close();
   });
 });

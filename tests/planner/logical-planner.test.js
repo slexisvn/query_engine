@@ -64,7 +64,7 @@ function findAll(plan, type) {
 }
 
 describe('plan structure', () => {
-  it('full query builds Limit → Sort → Project → HAVING Filter → Aggregate → WHERE Filter → Join → 2 Scans', () => {
+  it('full query builds Limit → Project → Sort → HAVING Filter → Aggregate → WHERE Filter → Join → 2 Scans', () => {
     const plan = planSQL(`
       SELECT u.name, COUNT(*) AS cnt
       FROM users u
@@ -79,15 +79,15 @@ describe('plan structure', () => {
     expect(plan.type).toBe(PlanNodeType.LIMIT);
     expect(plan.count).toBe(10);
 
-    const sort = plan.children[0];
-    expect(sort.type).toBe(PlanNodeType.SORT);
-    expect(sort.orderKeys[0].direction).toBe('DESC');
-
-    const proj = sort.children[0];
+    const proj = plan.children[0];
     expect(proj.type).toBe(PlanNodeType.PROJECT);
     expect(proj.expressions).toHaveLength(2);
 
-    const havingFilter = proj.children[0];
+    const sort = proj.children[0];
+    expect(sort.type).toBe(PlanNodeType.SORT);
+    expect(sort.orderKeys[0].direction).toBe('DESC');
+
+    const havingFilter = sort.children[0];
     expect(havingFilter.type).toBe(PlanNodeType.FILTER);
     expect(havingFilter.condition.op).toBe('>');
 
@@ -108,12 +108,12 @@ describe('plan structure', () => {
     expect(join.children[1].table).toBe('ORDERS');
   });
 
-  it('DISTINCT wraps below Project, above Scan', () => {
+  it('DISTINCT wraps above Project, below top-level', () => {
     const plan = planSQL('SELECT DISTINCT name, dept FROM users');
-    expect(plan.type).toBe(PlanNodeType.PROJECT);
-    const distinct = plan.children[0];
-    expect(distinct.type).toBe(PlanNodeType.DISTINCT);
-    expect(distinct.children[0].type).toBe(PlanNodeType.SCAN);
+    expect(plan.type).toBe(PlanNodeType.DISTINCT);
+    const proj = plan.children[0];
+    expect(proj.type).toBe(PlanNodeType.PROJECT);
+    expect(proj.children[0].type).toBe(PlanNodeType.SCAN);
   });
 
   it('SELECT without FROM has null child under Project', () => {
@@ -142,7 +142,17 @@ describe('plan structure', () => {
   it('ORDER BY + LIMIT puts Limit outermost', () => {
     const plan = planSQL('SELECT * FROM users ORDER BY id LIMIT 5');
     expect(plan.type).toBe(PlanNodeType.LIMIT);
-    expect(plan.children[0].type).toBe(PlanNodeType.SORT);
+    expect(plan.children[0].type).toBe(PlanNodeType.PROJECT);
+    expect(plan.children[0].children[0].type).toBe(PlanNodeType.SORT);
+  });
+
+  it('ORDER BY on non-selected column places Sort below Project', () => {
+    const plan = planSQL('SELECT name FROM users ORDER BY age DESC');
+    expect(plan.type).toBe(PlanNodeType.PROJECT);
+    const sort = plan.children[0];
+    expect(sort.type).toBe(PlanNodeType.SORT);
+    expect(sort.orderKeys[0].direction).toBe('DESC');
+    expect(sort.children[0].type).toBe(PlanNodeType.SCAN);
   });
 });
 
@@ -389,7 +399,10 @@ describe('complex real-world queries', () => {
     expect(plan.type).toBe(PlanNodeType.LIMIT);
     expect(plan.count).toBe(5);
 
-    const sort = plan.children[0];
+    const proj = plan.children[0];
+    expect(proj.type).toBe(PlanNodeType.PROJECT);
+
+    const sort = proj.children[0];
     expect(sort.type).toBe(PlanNodeType.SORT);
     expect(sort.orderKeys[0].direction).toBe('DESC');
 

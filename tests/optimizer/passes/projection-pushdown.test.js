@@ -256,4 +256,78 @@ describe('ProjectionPushdown', () => {
       expect(leftCols).not.toContain('extra2');
     });
   });
+
+  describe('PROJECT node propagates child table aliases for join ref filtering', () => {
+    it('preserves join key columns when right child is PROJECT over scan with different alias', () => {
+      const left = scanWith('employees', ['id', 'name', 'dept_id']);
+      const rightScan = scanWith('departments', ['id', 'budget']);
+      const rightProject = LogicalProject(
+        [colRef('departments', 'id')],
+        rightScan
+      );
+      const join = LogicalJoin(
+        JoinType.SEMI,
+        bin(colRef('employees', 'dept_id'), '=', colRef('departments', 'id')),
+        left,
+        rightProject
+      );
+      const plan = LogicalProject(
+        [colRef('employees', 'name')],
+        join
+      );
+
+      const result = pass.apply(plan);
+
+      function findScans(n) {
+        const scans = [];
+        if (!n) return scans;
+        if (n.type === PlanNodeType.SCAN) scans.push(n);
+        for (const c of n.children || []) scans.push(...findScans(c));
+        return scans;
+      }
+      const empScan = findScans(result).find(s => s.table === 'employees');
+      const empCols = empScan.columns.map(c => c.name || c.columnName);
+      expect(empCols).toContain('name');
+      expect(empCols).toContain('dept_id');
+      expect(empCols).not.toContain('id');
+
+      const deptScan = findScans(result).find(s => s.table === 'departments');
+      const deptCols = deptScan.columns.map(c => c.name || c.columnName);
+      expect(deptCols).toContain('id');
+    });
+
+    it('does not over-prune left scan when right PROJECT child shares column names', () => {
+      const left = scanWith('orders', ['id', 'customer_id', 'total']);
+      const rightScan = scanWith('customers', ['id', 'name']);
+      const rightProject = LogicalProject(
+        [colRef('customers', 'id')],
+        rightScan
+      );
+      const join = LogicalJoin(
+        JoinType.INNER,
+        bin(colRef('orders', 'customer_id'), '=', colRef('customers', 'id')),
+        left,
+        rightProject
+      );
+      const plan = LogicalProject(
+        [colRef('orders', 'total')],
+        join
+      );
+
+      const result = pass.apply(plan);
+
+      function findScans(n) {
+        const scans = [];
+        if (!n) return scans;
+        if (n.type === PlanNodeType.SCAN) scans.push(n);
+        for (const c of n.children || []) scans.push(...findScans(c));
+        return scans;
+      }
+      const orderScan = findScans(result).find(s => s.table === 'orders');
+      const orderCols = orderScan.columns.map(c => c.name || c.columnName);
+      expect(orderCols).toContain('total');
+      expect(orderCols).toContain('customer_id');
+      expect(orderCols).not.toContain('id');
+    });
+  });
 });
