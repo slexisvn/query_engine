@@ -13,64 +13,46 @@ export async function wasmSumI32(data) {
   const { loader, instance } = await getCoreInstance();
   loader.reset();
 
-  const count = data.length;
-  const dataPtr = loader.alloc(count * 4);
-  loader.writeI32Array(data, dataPtr);
-
-  return instance.exports.sumI32(dataPtr, count);
+  const dataPtr = loader.resolveDataPtr(data, 4);
+  return instance.exports.sumI32(dataPtr, data.length);
 }
 
 export async function wasmSumF64(data) {
   const { loader, instance } = await getCoreInstance();
   loader.reset();
 
-  const count = data.length;
-  const dataPtr = loader.alloc(count * 8);
-  loader.writeF64Array(data, dataPtr);
-
-  return instance.exports.sumF64(dataPtr, count);
+  const dataPtr = loader.resolveDataPtr(data, 8);
+  return instance.exports.sumF64(dataPtr, data.length);
 }
 
 export async function wasmMinI32(data) {
   const { loader, instance } = await getCoreInstance();
   loader.reset();
 
-  const count = data.length;
-  const dataPtr = loader.alloc(count * 4);
-  loader.writeI32Array(data, dataPtr);
-
-  return instance.exports.minI32(dataPtr, count);
+  const dataPtr = loader.resolveDataPtr(data, 4);
+  return instance.exports.minI32(dataPtr, data.length);
 }
 
 export async function wasmMaxI32(data) {
   const { loader, instance } = await getCoreInstance();
   loader.reset();
 
-  const count = data.length;
-  const dataPtr = loader.alloc(count * 4);
-  loader.writeI32Array(data, dataPtr);
-
-  return instance.exports.maxI32(dataPtr, count);
+  const dataPtr = loader.resolveDataPtr(data, 4);
+  return instance.exports.maxI32(dataPtr, data.length);
 }
 
 export async function wasmMinF64(data) {
   const { loader, instance } = await getCoreInstance();
   loader.reset();
 
-  const count = data.length;
-  const dataPtr = loader.alloc(count * 8);
-  loader.writeF64Array(data, dataPtr);
-
-  return instance.exports.minF64(dataPtr, count);
+  const dataPtr = loader.resolveDataPtr(data, 8);
+  return instance.exports.minF64(dataPtr, data.length);
 }
 
 export async function wasmMaxF64(data) {
   const { loader, instance } = await getCoreInstance();
   loader.reset();
 
-  const count = data.length;
-  const dataPtr = loader.alloc(count * 8);
-  loader.writeF64Array(data, dataPtr);
-
-  return instance.exports.maxF64(dataPtr, count);
+  const dataPtr = loader.resolveDataPtr(data, 8);
+  return instance.exports.maxF64(dataPtr, data.length);
 }

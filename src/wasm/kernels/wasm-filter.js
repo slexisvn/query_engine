@@ -14,17 +14,11 @@ export async function wasmFilterEqI32(data, value) {
   loader.reset();
 
   const count = data.length;
-  const dataPtr = loader.alloc(count * 4);
+  const dataPtr = loader.resolveDataPtr(data, 4);
   const selVecPtr = loader.alloc(count * 4);
 
-  loader.writeI32Array(data, dataPtr);
-
   const matchCount = instance.exports.filterEqI32(dataPtr, selVecPtr, count, value);
-  const result = new Uint32Array(matchCount);
-  const selView = loader.readI32Array(selVecPtr, matchCount);
-  for (let i = 0; i < matchCount; i++) result[i] = selView[i];
-
-  return result;
+  return loader.readU32Array(selVecPtr, matchCount);
 }
 
 export async function wasmFilterLtI32(data, value) {
@@ -32,17 +26,11 @@ export async function wasmFilterLtI32(data, value) {
   loader.reset();
 
   const count = data.length;
-  const dataPtr = loader.alloc(count * 4);
+  const dataPtr = loader.resolveDataPtr(data, 4);
   const selVecPtr = loader.alloc(count * 4);
 
-  loader.writeI32Array(data, dataPtr);
-
   const matchCount = instance.exports.filterLtI32(dataPtr, selVecPtr, count, value);
-  const result = new Uint32Array(matchCount);
-  const selView = loader.readI32Array(selVecPtr, matchCount);
-  for (let i = 0; i < matchCount; i++) result[i] = selView[i];
-
-  return result;
+  return loader.readU32Array(selVecPtr, matchCount);
 }
 
 export async function wasmFilterGtI32(data, value) {
@@ -50,17 +38,11 @@ export async function wasmFilterGtI32(data, value) {
   loader.reset();
 
   const count = data.length;
-  const dataPtr = loader.alloc(count * 4);
+  const dataPtr = loader.resolveDataPtr(data, 4);
   const selVecPtr = loader.alloc(count * 4);
 
-  loader.writeI32Array(data, dataPtr);
-
   const matchCount = instance.exports.filterGtI32(dataPtr, selVecPtr, count, value);
-  const result = new Uint32Array(matchCount);
-  const selView = loader.readI32Array(selVecPtr, matchCount);
-  for (let i = 0; i < matchCount; i++) result[i] = selView[i];
-
-  return result;
+  return loader.readU32Array(selVecPtr, matchCount);
 }
 
 export async function wasmFilterBetweenI32(data, low, high) {
@@ -68,26 +50,17 @@ export async function wasmFilterBetweenI32(data, low, high) {
   loader.reset();
 
   const count = data.length;
-  const dataPtr = loader.alloc(count * 4);
+  const dataPtr = loader.resolveDataPtr(data, 4);
   const selVecPtr = loader.alloc(count * 4);
 
-  loader.writeI32Array(data, dataPtr);
-
   const matchCount = instance.exports.filterBetweenI32(dataPtr, selVecPtr, count, low, high);
-  const result = new Uint32Array(matchCount);
-  const selView = loader.readI32Array(selVecPtr, matchCount);
-  for (let i = 0; i < matchCount; i++) result[i] = selView[i];
-
-  return result;
+  return loader.readU32Array(selVecPtr, matchCount);
 }
 
 export async function wasmSumF64(data) {
   const { loader, instance } = await getCoreInstance();
   loader.reset();
 
-  const count = data.length;
-  const dataPtr = loader.alloc(count * 8);
-  loader.writeF64Array(data, dataPtr);
-
-  return instance.exports.sumF64(dataPtr, count);
+  const dataPtr = loader.resolveDataPtr(data, 8);
+  return instance.exports.sumF64(dataPtr, data.length);
 }

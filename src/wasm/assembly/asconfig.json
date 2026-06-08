@@ -7,11 +7,12 @@
       "optimizeLevel": 3,
       "shrinkLevel": 1,
       "noAssert": true,
-      "enable": ["simd"]
+      "enable": ["simd", "threads"],
+      "importMemory": true
     }
   },
   "options": {
     "runtime": "stub"
   },
-  "entries": ["./filter.ts", "./filter-f64.ts", "./aggregate.ts", "./arithmetic.ts"]
+  "entries": ["./filter.ts", "./filter-f64.ts", "./aggregate.ts", "./arithmetic.ts", "./compound-filter.ts", "./gather-aggregate.ts"]
 }

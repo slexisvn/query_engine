@@ -30,6 +30,19 @@ export class QueryExecutor {
     this.tempManager = tempManager;
     this.cteResults = new Map();
     this.cteDefinitions = new Map();
+    this.workerPool = null;
+    this.parallelDispatch = null;
+  }
+
+  setParallelContext(workerPool, parallelDispatch) {
+    this.workerPool = workerPool;
+    this.parallelDispatch = parallelDispatch;
+  }
+
+  _shouldParallelize(storage) {
+    return this.workerPool
+      && this.parallelDispatch
+      && storage.rowCount() >= Config.parallelThreshold;
   }
 
   async execute(logicalPlan, outputColumns, streaming = false) {
@@ -114,11 +127,14 @@ export class QueryExecutor {
     const finalSchema = outputSchema.map(c => ({ ...c, tableAlias: node.alias || node.table }));
     const columnMapping = this.buildSchemaMapping(finalSchema, node.alias || node.table);
 
+    const useParallel = this._shouldParallelize(storage);
+
     return {
       schema: finalSchema,
       columnMapping,
       register: (graph, currentPipelineId, currentSink) => {
         const scanOp = new ScanOperator(storage, projectedColumns);
+
         graph.setSource(currentPipelineId, async function* () {
           for await (const chunk of scanOp.scan()) {
             if (currentSink.cancelToken?.isCancelled) break;
@@ -182,12 +198,13 @@ export class QueryExecutor {
   async buildFilter(node) {
     const child = await this.buildPipeline(node.children[0]);
     const evalFn = compileExpression(node.condition, child.columnMapping);
+    const parallelDispatch = this.parallelDispatch;
 
     return {
       schema: child.schema,
       columnMapping: child.columnMapping,
       register: (graph, currentPipelineId, currentSink) => {
-        const filterOp = new FilterOperator(node.condition, evalFn, child.columnMapping);
+        const filterOp = new FilterOperator(node.condition, evalFn, child.columnMapping, parallelDispatch);
         const childSink = {
           get cancelToken() { return currentSink.cancelToken; },
           async consume(chunk) {
@@ -222,7 +239,7 @@ export class QueryExecutor {
       schema,
       columnMapping,
       register: (graph, currentPipelineId, currentSink) => {
-        const projOp = new ProjectionOperator(node.expressions, evaluators, resultTypes, child.columnMapping);
+        const projOp = new ProjectionOperator(node.expressions, evaluators, resultTypes, child.columnMapping, this.parallelDispatch);
         const childSink = {
           get cancelToken() { return currentSink.cancelToken; },
           async consume(chunk) {
@@ -612,7 +629,7 @@ export class QueryExecutor {
     return {
       schema, columnMapping,
       register: (graph, currentPipelineId, currentSink) => {
-        const aggOp = new HashAggregateOperator(groupByEvals, groupByTypes, aggDefs);
+        const aggOp = new HashAggregateOperator(groupByEvals, groupByTypes, aggDefs, this.parallelDispatch);
         const aggSink = {
           async consume(chunk) { await aggOp.consume(chunk); },
           async finalize() {} 

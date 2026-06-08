@@ -319,4 +319,51 @@ export class QueryEngine {
       this.wasmEnabled = false;
     }
   }
+
+  async enableParallel() {
+    const { Config } = await import('./config.js');
+    if (Config.parallelWorkers <= 1) return false;
+
+    try {
+      const { getGlobalLoader } = await import('./wasm/loader.js');
+      const loader = await getGlobalLoader({ shared: true });
+      const instance = await loader.loadModule('core');
+
+      const regionAllocator = loader.initRegions(Config.regionSize);
+
+      const { registerAllKernels } = await import('./wasm/register-kernels.js');
+      registerAllKernels();
+      this.wasmEnabled = true;
+
+      const wasmModule = loader.getModule('core');
+      const { WorkerPool } = await import('./parallel/worker-pool.js');
+      const pool = new WorkerPool({
+        maxWorkers: Config.parallelWorkers,
+        wasmModule,
+        wasmMemory: loader.memory,
+        regionAllocator,
+      });
+      await pool.init();
+
+      const { globalDispatch } = await import('./wasm/dispatch.js');
+      const { ParallelDispatch } = await import('./parallel/parallel-dispatch.js');
+      const parallelDispatch = new ParallelDispatch(pool, regionAllocator, globalDispatch);
+
+      this.executor.setParallelContext(pool, parallelDispatch);
+      this.workerPool = pool;
+      this.parallelEnabled = true;
+      return true;
+    } catch (_) {
+      this.parallelEnabled = false;
+      return false;
+    }
+  }
+
+  async shutdown() {
+    if (this.workerPool) {
+      await this.workerPool.shutdown();
+      this.workerPool = null;
+    }
+    this.tempManager.cleanup();
+  }
 }

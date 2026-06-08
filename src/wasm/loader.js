@@ -1,26 +1,46 @@
 import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { RegionAllocator } from './region-allocator.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WASM_DIR = join(__dirname, '../../build/wasm');
 
 const PAGE_SIZE = 65536;
 const INITIAL_PAGES = 256;
+const MAX_PAGES = 16384;
 
 export class WasmLoader {
   constructor() {
     this.memory = null;
     this.instances = new Map();
+    this.modules = new Map();
+    this.moduleBytes = new Map();
+    this.bumpOffset = 0;
+    this.regionAllocator = null;
+    this.shared = false;
+  }
+
+  async init(options = {}) {
+    this.shared = !!options.shared;
+
+    const memoryDescriptor = {
+      initial: INITIAL_PAGES,
+      maximum: MAX_PAGES,
+    };
+
+    if (this.shared) {
+      memoryDescriptor.shared = true;
+    }
+
+    this.memory = new WebAssembly.Memory(memoryDescriptor);
     this.bumpOffset = 0;
   }
 
-  async init() {
-    this.memory = new WebAssembly.Memory({
-      initial: INITIAL_PAGES,
-      maximum: 1024,
-    });
-    this.bumpOffset = 0;
+  initRegions(regionSize) {
+    if (!this.memory) throw new Error('Memory not initialized — call init() first');
+    this.regionAllocator = new RegionAllocator(this.memory, regionSize);
+    return this.regionAllocator;
   }
 
   async loadModule(name) {
@@ -30,7 +50,10 @@ export class WasmLoader {
 
     const wasmPath = join(WASM_DIR, `${name}.wasm`);
     const buffer = await readFile(wasmPath);
+    this.moduleBytes.set(name, buffer);
+
     const module = await WebAssembly.compile(buffer);
+    this.modules.set(name, module);
 
     const imports = WebAssembly.Module.imports(module);
     const needsMemoryImport = imports.some(i => i.name === 'memory');
@@ -45,6 +68,14 @@ export class WasmLoader {
 
     this.instances.set(name, instance);
     return instance;
+  }
+
+  getModule(name) {
+    return this.modules.get(name) || null;
+  }
+
+  getModuleBytes(name) {
+    return this.moduleBytes.get(name) || null;
   }
 
   alloc(bytes) {
@@ -66,6 +97,30 @@ export class WasmLoader {
 
   getBuffer() {
     return this.memory.buffer;
+  }
+
+  isShared() {
+    return this.shared;
+  }
+
+  isWasmBacked(data) {
+    return data.buffer === this.memory.buffer;
+  }
+
+  allocTypedArray(TypedArrayCtor, length) {
+    if (!this.regionAllocator) return null;
+    const bw = TypedArrayCtor.BYTES_PER_ELEMENT;
+    const ptr = this.regionAllocator.allocData(length * bw);
+    return new TypedArrayCtor(this.memory.buffer, ptr, length);
+  }
+
+  resolveDataPtr(data, byteWidth) {
+    if (this.isWasmBacked(data)) return data.byteOffset;
+    const bytes = data.length * byteWidth;
+    const ptr = this.alloc(bytes);
+    if (byteWidth === 4) this.writeI32Array(data, ptr);
+    else this.writeF64Array(data, ptr);
+    return ptr;
   }
 
   writeI32Array(data, ptr) {
@@ -95,10 +150,14 @@ export class WasmLoader {
 
 let _globalLoader = null;
 
-export async function getGlobalLoader() {
+export async function getGlobalLoader(options = {}) {
   if (!_globalLoader) {
     _globalLoader = new WasmLoader();
-    await _globalLoader.init();
+    await _globalLoader.init(options);
   }
   return _globalLoader;
+}
+
+export function resetGlobalLoader() {
+  _globalLoader = null;
 }

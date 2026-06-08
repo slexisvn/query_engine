@@ -3,25 +3,40 @@ import { DataChunk, DEFAULT_CHUNK_SIZE } from '../../storage/chunk.js';
 import { DataType } from '../../storage/data-type.js';
 import { globalDispatch } from '../../wasm/dispatch.js';
 import { isVectorizableExpr, evalVectorized } from '../wasm-expr-eval.js';
+import { Config } from '../../config.js';
 
 export class HashAggregateOperator {
-  constructor(groupByExtractors, groupByTypes, aggregateDefs) {
+  constructor(groupByExtractors, groupByTypes, aggregateDefs, parallelDispatch) {
     this.groupByExtractors = groupByExtractors;
     this.groupByTypes = groupByTypes;
     this.aggregateDefs = aggregateDefs;
     this.hasCachedValues = aggregateDefs.some(def => def.valueKey);
     this.groups = new Map();
     this.groupKeys = [];
+    this.parallelDispatch = parallelDispatch || null;
+    this._parallelPlan = undefined;
+    this._columnChunks = null;
+    this._bufferedCount = 0;
   }
 
   async init() {}
 
   async consume(chunk) {
-    if (globalDispatch && globalDispatch.kernels.size > 0
-        && this.groupByExtractors.length === 0
-        && chunk.size > 0) {
-      const wasmHandled = await this._tryWasmUngrouped(chunk);
-      if (wasmHandled) return;
+    if (this.groupByExtractors.length === 0 && chunk.size > 0) {
+      if (this.parallelDispatch && this._parallelPlan !== null) {
+        if (this._parallelPlan === undefined) {
+          this._parallelPlan = this._buildParallelPlan();
+        }
+        if (this._parallelPlan) {
+          this._bufferChunk(chunk);
+          return;
+        }
+      }
+
+      if (globalDispatch && globalDispatch.kernels.size > 0) {
+        const wasmHandled = await this._tryWasmUngrouped(chunk);
+        if (wasmHandled) return;
+      }
     }
 
     const size = chunk.size;
@@ -92,6 +107,159 @@ export class HashAggregateOperator {
         group.accumulators[a].add(aggVals[a][i]);
       }
     }
+  }
+
+  _buildParallelPlan() {
+    const entries = [];
+    for (const def of this.aggregateDefs) {
+      const resolved = this._resolveWasmAggKernel(def);
+      if (!resolved) return null;
+
+      if (resolved.kind === 'COUNT_STAR') {
+        entries.push({ kind: 'COUNT_STAR' });
+        continue;
+      }
+
+      if (resolved.kind === 'COUNT') {
+        if (def._wasmColIndex === undefined || def._wasmColIndex === null) return null;
+        entries.push({ kind: 'COUNT', colIndex: def._wasmColIndex });
+        continue;
+      }
+
+      const colIndex = def._wasmColIndex;
+      if (colIndex === undefined || colIndex === null) return null;
+
+      entries.push({
+        kind: resolved.kind,
+        aggType: resolved.kind.toLowerCase(),
+        dataType: resolved.dataType,
+        colIndex,
+      });
+    }
+    return entries;
+  }
+
+  _bufferChunk(chunk) {
+    if (!this._columnChunks) {
+      this._columnChunks = this._parallelPlan.map(() => []);
+    }
+
+    for (let a = 0; a < this._parallelPlan.length; a++) {
+      const p = this._parallelPlan[a];
+      if (p.kind === 'COUNT_STAR' || p.kind === 'COUNT') continue;
+
+      const column = chunk.columns[p.colIndex];
+      if (column?.data) {
+        this._columnChunks[a].push(column.data.subarray(0, chunk.size));
+      }
+    }
+    this._bufferedCount += chunk.size;
+  }
+
+  async finalize() {
+    if (this._parallelPlan && this._bufferedCount > 0) {
+      const result = await this._finalizeParallel();
+      if (result) return result;
+    }
+
+    const groupCount = this.groups.size;
+    if (groupCount === 0) {
+      if (this.groupByExtractors.length === 0) {
+        const cols = this.aggregateDefs.map(def => {
+          const col = new Column(def.resultType, 1);
+          const acc = def.createAccumulator();
+          col.set(0, acc.result());
+          col.length = 1;
+          return col;
+        });
+        return [new DataChunk(cols, 1)];
+      }
+      return [];
+    }
+
+    const groupByCount = this.groupByExtractors.length;
+    const aggCount = this.aggregateDefs.length;
+    const totalCols = groupByCount + aggCount;
+    const chunks = [];
+
+    const allGroups = Array.from(this.groups.values());
+    for (let start = 0; start < allGroups.length; start += DEFAULT_CHUNK_SIZE) {
+      const end = Math.min(start + DEFAULT_CHUNK_SIZE, allGroups.length);
+      const batchSize = end - start;
+
+      const columns = new Array(totalCols);
+      for (let g = 0; g < groupByCount; g++) {
+        columns[g] = new Column(this.groupByTypes[g] || DataType.VARCHAR, batchSize);
+      }
+      for (let a = 0; a < aggCount; a++) {
+        columns[groupByCount + a] = new Column(this.aggregateDefs[a].resultType, batchSize);
+      }
+
+      for (let r = 0; r < batchSize; r++) {
+        const group = allGroups[start + r];
+        for (let g = 0; g < groupByCount; g++) {
+          const val = group.groupValues[g];
+          columns[g].set(r, typeof val === 'bigint' ? Number(val) : val);
+        }
+        for (let a = 0; a < aggCount; a++) {
+          columns[groupByCount + a].set(r, group.accumulators[a].result());
+        }
+      }
+
+      for (const col of columns) col.length = batchSize;
+      chunks.push(new DataChunk(columns, batchSize));
+    }
+
+    return chunks;
+  }
+
+  async _finalizeParallel() {
+    if (this._bufferedCount < Config.parallelThreshold) return null;
+
+    const results = new Array(this._parallelPlan.length);
+
+    for (let a = 0; a < this._parallelPlan.length; a++) {
+      const p = this._parallelPlan[a];
+
+      if (p.kind === 'COUNT_STAR' || p.kind === 'COUNT') {
+        results[a] = this._bufferedCount;
+        continue;
+      }
+
+      const chunks = this._columnChunks[a];
+      if (!chunks || chunks.length === 0) return null;
+
+      const Ctor = p.dataType === 'FLOAT64' ? Float64Array : Int32Array;
+      const totalLen = chunks.reduce((s, c) => s + c.length, 0);
+      const concatenated = new Ctor(totalLen);
+      let offset = 0;
+      for (const c of chunks) {
+        concatenated.set(c, offset);
+        offset += c.length;
+      }
+
+      if (p.kind === 'AVG') {
+        const aggResult = await this.parallelDispatch.aggregateParallel(
+          concatenated, totalLen, 'sum', p.dataType
+        );
+        if (!aggResult) return null;
+        results[a] = aggResult.result / totalLen;
+      } else {
+        const aggResult = await this.parallelDispatch.aggregateParallel(
+          concatenated, totalLen, p.aggType, p.dataType
+        );
+        if (!aggResult) return null;
+        results[a] = aggResult.result;
+      }
+    }
+
+    const cols = this.aggregateDefs.map((def, i) => {
+      const col = new Column(def.resultType, 1);
+      col.set(0, results[i]);
+      col.length = 1;
+      return col;
+    });
+    return [new DataChunk(cols, 1)];
   }
 
   _resolveWasmAggKernel(def) {
@@ -215,58 +383,6 @@ export class HashAggregateOperator {
     }
 
     return true;
-  }
-
-  async finalize() {
-    const groupCount = this.groups.size;
-    if (groupCount === 0) {
-      if (this.groupByExtractors.length === 0) {
-        const cols = this.aggregateDefs.map(def => {
-          const col = new Column(def.resultType, 1);
-          const acc = def.createAccumulator();
-          col.set(0, acc.result());
-          col.length = 1;
-          return col;
-        });
-        return [new DataChunk(cols, 1)];
-      }
-      return [];
-    }
-
-    const groupByCount = this.groupByExtractors.length;
-    const aggCount = this.aggregateDefs.length;
-    const totalCols = groupByCount + aggCount;
-    const chunks = [];
-
-    const allGroups = Array.from(this.groups.values());
-    for (let start = 0; start < allGroups.length; start += DEFAULT_CHUNK_SIZE) {
-      const end = Math.min(start + DEFAULT_CHUNK_SIZE, allGroups.length);
-      const batchSize = end - start;
-
-      const columns = new Array(totalCols);
-      for (let g = 0; g < groupByCount; g++) {
-        columns[g] = new Column(this.groupByTypes[g] || DataType.VARCHAR, batchSize);
-      }
-      for (let a = 0; a < aggCount; a++) {
-        columns[groupByCount + a] = new Column(this.aggregateDefs[a].resultType, batchSize);
-      }
-
-      for (let r = 0; r < batchSize; r++) {
-        const group = allGroups[start + r];
-        for (let g = 0; g < groupByCount; g++) {
-          const val = group.groupValues[g];
-          columns[g].set(r, typeof val === 'bigint' ? Number(val) : val);
-        }
-        for (let a = 0; a < aggCount; a++) {
-          columns[groupByCount + a].set(r, group.accumulators[a].result());
-        }
-      }
-
-      for (const col of columns) col.length = batchSize;
-      chunks.push(new DataChunk(columns, batchSize));
-    }
-
-    return chunks;
   }
 }
 
