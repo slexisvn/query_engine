@@ -3,6 +3,7 @@ export class Catalog {
     this.tables = new Map();
     this.tableStorage = new Map();
     this.indexes = new Map();
+    this.partitionInfo = new Map();
   }
 
   registerTable(name, schema, options = {}) {
@@ -76,5 +77,13 @@ export class Catalog {
       if (entry.tableName === upper) result.push(entry);
     }
     return result;
+  }
+
+  registerPartitionInfo(tableName, strategy, partitionCount, partitionKey) {
+    this.partitionInfo.set(tableName.toUpperCase(), { strategy, partitionCount, partitionKey });
+  }
+
+  getPartitionInfo(tableName) {
+    return this.partitionInfo.get(tableName.toUpperCase()) || null;
   }
 }

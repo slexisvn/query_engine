@@ -29,13 +29,18 @@ export class CSVLoader extends DataLoader {
     return resolved;
   }
 
-  async load(engine, filePath) {
+  async load(engine, filePath, options = {}) {
     const resolvedPath = this.validatePath(filePath);
+    const partitionIndex = options.partitionIndex ?? null;
+    const partitionCount = options.partitionCount ?? null;
+    const usePartitionFilter = partitionIndex !== null && partitionCount !== null;
+
     return new Promise((resolve, reject) => {
       const tableName = path.basename(resolvedPath, path.extname(resolvedPath)).toUpperCase();
       let schema = null;
       let table = null;
       let batch = [];
+      let rowIndex = 0;
 
       const flushBatch = async () => {
         if (batch.length === 0) return;
@@ -52,6 +57,12 @@ export class CSVLoader extends DataLoader {
           table = new Table(tableName, schema, bufferPath);
           this.registerToCatalog(engine, tableName, schema, table);
         }
+
+        const currentRow = rowIndex++;
+        if (usePartitionFilter && (currentRow % partitionCount) !== partitionIndex) {
+          return;
+        }
+
         batch.push(this.convertRow(data, schema));
         if (batch.length >= DEFAULT_CHUNK_SIZE) {
           stream.pause();

@@ -442,6 +442,8 @@ export function getAccumulatorFactory(name, distinct = false) {
     case 'COUNT': return () => new CountAccumulator();
     case 'COUNT_STAR': return () => new CountStarAccumulator();
     case 'AVG': return () => new AvgAccumulator();
+    case 'AVG_PARTIAL': return () => new AvgAccumulator();
+    case 'AVG_FINAL': return () => new AvgAccumulator();
     case 'MIN': return () => new MinAccumulator();
     case 'MAX': return () => new MaxAccumulator();
     default: throw new Error(`Unknown aggregate: ${name}`);

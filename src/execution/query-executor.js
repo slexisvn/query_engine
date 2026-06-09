@@ -98,6 +98,11 @@ export class QueryExecutor {
       case PlanNodeType.TOP_N: return this.buildTopN(node);
       case PlanNodeType.WINDOW: return this.buildWindow(node);
       case PlanNodeType.EMPTY: return this.buildEmpty(node);
+      case PlanNodeType.EXCHANGE: return this.buildExchange(node);
+      case PlanNodeType.PARTIAL_AGGREGATE: return this.buildPartialAggregate(node);
+      case PlanNodeType.FINAL_AGGREGATE: return this.buildFinalAggregate(node);
+      case PlanNodeType.MERGE_EXCHANGE: return this.buildMergeExchange(node);
+      case PlanNodeType.EXCHANGE_RECEIVE: return this.buildExchangeReceive(node);
       default:
         throw new Error(`Unsupported plan node: ${node.type}`);
     }
@@ -1027,6 +1032,321 @@ export class QueryExecutor {
         });
       }
     };
+  }
+
+  async buildExchange(node) {
+    const child = await this.buildPipeline(node.children[0]);
+
+    if (this._distributedContext) {
+      const { transport, sourceNodes, channelId, exchangeType } = this._distributedContext.getExchangeConfig(node);
+      const isReceiver = this._distributedContext.role === 'receiver';
+
+      if (isReceiver) {
+        const { ExchangeReceiver } = await import('../distributed/execution/exchange-operator.js');
+        const receiver = new ExchangeReceiver(transport, sourceNodes, { channelId });
+        await receiver.init();
+
+        return {
+          schema: child.schema,
+          columnMapping: child.columnMapping,
+          register: (graph, currentPipelineId, currentSink) => {
+            graph.setSource(currentPipelineId, async function* () {
+              for await (const chunk of receiver.generate()) {
+                await currentSink.consume(chunk);
+                yield chunk;
+              }
+              receiver.cleanup();
+              if (currentSink.finalize) await currentSink.finalize();
+            });
+          }
+        };
+      }
+
+      const { ExchangeSender } = await import('../distributed/execution/exchange-operator.js');
+      const sender = new ExchangeSender(transport, node._targetNodes || [], {
+        exchangeType: exchangeType || node.exchangeType,
+        channelId,
+        partitionCount: node.partitionCount,
+        keyExtractors: this._buildKeyExtractors(node.partitionKeys, child.columnMapping),
+      });
+
+      return {
+        schema: child.schema,
+        columnMapping: child.columnMapping,
+        register: (graph, currentPipelineId, currentSink) => {
+          const childSink = {
+            get cancelToken() { return currentSink.cancelToken; },
+            async consume(chunk) {
+              await sender.consume(chunk);
+              await currentSink.consume(chunk);
+            },
+            async finalize() {
+              await sender.finalize();
+              if (currentSink.finalize) await currentSink.finalize();
+            }
+          };
+          child.register(graph, currentPipelineId, childSink);
+        }
+      };
+    }
+
+    return {
+      schema: child.schema,
+      columnMapping: child.columnMapping,
+      register: (graph, currentPipelineId, currentSink) => {
+        child.register(graph, currentPipelineId, currentSink);
+      }
+    };
+  }
+
+  async buildPartialAggregate(node) {
+    const child = await this.buildPipeline(node.children[0]);
+
+    const groupByEvals = (node.groupBy || []).map(expr =>
+      compileExpression(expr, child.columnMapping)
+    );
+    const groupByTypes = (node.groupBy || []).map(expr =>
+      this.normalizeExecType(expr?.dataType || expr?.resultType || 'VARCHAR')
+    );
+
+    const aggDefs = node.aggregates.map(agg => {
+      const valueExtractor = agg.args && agg.args.length > 0
+        ? compileExpression(agg.args[0], child.columnMapping)
+        : () => 1;
+
+      return {
+        name: agg.func || agg.name,
+        resultType: this.normalizeAggResultType(agg),
+        createAccumulator: getAccumulatorFactory(agg.func || agg.name, agg.distinct),
+        extractValue: (chunk, rowIdx) => {
+          const val = valueExtractor(chunk, rowIdx);
+          return typeof val === 'bigint' ? Number(val) : val;
+        },
+      };
+    });
+
+    const schema = [
+      ...(node.groupBy || []).map((expr, i) => ({
+        name: expr?.columnName || `group${i}`,
+        dataType: groupByTypes[i],
+        tableAlias: expr?.tableAlias || '',
+      })),
+      ...node.aggregates.map(agg => ({
+        name: (agg.func || agg.name || '').toLowerCase(),
+        dataType: this.normalizeAggResultType(agg),
+        tableAlias: '',
+      })),
+    ];
+
+    const columnMapping = new Map();
+    let idx = 0;
+    for (const col of schema) {
+      const key = col.tableAlias
+        ? `${col.tableAlias}.${col.name}`.toUpperCase()
+        : col.name.toUpperCase();
+      columnMapping.set(key, idx);
+      columnMapping.set(col.name.toUpperCase(), idx);
+      idx++;
+    }
+
+    const groupByCount = (node.groupBy || []).length;
+    for (let a = 0; a < node.aggregates.length; a++) {
+      const agg = node.aggregates[a];
+      const key = aggExprKey(agg);
+      columnMapping.set(key, groupByCount + a);
+    }
+
+    return {
+      schema, columnMapping,
+      register: (graph, currentPipelineId, currentSink) => {
+        const aggOp = new HashAggregateOperator(groupByEvals, groupByTypes, aggDefs);
+        const aggSink = {
+          async consume(chunk) { await aggOp.consume(chunk); },
+          async finalize() {}
+        };
+        const childPipelineId = graph.createPipeline(aggSink);
+        child.register(graph, childPipelineId, aggSink);
+
+        graph.addDependency(currentPipelineId, childPipelineId);
+
+        graph.setSource(currentPipelineId, async function* () {
+          const resultChunks = await aggOp.finalize();
+          for (const chunk of resultChunks) {
+            await currentSink.consume(chunk);
+            yield chunk;
+          }
+          if (currentSink.finalize) await currentSink.finalize();
+        });
+      }
+    };
+  }
+
+  async buildFinalAggregate(node) {
+    const child = await this.buildPipeline(node.children[0]);
+
+    const groupByCount = (node.groupBy || []).length;
+    const groupByEvals = (node.groupBy || []).map((_expr, i) => {
+      const colIdx = i;
+      return (chunk, rowIdx) => chunk.columns[colIdx]?.get(rowIdx);
+    });
+    const groupByTypes = (node.groupBy || []).map(expr =>
+      this.normalizeExecType(expr?.dataType || expr?.resultType || 'VARCHAR')
+    );
+
+    const finalAggs = node.aggregates;
+    const aggDefs = finalAggs.map((agg, aggIdx) => {
+      const funcName = (agg.func || agg.name || '').toUpperCase();
+      const partialColIdx = groupByCount + aggIdx;
+
+      return {
+        name: funcName === 'AVG_FINAL' ? 'AVG' : funcName,
+        resultType: this.normalizeAggResultType(agg),
+        createAccumulator: getAccumulatorFactory(funcName, false),
+        extractValue: (chunk, rowIdx) => {
+          const val = chunk.columns[partialColIdx]?.get(rowIdx);
+          return typeof val === 'bigint' ? Number(val) : val;
+        },
+      };
+    });
+
+    const schema = [
+      ...(node.groupBy || []).map((expr, i) => ({
+        name: expr?.columnName || `group${i}`,
+        dataType: groupByTypes[i],
+        tableAlias: expr?.tableAlias || '',
+      })),
+      ...finalAggs.map(agg => ({
+        name: (agg.name || agg.func || '').toLowerCase(),
+        dataType: this.normalizeAggResultType(agg),
+        tableAlias: '',
+      })),
+    ];
+
+    const columnMapping = new Map();
+    let idx = 0;
+    for (const col of schema) {
+      const key = col.tableAlias
+        ? `${col.tableAlias}.${col.name}`.toUpperCase()
+        : col.name.toUpperCase();
+      columnMapping.set(key, idx);
+      columnMapping.set(col.name.toUpperCase(), idx);
+      idx++;
+    }
+
+    for (let a = 0; a < finalAggs.length; a++) {
+      const agg = finalAggs[a];
+      const key = aggExprKey(agg);
+      columnMapping.set(key, groupByCount + a);
+    }
+
+    return {
+      schema, columnMapping,
+      register: (graph, currentPipelineId, currentSink) => {
+        const aggOp = new HashAggregateOperator(groupByEvals, groupByTypes, aggDefs);
+        const aggSink = {
+          async consume(chunk) { await aggOp.consume(chunk); },
+          async finalize() {}
+        };
+        const childPipelineId = graph.createPipeline(aggSink);
+        child.register(graph, childPipelineId, aggSink);
+
+        graph.addDependency(currentPipelineId, childPipelineId);
+
+        graph.setSource(currentPipelineId, async function* () {
+          const resultChunks = await aggOp.finalize();
+          for (const chunk of resultChunks) {
+            await currentSink.consume(chunk);
+            yield chunk;
+          }
+          if (currentSink.finalize) await currentSink.finalize();
+        });
+      }
+    };
+  }
+
+  async buildMergeExchange(node) {
+    const child = await this.buildPipeline(node.children[0]);
+
+    if (this._distributedContext) {
+      const { transport, sourceNodes, channelId } = this._distributedContext.getMergeExchangeConfig(node);
+      const { MergeExchangeOperator } = await import('../distributed/execution/merge-exchange.js');
+      const merge = new MergeExchangeOperator(transport, sourceNodes, {
+        orderKeys: node.orderKeys,
+        limit: node.limit,
+        channelId,
+      });
+      await merge.init();
+
+      return {
+        schema: child.schema,
+        columnMapping: child.columnMapping,
+        register: (graph, currentPipelineId, currentSink) => {
+          graph.setSource(currentPipelineId, async function* () {
+            for await (const chunk of merge.generate()) {
+              await currentSink.consume(chunk);
+              yield chunk;
+            }
+            merge.cleanup();
+            if (currentSink.finalize) await currentSink.finalize();
+          });
+        }
+      };
+    }
+
+    return {
+      schema: child.schema,
+      columnMapping: child.columnMapping,
+      register: (graph, currentPipelineId, currentSink) => {
+        child.register(graph, currentPipelineId, currentSink);
+      }
+    };
+  }
+
+  async buildExchangeReceive(node) {
+    const receivers = this._exchangeReceivers;
+    const fragmentIds = node.sourceFragmentIds || [];
+
+    const matchingReceivers = [];
+    if (receivers) {
+      for (const fid of fragmentIds) {
+        const receiver = receivers.get(fid);
+        if (receiver) matchingReceivers.push(receiver);
+      }
+    }
+
+    const schema = node.schema || [];
+    const columnMapping = new Map();
+
+    return {
+      schema,
+      columnMapping,
+      register: (graph, currentPipelineId, currentSink) => {
+        graph.setSource(currentPipelineId, async function* () {
+          for (const receiver of matchingReceivers) {
+            for await (const chunk of receiver.generate()) {
+              if (chunk && chunk.size > 0) {
+                await currentSink.consume(chunk);
+                yield chunk;
+              }
+            }
+            receiver.cleanup();
+          }
+          if (currentSink.finalize) await currentSink.finalize();
+        });
+      }
+    };
+  }
+
+  setDistributedContext(ctx) {
+    this._distributedContext = ctx;
+  }
+
+  _buildKeyExtractors(partitionKeys, columnMapping) {
+    if (!partitionKeys || partitionKeys.length === 0) return [];
+    return partitionKeys.map(key => {
+      const evalFn = compileExpression(key, columnMapping);
+      return (chunk, rowIdx) => evalFn(chunk, rowIdx);
+    });
   }
 
   buildSchemaMapping(schema, alias) {

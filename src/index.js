@@ -136,6 +136,11 @@ export class QueryEngine {
       if (collected) {
         this.optimizer = this.createOptimizer(collected);
         this._statsCollected = true;
+        if (this._distributedPasses) {
+          for (const { method, args } of this._distributedPasses) {
+            this.optimizer[method](...args);
+          }
+        }
       }
     }
 
@@ -359,10 +364,63 @@ export class QueryEngine {
     }
   }
 
+  async enableDistributed(clusterConfig = {}) {
+    const { NodeDescriptor, NodeRole } = await import('./distributed/cluster/node-descriptor.js');
+    const { ClusterManager } = await import('./distributed/cluster/cluster-manager.js');
+    const { PartitionMap } = await import('./distributed/partition/partition-map.js');
+    const { DistributionAwareJoin } = await import('./distributed/optimizer/distribution-aware-join.js');
+    const { PartialAggregatePass } = await import('./distributed/optimizer/partial-aggregate.js');
+    const { DistributedSortPass } = await import('./distributed/optimizer/distributed-sort.js');
+    const { QueryCoordinator } = await import('./distributed/execution/coordinator.js');
+
+    const localNode = new NodeDescriptor({
+      nodeId: clusterConfig.nodeId || `node-${Date.now()}`,
+      host: clusterConfig.host || '127.0.0.1',
+      port: clusterConfig.port || 9400,
+      role: clusterConfig.role || NodeRole.HYBRID,
+      capacity: clusterConfig.capacity,
+    });
+
+    const clusterManager = new ClusterManager(localNode);
+    const partitionMap = new PartitionMap();
+    const statsMap = this.precomputedStats || new Map();
+
+    this.optimizer.insertPassAfter('PhysicalDesign', new DistributionAwareJoin(partitionMap, statsMap));
+    this.optimizer.registerPass(new PartialAggregatePass());
+    this.optimizer.registerPass(new DistributedSortPass());
+
+    this._distributedPasses = [
+      { method: 'insertPassAfter', args: ['PhysicalDesign', new DistributionAwareJoin(partitionMap, statsMap)] },
+      { method: 'registerPass', args: [new PartialAggregatePass()] },
+      { method: 'registerPass', args: [new DistributedSortPass()] },
+    ];
+
+    let transport = clusterConfig.transport || null;
+    if (!transport) {
+      const { HttpTransport } = await import('./distributed/transport/http-transport.js');
+      transport = new HttpTransport({ port: localNode.port });
+    }
+
+    const coordinator = new QueryCoordinator(this, clusterManager, partitionMap, transport);
+
+    this.distributed = {
+      clusterManager,
+      partitionMap,
+      transport,
+      coordinator,
+      localNode,
+    };
+
+    return coordinator;
+  }
+
   async shutdown() {
     if (this.workerPool) {
       await this.workerPool.shutdown();
       this.workerPool = null;
+    }
+    if (this.distributed?.transport) {
+      await this.distributed.transport.stop();
     }
     this.tempManager.cleanup();
   }

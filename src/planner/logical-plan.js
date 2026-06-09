@@ -16,6 +16,11 @@ export const PlanNodeType = {
   TOP_N: 'TopN',
   INDEX_SCAN: 'IndexScan',
   WINDOW: 'Window',
+  EXCHANGE: 'Exchange',
+  PARTIAL_AGGREGATE: 'PartialAggregate',
+  FINAL_AGGREGATE: 'FinalAggregate',
+  MERGE_EXCHANGE: 'MergeExchange',
+  EXCHANGE_RECEIVE: 'ExchangeReceive',
 };
 
 export const JoinType = {
@@ -136,6 +141,55 @@ export function LogicalMaterialize(child) {
   return { type: PlanNodeType.MATERIALIZE, children: [child] };
 }
 
+export function LogicalExchange(exchangeType, partitionKeys, partitionCount, child) {
+  return {
+    type: PlanNodeType.EXCHANGE,
+    exchangeType,
+    partitionKeys: partitionKeys || [],
+    partitionCount: partitionCount || 0,
+    children: [child],
+  };
+}
+
+export function LogicalPartialAggregate(groupBy, aggregates, child) {
+  return {
+    type: PlanNodeType.PARTIAL_AGGREGATE,
+    groupBy,
+    aggregates,
+    children: [child],
+    physicalStrategy: PhysicalStrategy.HASH,
+  };
+}
+
+export function LogicalFinalAggregate(groupBy, aggregates, partialAggregates, child) {
+  return {
+    type: PlanNodeType.FINAL_AGGREGATE,
+    groupBy,
+    aggregates,
+    partialAggregates,
+    children: [child],
+    physicalStrategy: PhysicalStrategy.HASH,
+  };
+}
+
+export function LogicalMergeExchange(orderKeys, limit, child) {
+  return {
+    type: PlanNodeType.MERGE_EXCHANGE,
+    orderKeys,
+    limit: limit || null,
+    children: [child],
+  };
+}
+
+export function LogicalExchangeReceive(sourceFragmentIds, schema) {
+  return {
+    type: PlanNodeType.EXCHANGE_RECEIVE,
+    sourceFragmentIds,
+    schema: schema || [],
+    children: [],
+  };
+}
+
 export function getChildren(node) {
   return node.children || [];
 }
@@ -175,6 +229,21 @@ export function planToString(node, indent = 0) {
       break;
     case PlanNodeType.INDEX_SCAN:
       str += `(${node.table} using ${node.indexName})`;
+      break;
+    case PlanNodeType.EXCHANGE:
+      str += `(${node.exchangeType})`;
+      break;
+    case PlanNodeType.PARTIAL_AGGREGATE:
+      str += `(partial)`;
+      break;
+    case PlanNodeType.FINAL_AGGREGATE:
+      str += `(final)`;
+      break;
+    case PlanNodeType.MERGE_EXCHANGE:
+      str += `(${node.limit ? `limit=${node.limit}` : 'all'})`;
+      break;
+    case PlanNodeType.EXCHANGE_RECEIVE:
+      str += `(fragments=[${node.sourceFragmentIds.join(',')}])`;
       break;
   }
 
