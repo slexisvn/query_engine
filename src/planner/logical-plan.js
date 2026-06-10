@@ -21,6 +21,7 @@ export const PlanNodeType = {
   FINAL_AGGREGATE: 'FinalAggregate',
   MERGE_EXCHANGE: 'MergeExchange',
   EXCHANGE_RECEIVE: 'ExchangeReceive',
+  SINGLE_ROW: 'SingleRow',
 };
 
 export const JoinType = {
@@ -188,6 +189,10 @@ export function LogicalExchangeReceive(sourceFragmentIds, schema) {
     schema: schema || [],
     children: [],
   };
+}
+
+export function LogicalSingleRow() {
+  return { type: PlanNodeType.SINGLE_ROW, children: [] };
 }
 
 export function getChildren(node) {

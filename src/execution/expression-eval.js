@@ -23,8 +23,8 @@ export function compileExpression(expr, columnMapping) {
 
     case BoundExprKind.UNARY: {
       const operand = compileExpression(expr.operand, columnMapping);
-      if (expr.op === '-') return (c, r) => -operand(c, r);
-      if (expr.op === 'NOT') return (c, r) => !operand(c, r);
+      if (expr.op === '-') return (c, r) => { const v = operand(c, r); return v == null ? null : -v; };
+      if (expr.op === 'NOT') return (c, r) => { const v = operand(c, r); return v == null ? null : !v; };
       return operand;
     }
 
@@ -32,21 +32,41 @@ export function compileExpression(expr, columnMapping) {
       const e = compileExpression(expr.expr, columnMapping);
       const lo = compileExpression(expr.low, columnMapping);
       const hi = compileExpression(expr.high, columnMapping);
-      if (expr.negated) return (c, r) => { const v = e(c, r); return v < lo(c, r) || v > hi(c, r); };
-      return (c, r) => { const v = e(c, r); return v >= lo(c, r) && v <= hi(c, r); };
+      return (c, r) => {
+        const v = e(c, r);
+        if (v == null) return null;
+        const loV = lo(c, r), hiV = hi(c, r);
+        const ge = loV == null ? null : v >= loV;
+        const le = hiV == null ? null : v <= hiV;
+        let res;
+        if (ge === false || le === false) res = false;
+        else if (ge === null || le === null) res = null;
+        else res = true;
+        return expr.negated ? (res === null ? null : !res) : res;
+      };
     }
 
     case BoundExprKind.IN_LIST: {
       const e = compileExpression(expr.expr, columnMapping);
       if (Array.isArray(expr.list)) {
+        const test = (v, has) => {
+          if (v == null) return null;
+          const found = has(v);
+          return found ? true : (found === null ? null : false);
+        };
         if (expr.list.every(i => i.kind === BoundExprKind.LITERAL)) {
-          const values = new Set(expr.list.map(i => normalizeComparable(i.value)));
-          if (expr.negated) return (c, r) => !values.has(normalizeComparable(e(c, r)));
-          return (c, r) => values.has(normalizeComparable(e(c, r)));
+          const litHasNull = expr.list.some(i => i.value === null || i.value === undefined);
+          const values = new Set(expr.list.filter(i => i.value != null).map(i => normalizeComparable(i.value)));
+          const has = (v) => values.has(normalizeComparable(v)) ? true : (litHasNull ? null : false);
+          return (c, r) => { const res = test(e(c, r), has); return expr.negated ? (res === null ? null : !res) : res; };
         }
         const items = expr.list.map(i => compileExpression(i, columnMapping));
-        if (expr.negated) return (c, r) => { const v = e(c, r); return !items.some(i => i(c, r) == v); };
-        return (c, r) => { const v = e(c, r); return items.some(i => i(c, r) == v); };
+        const has = (v, c, r) => {
+          let anyNull = false;
+          for (const i of items) { const iv = i(c, r); if (iv == null) { anyNull = true; continue; } if (iv == v) return true; }
+          return anyNull ? null : false;
+        };
+        return (c, r) => { const v = e(c, r); if (v == null) return null; const found = has(v, c, r); const res = found ? true : (found === null ? null : false); return expr.negated ? (res === null ? null : !res) : res; };
       }
       return () => true;
     }
@@ -59,7 +79,7 @@ export function compileExpression(expr, columnMapping) {
       return (c, r) => {
         const val = e(c, r);
         const pattern = p(c, r);
-        if (val === null || pattern === null) return false;
+        if (val === null || val === undefined || pattern === null || pattern === undefined) return null;
         const patternKey = String(pattern);
         let regex = regexCache.get(patternKey);
         if (!regex) {
@@ -195,14 +215,14 @@ function numOp(a, b, fn) {
 
 function compileBinaryOp(op, left, right) {
   switch (op) {
-    case '=': return (c, r) => { const l = left(c, r), rv = right(c, r); return l !== null && rv !== null && toNum(l) == toNum(rv); };
-    case '<>': return (c, r) => { const l = left(c, r), rv = right(c, r); return l !== null && rv !== null && toNum(l) != toNum(rv); };
-    case '<': return (c, r) => { const l = left(c, r), rv = right(c, r); return l !== null && rv !== null && toNum(l) < toNum(rv); };
-    case '>': return (c, r) => { const l = left(c, r), rv = right(c, r); return l !== null && rv !== null && toNum(l) > toNum(rv); };
-    case '<=': return (c, r) => { const l = left(c, r), rv = right(c, r); return l !== null && rv !== null && toNum(l) <= toNum(rv); };
-    case '>=': return (c, r) => { const l = left(c, r), rv = right(c, r); return l !== null && rv !== null && toNum(l) >= toNum(rv); };
-    case 'AND': return (c, r) => left(c, r) && right(c, r);
-    case 'OR': return (c, r) => left(c, r) || right(c, r);
+    case '=': return (c, r) => { const l = left(c, r), rv = right(c, r); return (l == null || rv == null) ? null : toNum(l) == toNum(rv); };
+    case '<>': return (c, r) => { const l = left(c, r), rv = right(c, r); return (l == null || rv == null) ? null : toNum(l) != toNum(rv); };
+    case '<': return (c, r) => { const l = left(c, r), rv = right(c, r); return (l == null || rv == null) ? null : toNum(l) < toNum(rv); };
+    case '>': return (c, r) => { const l = left(c, r), rv = right(c, r); return (l == null || rv == null) ? null : toNum(l) > toNum(rv); };
+    case '<=': return (c, r) => { const l = left(c, r), rv = right(c, r); return (l == null || rv == null) ? null : toNum(l) <= toNum(rv); };
+    case '>=': return (c, r) => { const l = left(c, r), rv = right(c, r); return (l == null || rv == null) ? null : toNum(l) >= toNum(rv); };
+    case 'AND': return (c, r) => { const l = left(c, r), rv = right(c, r); if (l === false || rv === false) return false; if (l == null || rv == null) return null; return true; };
+    case 'OR': return (c, r) => { const l = left(c, r), rv = right(c, r); if (l === true || rv === true) return true; if (l == null || rv == null) return null; return false; };
     case '+': return (c, r) => {
       const l = left(c, r), rv = right(c, r);
       if (l === null || rv === null) return null;

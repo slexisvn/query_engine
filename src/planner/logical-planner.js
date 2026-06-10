@@ -3,6 +3,12 @@ import { BoundExprKind, BoundColumnRef, collectCorrelatedColumns } from '../bind
 
 let _cteIdCounter = 0;
 
+function projectionExpr(item) {
+  const name = item.alias || item.inferredName;
+  if (!name) return item.expr;
+  return { ...item.expr, outputName: name };
+}
+
 export class LogicalPlanner {
   constructor() {
     this.cteMap = new Map();
@@ -30,6 +36,8 @@ export class LogicalPlanner {
 
     if (bound.plan) {
       node = this.planFrom(bound.plan);
+    } else {
+      node = LP.LogicalSingleRow();
     }
 
     if (bound.where) {
@@ -77,7 +85,7 @@ export class LogicalPlanner {
     }
 
     if (bound.distinct) {
-      const projections = bound.selectItems.map(item => item.expr);
+      const projections = bound.selectItems.map(projectionExpr);
       node = LP.LogicalProject(projections, node);
       node = LP.LogicalDistinct(node);
       if (bound.orderBy) {
@@ -87,7 +95,7 @@ export class LogicalPlanner {
       if (bound.orderBy) {
         node = LP.LogicalSort(bound.orderBy, node);
       }
-      const projections = bound.selectItems.map(item => item.expr);
+      const projections = bound.selectItems.map(projectionExpr);
       node = LP.LogicalProject(projections, node);
     }
 

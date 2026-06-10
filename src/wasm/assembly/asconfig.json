@@ -8,7 +8,10 @@
       "shrinkLevel": 1,
       "noAssert": true,
       "enable": ["simd", "threads"],
-      "importMemory": true
+      "importMemory": true,
+      "sharedMemory": true,
+      "initialMemory": 256,
+      "maximumMemory": 16384
     }
   },
   "options": {

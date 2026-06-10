@@ -3,10 +3,47 @@ import { DataChunk } from '../../storage/chunk.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 import { isVectorizableExpr, evalVectorized } from '../wasm-expr-eval.js';
 import { Config } from '../../config.js';
-import { isFixedWidth } from '../../storage/data-type.js';
+import { setBit, clearBit } from '../../utils/bitmap.js';
 
-const ARITH_OP_MAP = { '+': 'Add', '-': 'Sub', '*': 'Mul', '/': 'Div' };
-const ARITH_OPS = new Set(['+', '-', '*', '/']);
+function resolveColumnIndex(expr, columnMapping) {
+  if (columnMapping) {
+    const key = `${expr.tableAlias}.${expr.columnName}`.toUpperCase();
+    if (columnMapping.has(key)) return columnMapping.get(key);
+    const byName = `${expr.columnName}`.toUpperCase();
+    if (columnMapping.has(byName)) return columnMapping.get(byName);
+  }
+  return expr.columnIndex;
+}
+
+function collectNullableColumns(expr, chunk, columnMapping, acc) {
+  if (!expr || typeof expr !== 'object') return;
+  if (expr.kind === BoundExprKind.COLUMN_REF) {
+    const col = chunk.columns[resolveColumnIndex(expr, columnMapping)];
+    if (col && col.hasNulls) acc.push(col);
+    return;
+  }
+  for (const key of ['left', 'right', 'operand', 'expr']) {
+    if (expr[key]) collectNullableColumns(expr[key], chunk, columnMapping, acc);
+  }
+}
+
+function applyNullMask(col, expr, chunk, columnMapping) {
+  const nullable = [];
+  collectNullableColumns(expr, chunk, columnMapping, nullable);
+  if (nullable.length === 0) return;
+  const size = chunk.size;
+  let hasNull = false;
+  for (let i = 0; i < size; i++) {
+    const row = chunk.activeRowIndex(i);
+    let isNull = false;
+    for (const src of nullable) {
+      if (src.isNull(row)) { isNull = true; break; }
+    }
+    if (isNull) { clearBit(col.nullBitmap, i); hasNull = true; }
+    else setBit(col.nullBitmap, i);
+  }
+  col.hasNulls = hasNull;
+}
 
 async function tryWasmProject(expr, chunk, columnMapping) {
   if (!isVectorizableExpr(expr)) return null;
@@ -18,6 +55,7 @@ async function tryWasmProject(expr, chunk, columnMapping) {
   const col = new Column('FLOAT64', chunk.size);
   col.data.set(result);
   col.length = chunk.size;
+  applyNullMask(col, expr, chunk, columnMapping);
   return col;
 }
 
@@ -57,15 +95,7 @@ export class ProjectionOperator {
         }
       }
 
-      if (this.parallelDispatch && this.expressions[e] && !needsFlatten) {
-        const parallelCol = await this._tryParallelProject(this.expressions[e], chunk);
-        if (parallelCol) {
-          outputCols.push(parallelCol);
-          continue;
-        }
-      }
-
-      if (this.expressions[e]) {
+      if (this.expressions[e] && !this.parallelDispatch) {
         const wasmCol = await tryWasmProject(this.expressions[e], chunk, this.columnMapping);
         if (wasmCol) {
           outputCols.push(wasmCol);
@@ -86,86 +116,6 @@ export class ProjectionOperator {
     }
 
     return new DataChunk(outputCols, chunk.size);
-  }
-
-  async _tryParallelProject(expr, chunk) {
-    const plan = this._analyzeProjectExpr(expr, chunk);
-    if (!plan) return null;
-
-    let result;
-    if (plan.kind === 'scalar') {
-      const colData = this._getColData(chunk, plan.colExpr);
-      if (!colData) return null;
-      result = await this.parallelDispatch.projectParallel(
-        colData, chunk.size, plan.op, { scalar: plan.scalar }
-      );
-    } else if (plan.kind === 'vec') {
-      const dataA = this._getColData(chunk, plan.colExprA);
-      const dataB = this._getColData(chunk, plan.colExprB);
-      if (!dataA || !dataB) return null;
-      result = await this.parallelDispatch.projectParallel(
-        dataA, chunk.size, plan.op, { dataB }
-      );
-    } else if (plan.kind === 'unary') {
-      const colData = this._getColData(chunk, plan.colExpr);
-      if (!colData) return null;
-      result = await this.parallelDispatch.projectParallel(
-        colData, chunk.size, plan.op, {}
-      );
-    }
-
-    if (!result) return null;
-
-    const col = new Column('FLOAT64', chunk.size);
-    col.data.set(result);
-    col.length = chunk.size;
-    return col;
-  }
-
-  _analyzeProjectExpr(expr, chunk) {
-    if (!expr || !isVectorizableExpr(expr)) return null;
-    if (chunk.size < Config.parallelThreshold) return null;
-
-    if (expr.kind === BoundExprKind.BINARY && ARITH_OPS.has(expr.op)) {
-      const leftIsCol = expr.left?.kind === BoundExprKind.COLUMN_REF;
-      const rightIsCol = expr.right?.kind === BoundExprKind.COLUMN_REF;
-      const leftIsLit = expr.left?.kind === BoundExprKind.LITERAL;
-      const rightIsLit = expr.right?.kind === BoundExprKind.LITERAL;
-
-      if (leftIsCol && rightIsLit) {
-        if (!isFixedWidth(expr.left.dataType)) return null;
-        return { kind: 'scalar', op: `scalar${ARITH_OP_MAP[expr.op]}F64`, colExpr: expr.left, scalar: Number(expr.right.value) };
-      }
-      if (rightIsCol && leftIsLit) {
-        if (!isFixedWidth(expr.right.dataType)) return null;
-        if (expr.op === '+' || expr.op === '*') {
-          return { kind: 'scalar', op: `scalar${ARITH_OP_MAP[expr.op]}F64`, colExpr: expr.right, scalar: Number(expr.left.value) };
-        }
-        if (expr.op === '-') return { kind: 'scalar', op: 'scalarSubRevF64', colExpr: expr.right, scalar: Number(expr.left.value) };
-        if (expr.op === '/') return { kind: 'scalar', op: 'scalarDivRevF64', colExpr: expr.right, scalar: Number(expr.left.value) };
-      }
-      if (leftIsCol && rightIsCol) {
-        if (!isFixedWidth(expr.left.dataType) || !isFixedWidth(expr.right.dataType)) return null;
-        return { kind: 'vec', op: `vec${ARITH_OP_MAP[expr.op]}F64`, colExprA: expr.left, colExprB: expr.right };
-      }
-    }
-
-    if (expr.kind === BoundExprKind.UNARY && expr.op === '-' && expr.operand?.kind === BoundExprKind.COLUMN_REF) {
-      if (!isFixedWidth(expr.operand.dataType)) return null;
-      return { kind: 'unary', op: 'negF64', colExpr: expr.operand };
-    }
-
-    return null;
-  }
-
-  _getColData(chunk, colExpr) {
-    const idx = this._resolveColIdx(colExpr);
-    if (idx < 0) return null;
-    const col = chunk.columns[idx];
-    if (!col?.data) return null;
-    if (col.dataType === 'FLOAT64') return col.data.subarray(0, chunk.size);
-    if (col.dataType === 'INT32' || col.dataType === 'DATE') return col.data.subarray(0, chunk.size);
-    return null;
   }
 
   _resolveColIdx(expr) {

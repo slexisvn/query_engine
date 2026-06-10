@@ -116,10 +116,10 @@ describe('plan structure', () => {
     expect(proj.children[0].type).toBe(PlanNodeType.SCAN);
   });
 
-  it('SELECT without FROM has null child under Project', () => {
+  it('SELECT without FROM projects over a single-row source', () => {
     const plan = planSQL('SELECT 1 + 2, 3 * 4');
     expect(plan.type).toBe(PlanNodeType.PROJECT);
-    expect(plan.children[0]).toBeNull();
+    expect(plan.children[0].type).toBe(PlanNodeType.SINGLE_ROW);
     expect(plan.expressions[0].op).toBe('+');
     expect(plan.expressions[1].op).toBe('*');
   });

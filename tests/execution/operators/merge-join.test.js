@@ -72,6 +72,43 @@ describe('MergeJoinOperator', () => {
     });
   });
 
+  describe('NULL keys never match (SQL semantics)', () => {
+    it('INNER: null keys do not match null or any value', async () => {
+      const rows = await merge(
+        [{ type: 'INT32', values: [1, null] }, { type: 'VARCHAR', values: ['a', 'n'] }],
+        [{ type: 'INT32', values: [1, null] }, { type: 'VARCHAR', values: ['x', 'm'] }],
+        JoinType.INNER
+      );
+      expect(rows.length).toBe(1);
+      expect(rows[0][0]).toBe(1);
+      expect(rows[0][3]).toBe('x');
+    });
+
+    it('LEFT: null-keyed build row is emitted unmatched', async () => {
+      const rows = await merge(
+        [{ type: 'INT32', values: [1, null] }, { type: 'VARCHAR', values: ['a', 'n'] }],
+        [{ type: 'INT32', values: [1] }, { type: 'VARCHAR', values: ['x'] }],
+        JoinType.LEFT
+      );
+      expect(rows.length).toBe(2);
+      const nullRow = rows.find(r => r[0] === null);
+      expect(nullRow[1]).toBe('n');
+      expect(nullRow[3]).toBe(null);
+    });
+
+    it('RIGHT: null-keyed probe row is emitted unmatched', async () => {
+      const rows = await merge(
+        [{ type: 'INT32', values: [1] }, { type: 'VARCHAR', values: ['a'] }],
+        [{ type: 'INT32', values: [1, null] }, { type: 'VARCHAR', values: ['x', 'm'] }],
+        JoinType.RIGHT
+      );
+      expect(rows.length).toBe(2);
+      const nullRow = rows.find(r => r[2] === null);
+      expect(nullRow[3]).toBe('m');
+      expect(nullRow[0]).toBe(null);
+    });
+  });
+
   describe('LEFT JOIN', () => {
     it('keeps unmatched build rows with null probe columns', async () => {
       const rows = await merge(
@@ -387,6 +424,37 @@ describe('MergeJoinOperator', () => {
       expect(rows[0]).toEqual([1, 'a', true]);
       expect(rows[1]).toEqual([2, 'b', false]);
       expect(rows[2]).toEqual([3, 'c', true]);
+    });
+
+    it('marks NULL (not false) for an unmatched probe when the build side has a NULL key (3VL for NOT IN)', async () => {
+      const rows = await merge(
+        [{ type: 'INT32', values: [1, null] }],
+        [{ type: 'INT32', values: [1, 3] }, { type: 'VARCHAR', values: ['m', 'u'] }],
+        JoinType.MARK
+      );
+      const matched = rows.find(r => r[0] === 1);
+      const unmatched = rows.find(r => r[0] === 3);
+      expect(matched[2]).toBe(true);
+      expect(unmatched[2]).toBe(null);
+    });
+
+    it('marks NULL for a NULL probe value (3VL)', async () => {
+      const rows = await merge(
+        [{ type: 'INT32', values: [1] }],
+        [{ type: 'INT32', values: [null] }, { type: 'VARCHAR', values: ['n'] }],
+        JoinType.MARK
+      );
+      expect(rows.length).toBe(1);
+      expect(rows[0][2]).toBe(null);
+    });
+
+    it('marks false for an unmatched probe when the build side has no NULL key', async () => {
+      const rows = await merge(
+        [{ type: 'INT32', values: [1] }],
+        [{ type: 'INT32', values: [3] }, { type: 'VARCHAR', values: ['u'] }],
+        JoinType.MARK
+      );
+      expect(rows[0][2]).toBe(false);
     });
 
     it('output has probeColCount + 1 columns with BOOLEAN mark column', async () => {

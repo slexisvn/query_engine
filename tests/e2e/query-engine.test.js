@@ -1,9 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { Catalog } from '../../src/catalog/catalog.js';
 import { QueryEngine } from '../../src/index.js';
 import { Column } from '../../src/storage/column.js';
 import { DataChunk } from '../../src/storage/chunk.js';
 import { timestampToEpochMs } from '../../src/storage/data-type.js';
+import { Config } from '../../src/config.js';
 
 function makeChunk(colDefs) {
   const size = colDefs[0].values.length;
@@ -467,6 +468,453 @@ describe('QueryEngine', () => {
       for (const row of result.rows) {
         expect(row.max_sal).toBe(120);
       }
+      engine.close();
+    });
+  });
+
+  describe('join over renamed subquery projections (regression)', () => {
+    const SA = [{ name: 'id', dataType: 'INT32' }, { name: 'name', dataType: 'VARCHAR' }];
+    const SB = [{ name: 'id', dataType: 'INT32' }, { name: 'score', dataType: 'INT32' }];
+
+    function engineWith(bIds, bScores) {
+      const catalog = new Catalog();
+      registerMockTable(catalog, 'A', SA, [makeChunk([
+        { type: 'INT32', values: [1, 2] },
+        { type: 'VARCHAR', values: ['a', 'b'] },
+      ])]);
+      registerMockTable(catalog, 'B', SB, [makeChunk([
+        { type: 'INT32', values: bIds },
+        { type: 'INT32', values: bScores },
+      ])]);
+      return new QueryEngine(catalog);
+    }
+
+    it('INNER join over renamed projections returns correct, non-duplicated rows', async () => {
+      const engine = engineWith([1, 2], [10, 20]);
+      const result = await engine.run(
+        'SELECT x.k, x.nm, y.sc FROM (SELECT id AS k, name AS nm FROM A) x '
+        + 'JOIN (SELECT id AS k2, score AS sc FROM B) y ON x.k = y.k2 ORDER BY x.k'
+      );
+      expect(result.rows).toEqual([
+        { k: 1, nm: 'a', sc: 10 },
+        { k: 2, nm: 'b', sc: 20 },
+      ]);
+      engine.close();
+    });
+
+    it('LEFT join over renamed projections is not eliminated and keeps right columns', async () => {
+      const engine = engineWith([1], [10]);
+      const result = await engine.run(
+        'SELECT lid, lname, rscore FROM (SELECT id AS lid, name AS lname FROM A) x '
+        + 'LEFT JOIN (SELECT id AS rid, score AS rscore FROM B) y ON lid = rid ORDER BY lid'
+      );
+      expect(result.rows).toEqual([
+        { lid: 1, lname: 'a', rscore: 10 },
+        { lid: 2, lname: 'b', rscore: null },
+      ]);
+      engine.close();
+    });
+
+    it('SORT over a renaming projection keeps all projected columns', async () => {
+      const engine = engineWith([1], [10]);
+      const result = await engine.run(
+        'SELECT k, nm FROM (SELECT id AS k, name AS nm FROM A) x ORDER BY k'
+      );
+      expect(result.rows).toEqual([
+        { k: 1, nm: 'a' },
+        { k: 2, nm: 'b' },
+      ]);
+      engine.close();
+    });
+  });
+
+  describe('SQL three-valued logic (NULL)', () => {
+    function engineWithB() {
+      const schema = [{ name: 'id', dataType: 'INT32' }, { name: 'b', dataType: 'INT32' }];
+      const catalog = new Catalog();
+      registerMockTable(catalog, 'T', schema, [makeChunk([
+        { type: 'INT32', values: [1, 2, 3] },
+        { type: 'INT32', values: [5, null, 0] },
+      ])]);
+      return new QueryEngine(catalog);
+    }
+
+    it('NOT (comparison) with NULL is UNKNOWN, not TRUE', async () => {
+      const engine = engineWithB();
+      const rows = await engine.run('SELECT id FROM T WHERE NOT (b > 1)');
+      expect(rows.rows.map(r => r.id)).toEqual([3]);
+      engine.close();
+    });
+
+    it('NOT IN with NULL operand is UNKNOWN', async () => {
+      const engine = engineWithB();
+      const rows = await engine.run('SELECT id FROM T WHERE b NOT IN (5)');
+      expect(rows.rows.map(r => r.id)).toEqual([3]);
+      engine.close();
+    });
+
+    it('NULL * 0 is NULL (not 0)', async () => {
+      const schema = [{ name: 'id', dataType: 'INT32' }, { name: 'a', dataType: 'INT32' }];
+      const catalog = new Catalog();
+      registerMockTable(catalog, 'T', schema, [makeChunk([
+        { type: 'INT32', values: [1, 2] },
+        { type: 'INT32', values: [4, null] },
+      ])]);
+      const engine = new QueryEngine(catalog);
+      const rows = await engine.run('SELECT id, (a * 0) AS z FROM T');
+      expect(rows.rows).toEqual([{ id: 1, z: 0 }, { id: 2, z: null }]);
+      engine.close();
+    });
+  });
+
+  describe('HAVING with aggregates', () => {
+    it('does not push a HAVING predicate that references an aggregate below the aggregate', async () => {
+      const schema = [{ name: 'g', dataType: 'INT32' }];
+      const catalog = new Catalog();
+      registerMockTable(catalog, 'T', schema, [makeChunk([
+        { type: 'INT32', values: [0, 0, 2, 2] },
+      ])]);
+      const engine = new QueryEngine(catalog);
+      const rows = await engine.run('SELECT g, SUM(g) AS sg FROM T GROUP BY g HAVING SUM(g) < 3');
+      expect(rows.rows).toEqual([{ g: 0, sg: 0 }]);
+      engine.close();
+    });
+  });
+
+  describe('WASM vectorized projection preserves NULL semantics', () => {
+    const savedMin = Config.wasmMinChunkSize;
+    afterEach(() => { Config.wasmMinChunkSize = savedMin; });
+
+    it('arithmetic over a nullable column yields NULL for null rows (matches serial)', async () => {
+      const schema = [{ name: 'id', dataType: 'INT32' }, { name: 'a', dataType: 'INT32' }, { name: 'b', dataType: 'INT32' }];
+      const rows = [[0, 3, 2], [1, null, 5], [2, 4, null], [3, 6, 1]];
+      const make = () => {
+        const catalog = new Catalog();
+        registerMockTable(catalog, 'T', schema, [makeChunk([
+          { type: 'INT32', values: rows.map(r => r[0]) },
+          { type: 'INT32', values: rows.map(r => r[1]) },
+          { type: 'INT32', values: rows.map(r => r[2]) },
+        ])]);
+        return new QueryEngine(catalog);
+      };
+      Config.wasmMinChunkSize = savedMin;
+      const serial = (await make().run('SELECT id, (a * b) + a AS e FROM T ORDER BY id')).rows;
+
+      const engine = make();
+      await engine.enableWasm();
+      Config.wasmMinChunkSize = 1;
+      const wasm = (await engine.run('SELECT id, (a * b) + a AS e FROM T ORDER BY id')).rows;
+      engine.close();
+
+      expect(wasm).toEqual(serial);
+      expect(wasm[1].e).toBe(null);
+      expect(wasm[2].e).toBe(null);
+    });
+  });
+
+  describe('spilling does not change results', () => {
+    const savedLimit = Config.memoryLimit;
+    const savedFlush = Config.flushBatchSize;
+    afterEach(() => { Config.memoryLimit = savedLimit; Config.flushBatchSize = savedFlush; });
+
+    function bigTable() {
+      const ids = [], ks = [], vs = [];
+      for (let i = 0; i < 60; i++) { ids.push(i); ks.push((i * 7) % 9); vs.push((i * 13 + 5) % 40); }
+      const schema = [{ name: 'id', dataType: 'INT32' }, { name: 'k', dataType: 'INT32' }, { name: 'v', dataType: 'INT32' }];
+      const catalog = new Catalog();
+      registerMockTable(catalog, 'A', schema, [makeChunk([
+        { type: 'INT32', values: ids }, { type: 'INT32', values: ks }, { type: 'INT32', values: vs },
+      ])]);
+      return new QueryEngine(catalog);
+    }
+
+    async function run(sql) {
+      const engine = bigTable();
+      const rows = (await engine.run(sql)).rows;
+      engine.close();
+      return rows;
+    }
+
+    for (const sql of [
+      'SELECT k, SUM(v) AS s, COUNT(*) AS c, AVG(v) AS a FROM A GROUP BY k',
+      'SELECT id, v FROM A ORDER BY v ASC, id ASC',
+      'SELECT a.id, b.v AS bv FROM A a JOIN A b ON a.k = b.k',
+    ]) {
+      it(`matches in-memory vs spilled: ${sql.slice(0, 32)}...`, async () => {
+        Config.memoryLimit = savedLimit; Config.flushBatchSize = savedFlush;
+        const inMemory = await run(sql);
+        Config.memoryLimit = 4; Config.flushBatchSize = 2;
+        const spilled = await run(sql);
+        const key = r => JSON.stringify(r);
+        const ordered = sql.includes('ORDER BY');
+        const a = inMemory.map(key); const b = spilled.map(key);
+        expect(b.length).toBe(a.length);
+        expect(ordered ? b : b.sort()).toEqual(ordered ? a : a.sort());
+      });
+    }
+  });
+
+  describe('parallel morsel aggregate matches serial', () => {
+    const savedThreshold = Config.parallelAggThreshold;
+    afterEach(() => { Config.parallelAggThreshold = savedThreshold; });
+
+    function salesEngine() {
+      const cities = [], ages = [], spends = [];
+      for (let i = 0; i < 400; i++) {
+        cities.push(['hanoi', 'saigon', 'hue', 'danang'][i % 4]);
+        ages.push(i % 13 === 0 ? null : 18 + (i % 50));
+        spends.push(i % 17 === 0 ? null : (i * 11) % 500);
+      }
+      const schema = [
+        { name: 'city', dataType: 'VARCHAR' },
+        { name: 'age', dataType: 'INT32' },
+        { name: 'spend', dataType: 'INT32' },
+      ];
+      const catalog = new Catalog();
+      registerMockTable(catalog, 'SALES', schema, [makeChunk([
+        { type: 'VARCHAR', values: cities }, { type: 'INT32', values: ages }, { type: 'INT32', values: spends },
+      ])]);
+      return new QueryEngine(catalog);
+    }
+
+    const queries = [
+      'SELECT city, COUNT(*) AS c, SUM(spend) AS s, AVG(spend) AS a, MIN(age) AS mn, MAX(age) AS mx FROM SALES GROUP BY city',
+      'SELECT city, COUNT(age) AS ca FROM SALES GROUP BY city',
+      'SELECT COUNT(*) AS c, SUM(spend) AS s FROM SALES',
+    ];
+
+    for (const sql of queries) {
+      it(`parallel == serial: ${sql.slice(0, 34)}...`, async () => {
+        const serialEngine = salesEngine();
+        const serial = (await serialEngine.run(sql)).rows;
+        serialEngine.close();
+
+        const parEngine = salesEngine();
+        const enabled = await parEngine.enableParallel();
+        if (!enabled || !parEngine.morselPool) { parEngine.close(); return; }
+        Config.parallelAggThreshold = 0;
+        const parallel = (await parEngine.run(sql)).rows;
+        await parEngine.shutdown();
+
+        const key = r => JSON.stringify(Object.keys(r).sort().map(k => [k, r[k]]));
+        expect(parallel.map(key).sort()).toEqual(serial.map(key).sort());
+      });
+    }
+  });
+
+  describe('WASM/SIMD ungrouped aggregate correctness', () => {
+    function negEngine(aVals, bVals) {
+      const schema = [{ name: 'a', dataType: 'INT32' }, { name: 'b', dataType: 'FLOAT64' }];
+      const catalog = new Catalog();
+      registerMockTable(catalog, 'N', schema, [makeChunk([
+        { type: 'INT32', values: aVals }, { type: 'FLOAT64', values: bVals },
+      ])]);
+      return new QueryEngine(catalog);
+    }
+
+    it('MAX/MIN over all-negative columns (WASM seed bug)', async () => {
+      const engine = negEngine([-3, -7, -1, -9], [-3.5, -7.5, -1.5, -9.5]);
+      const enabled = await engine.enableParallel();
+      const r = (await engine.run('SELECT MAX(a) AS mxa, MIN(a) AS mna, MAX(b) AS mxb, MIN(b) AS mnb FROM N')).rows;
+      if (enabled) await engine.shutdown(); else engine.close();
+      expect(r[0]).toEqual({ mxa: -1, mna: -9, mxb: -1.5, mnb: -9.5 });
+    });
+
+    it('MAX/MIN/SUM/AVG over a nullable column ignore NULLs', async () => {
+      const engine = negEngine([-5, null, -2, null, -8], [-5.0, null, -2.0, null, -8.0]);
+      const enabled = await engine.enableParallel();
+      const r = (await engine.run('SELECT MAX(a) AS mx, MIN(a) AS mn, SUM(a) AS s, AVG(a) AS av, COUNT(a) AS c FROM N')).rows;
+      if (enabled) await engine.shutdown(); else engine.close();
+      expect(r[0].mx).toBe(-2);
+      expect(r[0].mn).toBe(-8);
+      expect(r[0].s).toBe(-15);
+      expect(r[0].av).toBeCloseTo(-5);
+      expect(Number(r[0].c)).toBe(3);
+    });
+
+    it('aggregate over an all-NULL column returns NULL (not 0)', async () => {
+      const engine = negEngine([null, null], [null, null]);
+      const enabled = await engine.enableParallel();
+      const r = (await engine.run('SELECT MAX(a) AS mx, SUM(b) AS s, AVG(b) AS av, COUNT(a) AS c FROM N')).rows;
+      if (enabled) await engine.shutdown(); else engine.close();
+      expect(r[0].mx).toBeNull();
+      expect(r[0].s).toBeNull();
+      expect(r[0].av).toBeNull();
+      expect(Number(r[0].c)).toBe(0);
+    });
+  });
+
+  describe('SELECT without FROM', () => {
+    it('evaluates constant expressions over a single row', async () => {
+      const engine = new QueryEngine(new Catalog());
+      const result = await engine.run("SELECT 1 + 2 AS x, UPPER('ab') AS u, CAST('42' AS INTEGER) + 1 AS n");
+      expect(result.rows).toEqual([{ x: 3, u: 'AB', n: 43 }]);
+      engine.close();
+    });
+
+    it('evaluates a CASE expression without FROM', async () => {
+      const engine = new QueryEngine(new Catalog());
+      const result = await engine.run("SELECT CASE WHEN 3 > 2 THEN 'yes' ELSE 'no' END AS c");
+      expect(result.rows).toEqual([{ c: 'yes' }]);
+      engine.close();
+    });
+  });
+
+  describe('window functions', () => {
+    function engineWith(rows) {
+      const schema = [{ name: 'id', dataType: 'INT32' }, { name: 'g', dataType: 'INT32' }, { name: 'v', dataType: 'INT32' }];
+      const catalog = new Catalog();
+      registerMockTable(catalog, 'T', schema, [makeChunk([
+        { type: 'INT32', values: rows.map(r => r[0]) },
+        { type: 'INT32', values: rows.map(r => r[1]) },
+        { type: 'INT32', values: rows.map(r => r[2]) },
+      ])]);
+      return new QueryEngine(catalog);
+    }
+
+    it('AVG OVER (PARTITION BY) computes per-partition averages', async () => {
+      const engine = engineWith([[0, 0, 4], [1, 0, 6], [2, 1, 2], [3, 1, 8]]);
+      const rows = await engine.run('SELECT id, AVG(v) OVER (PARTITION BY g) AS w FROM T');
+      const byId = Object.fromEntries(rows.rows.map(r => [r.id, r.w]));
+      expect(byId).toEqual({ 0: 5, 1: 5, 2: 5, 3: 5 });
+      engine.close();
+    });
+
+    it('SUM OVER a partition of all-NULL values is NULL, not 0', async () => {
+      const engine = engineWith([[0, 0, null], [1, 0, null], [2, 1, 7]]);
+      const rows = await engine.run('SELECT id, SUM(v) OVER (PARTITION BY g) AS w FROM T');
+      const byId = Object.fromEntries(rows.rows.map(r => [r.id, r.w]));
+      expect(byId).toEqual({ 0: null, 1: null, 2: 7 });
+      engine.close();
+    });
+
+    it('ORDER BY DESC in a window keeps NULLs last (matching ORDER BY)', async () => {
+      const engine = engineWith([[0, 0, 5], [1, 0, null], [2, 0, 8]]);
+      const rows = await engine.run('SELECT id, ROW_NUMBER() OVER (ORDER BY v DESC, id ASC) AS w FROM T');
+      const byId = Object.fromEntries(rows.rows.map(r => [r.id, r.w]));
+      expect(byId).toEqual({ 2: 1, 0: 2, 1: 3 });
+      engine.close();
+    });
+  });
+
+  describe('subquery correctness', () => {
+    function makeEngine() {
+      const catalog = new Catalog();
+      registerMockTable(catalog, 'T1',
+        [{ name: 'id', dataType: 'INT32' }, { name: 'a', dataType: 'INT32' }, { name: 'g', dataType: 'INT32' }],
+        [makeChunk([
+          { type: 'INT32', values: [0, 1, 2, 3, 4] },
+          { type: 'INT32', values: [0, 1, null, 2, 2] },
+          { type: 'INT32', values: [2, 1, 2, 0, 1] },
+        ])]);
+      registerMockTable(catalog, 'T2',
+        [{ name: 'x', dataType: 'INT32' }, { name: 'y', dataType: 'INT32' }, { name: 'h', dataType: 'INT32' }],
+        [makeChunk([
+          { type: 'INT32', values: [null, 2, 1, 2, 2, 3] },
+          { type: 'INT32', values: [4, 3, 4, 4, 0, null] },
+          { type: 'INT32', values: [1, 1, 2, 2, 0, 1] },
+        ])]);
+      return new QueryEngine(catalog);
+    }
+
+    it('correlated EXISTS does not swap the asymmetric SEMI join sides', async () => {
+      const engine = makeEngine();
+      const rows = await engine.run('SELECT id FROM T1 WHERE EXISTS (SELECT 1 FROM T2 WHERE T2.h = T1.g AND T2.x = T1.a)');
+      expect(rows.rows.map(r => r.id).sort()).toEqual([3, 4]);
+      engine.close();
+    });
+
+    it('correlated IN keeps subquery columns needed by the correlation', async () => {
+      const catalog = new Catalog();
+      registerMockTable(catalog, 'T1',
+        [{ name: 'id', dataType: 'INT32' }, { name: 'a', dataType: 'INT32' }, { name: 'g', dataType: 'INT32' }],
+        [makeChunk([
+          { type: 'INT32', values: [0, 1, 2] },
+          { type: 'INT32', values: [2, 3, 9] },
+          { type: 'INT32', values: [0, 1, 1] },
+        ])]);
+      registerMockTable(catalog, 'T2',
+        [{ name: 'y', dataType: 'INT32' }, { name: 'h', dataType: 'INT32' }],
+        [makeChunk([
+          { type: 'INT32', values: [2, 3] },
+          { type: 'INT32', values: [0, 1] },
+        ])]);
+      const engine = new QueryEngine(catalog);
+      const rows = await engine.run('SELECT id FROM T1 WHERE a IN (SELECT y FROM T2 WHERE T2.h = T1.g)');
+      expect(rows.rows.map(r => r.id).sort()).toEqual([0, 1]);
+      engine.close();
+    });
+
+    it('NOT IN (subquery) with a NULL value yields UNKNOWN (3VL)', async () => {
+      const catalog = new Catalog();
+      registerMockTable(catalog, 'T1',
+        [{ name: 'id', dataType: 'INT32' }, { name: 'a', dataType: 'INT32' }],
+        [makeChunk([{ type: 'INT32', values: [0, 1, 2] }, { type: 'INT32', values: [2, 3, null] }])]);
+      registerMockTable(catalog, 'TN', [{ name: 'y', dataType: 'INT32' }],
+        [makeChunk([{ type: 'INT32', values: [2, null] }])]);
+      const engine = new QueryEngine(catalog);
+      const rows = await engine.run('SELECT id FROM T1 WHERE a NOT IN (SELECT y FROM TN)');
+      expect(rows.rows).toEqual([]);
+      engine.close();
+    });
+  });
+
+  describe('CAST result typing', () => {
+    it('CAST AS INTEGER yields a number, not a stringified value', async () => {
+      const schema = [{ name: 'id', dataType: 'INT32' }, { name: 's', dataType: 'VARCHAR' }];
+      const catalog = new Catalog();
+      registerMockTable(catalog, 'T', schema, [makeChunk([
+        { type: 'INT32', values: [1, 2] },
+        { type: 'VARCHAR', values: ['7', '42'] },
+      ])]);
+      const engine = new QueryEngine(catalog);
+      const rows = (await engine.run('SELECT CAST(s AS INTEGER) AS ci FROM T ORDER BY id')).rows;
+      expect(rows).toEqual([{ ci: 7 }, { ci: 42 }]);
+      expect(typeof rows[0].ci).toBe('number');
+      engine.close();
+    });
+
+    it('CAST AS INTEGER then arithmetic stays numeric', async () => {
+      const schema = [{ name: 'id', dataType: 'INT32' }, { name: 's', dataType: 'VARCHAR' }];
+      const catalog = new Catalog();
+      registerMockTable(catalog, 'T', schema, [makeChunk([
+        { type: 'INT32', values: [1] },
+        { type: 'VARCHAR', values: ['10'] },
+      ])]);
+      const engine = new QueryEngine(catalog);
+      const rows = (await engine.run('SELECT CAST(s AS INTEGER) + 5 AS n FROM T')).rows;
+      expect(rows).toEqual([{ n: 15 }]);
+      engine.close();
+    });
+  });
+
+  describe('engine correctness regressions', () => {
+    it('projecting a column out of a DISTINCT keeps distinct on the full row', async () => {
+      const schema = [{ name: 'a', dataType: 'INT32' }, { name: 'k', dataType: 'INT32' }];
+      const catalog = new Catalog();
+      registerMockTable(catalog, 'T', schema, [makeChunk([
+        { type: 'INT32', values: [0, 1, 2] },
+        { type: 'INT32', values: [2, 2, 3] },
+      ])]);
+      const engine = new QueryEngine(catalog);
+      const result = await engine.run('SELECT k FROM (SELECT DISTINCT a, k FROM T) x');
+      expect(result.rows.map(r => r.k).sort()).toEqual([2, 2, 3]);
+      engine.close();
+    });
+
+    it('join keys that are NULL never match', async () => {
+      const sl = [{ name: 'k', dataType: 'INT32' }, { name: 'lv', dataType: 'VARCHAR' }];
+      const sr = [{ name: 'k', dataType: 'INT32' }, { name: 'rv', dataType: 'VARCHAR' }];
+      const catalog = new Catalog();
+      registerMockTable(catalog, 'L', sl, [makeChunk([
+        { type: 'INT32', values: [0, 1] }, { type: 'VARCHAR', values: ['L0', 'L1'] },
+      ])]);
+      registerMockTable(catalog, 'R', sr, [makeChunk([
+        { type: 'INT32', values: [0, null] }, { type: 'VARCHAR', values: ['R0', 'Rn'] },
+      ])]);
+      const engine = new QueryEngine(catalog);
+      const result = await engine.run('SELECT L.k, lv, rv FROM L JOIN R ON L.k = R.k');
+      expect(result.rows).toEqual([{ k: 0, lv: 'L0', rv: 'R0' }]);
       engine.close();
     });
   });

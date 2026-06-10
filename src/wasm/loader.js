@@ -22,18 +22,13 @@ export class WasmLoader {
   }
 
   async init(options = {}) {
-    this.shared = !!options.shared;
+    this.shared = true;
 
-    const memoryDescriptor = {
+    this.memory = new WebAssembly.Memory({
       initial: INITIAL_PAGES,
       maximum: MAX_PAGES,
-    };
-
-    if (this.shared) {
-      memoryDescriptor.shared = true;
-    }
-
-    this.memory = new WebAssembly.Memory(memoryDescriptor);
+      shared: true,
+    });
     this.bumpOffset = 0;
   }
 

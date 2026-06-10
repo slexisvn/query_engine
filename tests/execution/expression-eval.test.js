@@ -98,11 +98,11 @@ describe('compileExpression', () => {
       expect(results).toEqual([false, false, true, true, true]);
     });
 
-    it('returns false when comparing with null', () => {
+    it('returns NULL (unknown) when comparing with null (SQL 3VL)', () => {
       const nullChunk = makeChunk([{ type: 'INT32', values: [null] }]);
       const m = new Map([['T.X', 0], ['X', 0]]);
       const fn = compileExpression(bin('=', colRef('T', 'X', 0), lit(1)), m);
-      expect(fn(nullChunk, 0)).toBe(false);
+      expect(fn(nullChunk, 0)).toBe(null);
     });
   });
 
@@ -258,7 +258,7 @@ describe('compileExpression', () => {
       expect(results[1]).toBe(true);
     });
 
-    it('returns false for null value', () => {
+    it('returns NULL for null value (SQL 3VL)', () => {
       const nullChunk = makeChunk([{ type: 'VARCHAR', values: [null] }]);
       const m = new Map([['T.N', 0], ['N', 0]]);
       const expr = {
@@ -268,7 +268,7 @@ describe('compileExpression', () => {
         negated: false,
       };
       const fn = compileExpression(expr, m);
-      expect(fn(nullChunk, 0)).toBe(false);
+      expect(fn(nullChunk, 0)).toBe(null);
     });
   });
 

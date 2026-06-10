@@ -92,7 +92,6 @@ export function simplifyExpression(expr) {
         if (op === '*') {
           if (isLiteral(right, 1)) return left;
           if (isLiteral(left, 1)) return right;
-          if (isLiteral(right, 0) || isLiteral(left, 0)) return BoundLiteral(0, expr.resultType || 'FLOAT64');
         }
         if (op === '/') {
           if (isLiteral(right, 1)) return left;

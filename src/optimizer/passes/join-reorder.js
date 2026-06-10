@@ -71,35 +71,7 @@ class JoinReorderRewriter extends PlanRewriter {
     if (this.isInnerJoinTree(left)) left = this.reorderJoinTree(left);
     if (this.isInnerJoinTree(right)) right = this.reorderJoinTree(right);
 
-    const result = { ...node, children: [left, right] };
-
-    if (this.canSwapChildren(node.joinType)) {
-      return this.pickCheaperChildOrder(result);
-    }
-
-    return result;
-  }
-
-  canSwapChildren(joinType) {
-    return joinType === JoinType.SEMI
-      || joinType === JoinType.ANTI
-      || joinType === JoinType.MARK;
-  }
-
-  pickCheaperChildOrder(node) {
-    const left = node.children[0];
-    const right = node.children[1];
-
-    const leftCard = this.cardEstimator.estimatePlan(left);
-    const rightCard = this.cardEstimator.estimatePlan(right);
-
-    const normalCost = this.costModel.hashJoinCost(rightCard, leftCard);
-    const swappedCost = this.costModel.hashJoinCost(leftCard, rightCard);
-
-    if (swappedCost < normalCost) {
-      return { ...node, children: [right, left] };
-    }
-    return node;
+    return { ...node, children: [left, right] };
   }
 
   reorderJoinTree(root) {

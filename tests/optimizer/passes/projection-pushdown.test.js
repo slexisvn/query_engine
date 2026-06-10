@@ -257,6 +257,81 @@ describe('ProjectionPushdown', () => {
     });
   });
 
+  describe('DISTINCT requires all input columns', () => {
+    function findScan(n) {
+      if (!n) return null;
+      if (n.type === PlanNodeType.SCAN) return n;
+      for (const c of n.children || []) {
+        const found = findScan(c);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    it('does not prune scan columns below a DISTINCT even if the parent projects fewer', () => {
+      const s = scanWith('t', ['a', 'b', 'k']);
+      const distinct = { type: PlanNodeType.DISTINCT, children: [s] };
+      const plan = LogicalProject([colRef('t', 'k')], distinct);
+
+      const scanNode = findScan(pass.apply(plan));
+      const cols = scanNode.columns.map(c => c.name || c.columnName);
+      expect(cols).toContain('a');
+      expect(cols).toContain('b');
+      expect(cols).toContain('k');
+    });
+  });
+
+  describe('passthrough node at plan root (null required)', () => {
+    function findScan(n) {
+      if (!n) return null;
+      if (n.type === PlanNodeType.SCAN) return n;
+      for (const c of n.children || []) {
+        const found = findScan(c);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    function findScans(n, acc = []) {
+      if (!n) return acc;
+      if (n.type === PlanNodeType.SCAN) acc.push(n);
+      for (const c of n.children || []) findScans(c, acc);
+      return acc;
+    }
+
+    it('keeps all projected columns when SORT is the root', () => {
+      const s = scanWith('t', ['id', 'name', 'extra']);
+      const proj = LogicalProject([colRef('t', 'id'), colRef('t', 'name')], s);
+      const sort = LogicalSort([{ expr: colRef('t', 'id'), direction: 'ASC' }], proj);
+
+      const cols = findScan(pass.apply(sort)).columns.map(c => c.name || c.columnName);
+      expect(cols).toContain('id');
+      expect(cols).toContain('name');
+    });
+
+    it('keeps all projected columns when FILTER is the root', () => {
+      const s = scanWith('t', ['id', 'name', 'extra']);
+      const proj = LogicalProject([colRef('t', 'id'), colRef('t', 'name')], s);
+      const filter = LogicalFilter(bin(colRef('t', 'id'), '>', lit(0)), proj);
+
+      const cols = findScan(pass.apply(filter)).columns.map(c => c.name || c.columnName);
+      expect(cols).toContain('id');
+      expect(cols).toContain('name');
+    });
+
+    it('keeps both sides intact when JOIN is the root', () => {
+      const left = scanWith('a', ['id', 'name']);
+      const right = scanWith('b', ['id', 'val']);
+      const join = LogicalJoin(JoinType.INNER, bin(colRef('a', 'id'), '=', colRef('b', 'id')), left, right);
+
+      const result = pass.apply(join);
+      const leftCols = findScans(result).find(s => s.table === 'a').columns.map(c => c.name || c.columnName);
+      const rightCols = findScans(result).find(s => s.table === 'b').columns.map(c => c.name || c.columnName);
+      expect(leftCols).toEqual(expect.arrayContaining(['id', 'name']));
+      expect(rightCols).toEqual(expect.arrayContaining(['id', 'val']));
+    });
+  });
+
   describe('PROJECT node propagates child table aliases for join ref filtering', () => {
     it('preserves join key columns when right child is PROJECT over scan with different alias', () => {
       const left = scanWith('employees', ['id', 'name', 'dept_id']);

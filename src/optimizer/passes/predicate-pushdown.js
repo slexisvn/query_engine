@@ -97,7 +97,7 @@ function pushPredicates(predicates, target) {
     const remaining = [];
     for (const pred of predicates) {
       const refs = collectTableRefs(pred);
-      if (refs.length > 0 && refs.every(r => groupByRefs.has(`${r.tableAlias}.${r.columnName}`))) {
+      if (refs.length > 0 && !containsAggregate(pred) && refs.every(r => groupByRefs.has(`${r.tableAlias}.${r.columnName}`))) {
         pushable.push(pred);
       } else {
         remaining.push(pred);
@@ -289,6 +289,12 @@ function addOutputRefs(node, refs) {
 function refBelongsToPlan(ref, planRefs) {
   if (ref.tableAlias) return planRefs.aliases.has(ref.tableAlias);
   return planRefs.columns.has(ref.columnName);
+}
+
+function containsAggregate(expr) {
+  let found = false;
+  _walkExpr(expr, e => { if (e.kind === BoundExprKind.AGGREGATE) found = true; });
+  return found;
 }
 
 function collectTableRefs(expr) {

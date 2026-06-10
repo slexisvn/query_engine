@@ -59,7 +59,7 @@ export function BoundCase(operand, whenClauses, elseExpr, resultType) {
 }
 
 export function BoundCast(expr, targetType) {
-  return { kind: BoundExprKind.CAST, expr, targetType };
+  return { kind: BoundExprKind.CAST, expr, targetType, dataType: targetType };
 }
 
 export function BoundBetween(expr, low, high, negated) {

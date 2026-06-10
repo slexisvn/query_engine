@@ -2,37 +2,21 @@ import { Column } from '../../storage/column.js';
 import { DataChunk, DEFAULT_CHUNK_SIZE } from '../../storage/chunk.js';
 import { DataType } from '../../storage/data-type.js';
 import { globalDispatch } from '../../wasm/dispatch.js';
-import { isVectorizableExpr, evalVectorized } from '../wasm-expr-eval.js';
-import { Config } from '../../config.js';
 
 export class HashAggregateOperator {
-  constructor(groupByExtractors, groupByTypes, aggregateDefs, parallelDispatch) {
+  constructor(groupByExtractors, groupByTypes, aggregateDefs) {
     this.groupByExtractors = groupByExtractors;
     this.groupByTypes = groupByTypes;
     this.aggregateDefs = aggregateDefs;
     this.hasCachedValues = aggregateDefs.some(def => def.valueKey);
     this.groups = new Map();
     this.groupKeys = [];
-    this.parallelDispatch = parallelDispatch || null;
-    this._parallelPlan = undefined;
-    this._columnChunks = null;
-    this._bufferedCount = 0;
   }
 
   async init() {}
 
   async consume(chunk) {
     if (this.groupByExtractors.length === 0 && chunk.size > 0) {
-      if (this.parallelDispatch && this._parallelPlan !== null) {
-        if (this._parallelPlan === undefined) {
-          this._parallelPlan = this._buildParallelPlan();
-        }
-        if (this._parallelPlan) {
-          this._bufferChunk(chunk);
-          return;
-        }
-      }
-
       if (globalDispatch && globalDispatch.kernels.size > 0) {
         const wasmHandled = await this._tryWasmUngrouped(chunk);
         if (wasmHandled) return;
@@ -109,59 +93,7 @@ export class HashAggregateOperator {
     }
   }
 
-  _buildParallelPlan() {
-    const entries = [];
-    for (const def of this.aggregateDefs) {
-      const resolved = this._resolveWasmAggKernel(def);
-      if (!resolved) return null;
-
-      if (resolved.kind === 'COUNT_STAR') {
-        entries.push({ kind: 'COUNT_STAR' });
-        continue;
-      }
-
-      if (resolved.kind === 'COUNT') {
-        if (def._wasmColIndex === undefined || def._wasmColIndex === null) return null;
-        entries.push({ kind: 'COUNT', colIndex: def._wasmColIndex });
-        continue;
-      }
-
-      const colIndex = def._wasmColIndex;
-      if (colIndex === undefined || colIndex === null) return null;
-
-      entries.push({
-        kind: resolved.kind,
-        aggType: resolved.kind.toLowerCase(),
-        dataType: resolved.dataType,
-        colIndex,
-      });
-    }
-    return entries;
-  }
-
-  _bufferChunk(chunk) {
-    if (!this._columnChunks) {
-      this._columnChunks = this._parallelPlan.map(() => []);
-    }
-
-    for (let a = 0; a < this._parallelPlan.length; a++) {
-      const p = this._parallelPlan[a];
-      if (p.kind === 'COUNT_STAR' || p.kind === 'COUNT') continue;
-
-      const column = chunk.columns[p.colIndex];
-      if (column?.data) {
-        this._columnChunks[a].push(column.data.subarray(0, chunk.size));
-      }
-    }
-    this._bufferedCount += chunk.size;
-  }
-
   async finalize() {
-    if (this._parallelPlan && this._bufferedCount > 0) {
-      const result = await this._finalizeParallel();
-      if (result) return result;
-    }
-
     const groupCount = this.groups.size;
     if (groupCount === 0) {
       if (this.groupByExtractors.length === 0) {
@@ -213,55 +145,6 @@ export class HashAggregateOperator {
     return chunks;
   }
 
-  async _finalizeParallel() {
-    if (this._bufferedCount < Config.parallelThreshold) return null;
-
-    const results = new Array(this._parallelPlan.length);
-
-    for (let a = 0; a < this._parallelPlan.length; a++) {
-      const p = this._parallelPlan[a];
-
-      if (p.kind === 'COUNT_STAR' || p.kind === 'COUNT') {
-        results[a] = this._bufferedCount;
-        continue;
-      }
-
-      const chunks = this._columnChunks[a];
-      if (!chunks || chunks.length === 0) return null;
-
-      const Ctor = p.dataType === 'FLOAT64' ? Float64Array : Int32Array;
-      const totalLen = chunks.reduce((s, c) => s + c.length, 0);
-      const concatenated = new Ctor(totalLen);
-      let offset = 0;
-      for (const c of chunks) {
-        concatenated.set(c, offset);
-        offset += c.length;
-      }
-
-      if (p.kind === 'AVG') {
-        const aggResult = await this.parallelDispatch.aggregateParallel(
-          concatenated, totalLen, 'sum', p.dataType
-        );
-        if (!aggResult) return null;
-        results[a] = aggResult.result / totalLen;
-      } else {
-        const aggResult = await this.parallelDispatch.aggregateParallel(
-          concatenated, totalLen, p.aggType, p.dataType
-        );
-        if (!aggResult) return null;
-        results[a] = aggResult.result;
-      }
-    }
-
-    const cols = this.aggregateDefs.map((def, i) => {
-      const col = new Column(def.resultType, 1);
-      col.set(0, results[i]);
-      col.length = 1;
-      return col;
-    });
-    return [new DataChunk(cols, 1)];
-  }
-
   _resolveWasmAggKernel(def) {
     const name = def.name?.toUpperCase();
     if (!name) return null;
@@ -291,95 +174,65 @@ export class HashAggregateOperator {
   }
 
   async _tryWasmUngrouped(chunk) {
-    const key = '__ALL__';
-    let group = this.groups.get(key);
-    if (!group) {
-      group = {
-        groupValues: [],
-        accumulators: this.aggregateDefs.map(def => def.createAccumulator()),
-      };
-      this.groups.set(key, group);
-    }
+    const size = chunk.size;
+    const contributions = new Array(this.aggregateDefs.length);
 
     for (let a = 0; a < this.aggregateDefs.length; a++) {
       const def = this.aggregateDefs[a];
       const resolved = this._resolveWasmAggKernel(def);
       if (!resolved) return false;
 
-      const acc = group.accumulators[a];
-
       if (resolved.kind === 'COUNT_STAR') {
-        acc.count += chunk.size;
+        contributions[a] = { kind: 'count', n: size };
         continue;
       }
 
       if (resolved.kind === 'COUNT') {
-        if (!def._wasmColIndex && def._wasmColIndex !== 0) return false;
+        if (def._wasmColIndex === undefined || def._wasmColIndex === null) return false;
         const column = chunk.columns[def._wasmColIndex];
         if (!column) return false;
         if (!column.hasNulls) {
-          acc.count += chunk.size;
+          contributions[a] = { kind: 'count', n: size };
         } else {
           const kernel = globalDispatch.lookup('countBits', 'UINT8');
           if (!kernel) return false;
-          const nonNullCount = await kernel(column.nullBitmap, chunk.size);
-          acc.count += nonNullCount;
+          contributions[a] = { kind: 'count', n: await kernel(column.nullBitmap, size) };
         }
         continue;
       }
 
-      if (resolved.kind === 'AVG') {
-        let avgData = null;
-
-        if (def._wasmColIndex !== undefined && def._wasmColIndex !== null) {
-          const column = chunk.columns[def._wasmColIndex];
-          if (column && column.data && column.dataType === 'FLOAT64') {
-            avgData = column.data.subarray(0, chunk.size);
-          }
-        }
-
-        if (!avgData && def._sourceExpr && isVectorizableExpr(def._sourceExpr)) {
-          const vectorResult = await evalVectorized(def._sourceExpr, chunk, def._columnMapping, chunk.size);
-          if (vectorResult instanceof Float64Array) avgData = vectorResult;
-        }
-
-        if (!avgData) return false;
-
-        const kernel = globalDispatch.lookup(resolved.kernelKey, resolved.dataType);
-        if (!kernel) return false;
-        acc.sum += await kernel(avgData);
-        acc.count += chunk.size;
-        continue;
-      }
-
-      let rawData = null;
-
-      if (def._wasmColIndex !== undefined && def._wasmColIndex !== null) {
-        const column = chunk.columns[def._wasmColIndex];
-        if (column && column.data) {
-          const colType = column.dataType;
-          if (resolved.dataType === 'FLOAT64' && colType === 'FLOAT64') {
-            rawData = column.data.subarray(0, chunk.size);
-          } else if (resolved.dataType === 'INT32' && (colType === 'INT32' || colType === 'DATE')) {
-            rawData = column.data.subarray(0, chunk.size);
-          }
-        }
-      }
-
-      if (!rawData && def._sourceExpr && isVectorizableExpr(def._sourceExpr)) {
-        const vectorResult = await evalVectorized(def._sourceExpr, chunk, def._columnMapping, chunk.size);
-        if (vectorResult instanceof Float64Array) {
-          rawData = vectorResult;
-        }
-      }
-
-      if (!rawData) return false;
+      if (def._wasmColIndex === undefined || def._wasmColIndex === null) return false;
+      const column = chunk.columns[def._wasmColIndex];
+      if (!column || !column.data || column.hasNulls) return false;
+      const colType = column.dataType;
+      const matches = (resolved.dataType === 'FLOAT64' && colType === 'FLOAT64')
+        || (resolved.dataType === 'INT32' && (colType === 'INT32' || colType === 'DATE'));
+      if (!matches) return false;
 
       const kernel = globalDispatch.lookup(resolved.kernelKey, resolved.dataType);
       if (!kernel) return false;
-      const result = await kernel(rawData);
+      const result = await kernel(column.data.subarray(0, size));
 
-      acc.add(result);
+      contributions[a] = resolved.kind === 'AVG'
+        ? { kind: 'avg', sum: result, n: size }
+        : { kind: 'value', result };
+    }
+
+    let group = this.groups.get('__ALL__');
+    if (!group) {
+      group = {
+        groupValues: [],
+        accumulators: this.aggregateDefs.map(def => def.createAccumulator()),
+      };
+      this.groups.set('__ALL__', group);
+    }
+
+    for (let a = 0; a < contributions.length; a++) {
+      const c = contributions[a];
+      const acc = group.accumulators[a];
+      if (c.kind === 'count') acc.count += c.n;
+      else if (c.kind === 'avg') { acc.sum += c.sum; acc.count += c.n; }
+      else acc.add(c.result);
     }
 
     return true;

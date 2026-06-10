@@ -75,7 +75,7 @@ class UnnestingRewriter extends PlanRewriter {
         });
       }
     }
-    return LogicalJoin(JoinType.SEMI, combineConjuncts(conditions), left, cleanedPlan);
+    return LogicalJoin(JoinType.SEMI, combineConjuncts(conditions), left, this.exposeCorrelationColumns(cleanedPlan));
   }
 
   unnestNotIn(left, subquery, correlated, inExpr) {
@@ -105,7 +105,7 @@ class UnnestingRewriter extends PlanRewriter {
       isCorrelated: false,
     };
     const markJoin = {
-      ...LogicalJoin(JoinType.MARK, combineConjuncts(conditions), left, cleanedPlan),
+      ...LogicalJoin(JoinType.MARK, combineConjuncts(conditions), left, this.exposeCorrelationColumns(cleanedPlan)),
       markColumn: markName,
     };
     return LogicalFilter({
@@ -310,6 +310,14 @@ class UnnestingRewriter extends PlanRewriter {
 
   removeProjection(node) {
     if (node.type === PlanNodeType.PROJECT) {
+      return node.children[0];
+    }
+    return node;
+  }
+
+  exposeCorrelationColumns(node) {
+    if (node.type === PlanNodeType.PROJECT
+      && (node.expressions || []).every(e => e.kind === BoundExprKind.COLUMN_REF)) {
       return node.children[0];
     }
     return node;

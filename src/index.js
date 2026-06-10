@@ -34,6 +34,12 @@ import { TempDirectoryManager } from './storage/temp-directory-manager.js';
 import { FilterOrdering } from './optimizer/passes/filter-ordering.js';
 import { AggregatePushdown } from './optimizer/passes/aggregate-pushdown.js';
 import { StatisticsCache } from './catalog/statistics-cache.js';
+import { LogicalScan } from './planner/logical-plan.js';
+import { DataFrame } from './dataframe/dataframe.js';
+import { DFSchema } from './dataframe/schema.js';
+import { InMemoryRelation } from './dataframe/in-memory-relation.js';
+
+const DATAFRAME_TABLE_PREFIX = '__DF';
 
 export class QueryEngine {
   constructor(catalog, options = {}) {
@@ -42,10 +48,15 @@ export class QueryEngine {
     this.tempManager = new TempDirectoryManager(options.tempDir ? { baseDir: options.tempDir } : {});
     this.executor = new QueryExecutor(catalog, this.tempManager);
     this.wasmEnabled = false;
+    this._dfIdCounter = 0;
 
     this.precomputedStats = options.statistics || null;
     this.statsCache = new StatisticsCache(catalog);
     this.optimizer = this.createOptimizer(this.precomputedStats);
+  }
+
+  _nextDfId() {
+    return this._dfIdCounter++;
   }
 
   close() {
@@ -131,18 +142,7 @@ export class QueryEngine {
     const logicalPlan = this.plan(bound);
     let cteMap = logicalPlan._cteMap || new Map();
 
-    if (!this.precomputedStats && !this._statsCollected) {
-      const collected = await this.collectStatistics();
-      if (collected) {
-        this.optimizer = this.createOptimizer(collected);
-        this._statsCollected = true;
-        if (this._distributedPasses) {
-          for (const { method, args } of this._distributedPasses) {
-            this.optimizer[method](...args);
-          }
-        }
-      }
-    }
+    await this._ensureStatistics();
 
     const optimized = this.optimize(logicalPlan);
     cteMap = this.optimizeCTEMap(cteMap);
@@ -156,6 +156,66 @@ export class QueryEngine {
       optimized.set(name, this.optimize(plan));
     }
     return optimized;
+  }
+
+  async _ensureStatistics() {
+    if (!this.precomputedStats && !this._statsCollected) {
+      const collected = await this.collectStatistics();
+      if (collected) {
+        this.optimizer = this.createOptimizer(collected);
+        this._statsCollected = true;
+        if (this._distributedPasses) {
+          for (const { method, args } of this._distributedPasses) {
+            this.optimizer[method](...args);
+          }
+        }
+      }
+    }
+  }
+
+  table(name) {
+    const tableDef = this.catalog.getTable(name);
+    if (!tableDef) throw new Error(`Unknown table: ${name}`);
+    const plan = LogicalScan(tableDef.name, tableDef.columns, tableDef.name);
+    const schema = DFSchema.fromStorageSchema(tableDef.columns, tableDef.name);
+    return new DataFrame(this, plan, schema);
+  }
+
+  createDataFrame(rows, declaredSchema = null) {
+    const relation = InMemoryRelation.fromRows(rows, declaredSchema);
+    const name = `${DATAFRAME_TABLE_PREFIX}${this._nextDfId()}`;
+    const storageSchema = relation.getSchema();
+    this.catalog.registerTable(name, storageSchema);
+    this.catalog.registerTableStorage(name, relation);
+    const plan = LogicalScan(name, storageSchema, name);
+    const schema = DFSchema.fromStorageSchema(storageSchema, name);
+    return new DataFrame(this, plan, schema);
+  }
+
+  sql(sqlString) {
+    const ast = this.parseSQL(sqlString);
+    if (ast.kind === 'CreateTableStmt' || ast.kind === 'DropTableStmt'
+      || ast.kind === 'ExplainStmt' || ast.kind === 'ExplainAnalyzeStmt') {
+      throw new Error('sql() supports query statements only');
+    }
+    const bound = this.bind(ast);
+    const logicalPlan = this.plan(bound);
+    const cteMap = logicalPlan._cteMap || null;
+    const schema = DFSchema.fromFields(bound.outputColumns.map((c, i) => ({
+      name: c.name,
+      dataType: c.dataType,
+      index: i,
+      tableAlias: '',
+    })));
+    return new DataFrame(this, logicalPlan, schema, cteMap);
+  }
+
+  async _runPlan(plan, outputColumns, streaming = false, cteMap = null) {
+    await this._ensureStatistics();
+    const optimized = this.optimize(plan);
+    this.executor.cteDefinitions = this.optimizeCTEMap(cteMap || new Map());
+    const { sink, columnNames } = await this.executor.execute(optimized, outputColumns, streaming);
+    return new QueryResult(columnNames, sink);
   }
 
   async run(sql) {
@@ -354,8 +414,12 @@ export class QueryEngine {
       const { ParallelDispatch } = await import('./parallel/parallel-dispatch.js');
       const parallelDispatch = new ParallelDispatch(pool, regionAllocator, globalDispatch);
 
-      this.executor.setParallelContext(pool, parallelDispatch);
+      const { MorselAggregate } = await import('./parallel/morsel-aggregate.js');
+      const morselPool = new MorselAggregate(Config.parallelWorkers, Config.aggMorselRows);
+
+      this.executor.setParallelContext(pool, parallelDispatch, morselPool);
       this.workerPool = pool;
+      this.morselPool = morselPool;
       this.parallelEnabled = true;
       return true;
     } catch (_) {
@@ -418,6 +482,10 @@ export class QueryEngine {
     if (this.workerPool) {
       await this.workerPool.shutdown();
       this.workerPool = null;
+    }
+    if (this.morselPool) {
+      await this.morselPool.close();
+      this.morselPool = null;
     }
     if (this.distributed?.transport) {
       await this.distributed.transport.stop();

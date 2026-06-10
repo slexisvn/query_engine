@@ -19,7 +19,7 @@ function pruneColumns(node, required) {
     case PlanNodeType.PROJECT:
       return pruneProject(node, required);
     case PlanNodeType.FILTER:
-      return pruneUnary(node, addExprRefs(required, node.condition));
+      return pruneUnary(node, required ? addExprRefs(required, node.condition) : null);
     case PlanNodeType.JOIN:
       return pruneJoin(node, required);
     case PlanNodeType.AGGREGATE:
@@ -35,7 +35,7 @@ function pruneColumns(node, required) {
     case PlanNodeType.CTE_ANCHOR:
       return pruneChildren(node, null);
     case PlanNodeType.DISTINCT:
-      return pruneUnary(node, required);
+      return pruneUnary(node, null);
     default:
       return pruneChildren(node, required);
   }
@@ -73,15 +73,23 @@ function pruneAggregate(node) {
 }
 
 function pruneSort(node, required) {
+  if (!required) return pruneUnary(node, null);
   let childRequired = copyRefs(required);
   for (const key of node.orderKeys || []) childRequired = addExprRefs(childRequired, key.expr);
-  if (!required && childRequired.size === 0) return pruneUnary(node, null);
-  return pruneUnary(node, childRequired.size > 0 ? childRequired : null);
+  return pruneUnary(node, childRequired);
 }
 
 function pruneJoin(node, required) {
   const left = node.children[0];
   const right = node.children[1];
+
+  if (!required) {
+    const newLeft = pruneColumns(left, null);
+    const newRight = pruneColumns(right, null);
+    if (newLeft !== left || newRight !== right) return setChildren(node, [newLeft, newRight]);
+    return node;
+  }
+
   const leftRefs = collectPlanRefs(left);
   const rightRefs = collectPlanRefs(right);
   const refs = copyRefs(required);

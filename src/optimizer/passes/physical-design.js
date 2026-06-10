@@ -173,13 +173,17 @@ class PhysicalDesignRewriter extends PlanRewriter {
       newNode._cost = this.costModel.sortCost(childCard);
     }
 
-    newNode._sortedBy = newNode.orderKeys.map(o => this.getColumnKey(o.expr)).filter(Boolean);
+    newNode._sortedBy = newNode.orderKeys
+      .map(o => ({ key: this.getColumnKey(o.expr), direction: (o.direction || 'ASC').toUpperCase() }))
+      .filter(e => e.key);
     return newNode;
   }
 
   inferSortOrder(node) {
     if (node.type === PlanNodeType.SORT) {
-      return node.orderKeys.map(o => this.getColumnKey(o.expr)).filter(Boolean);
+      return node.orderKeys
+        .map(o => ({ key: this.getColumnKey(o.expr), direction: (o.direction || 'ASC').toUpperCase() }))
+        .filter(e => e.key);
     }
 
     if (node.type === PlanNodeType.INDEX_SCAN) {
@@ -205,11 +209,11 @@ class PhysicalDesignRewriter extends PlanRewriter {
   }
 
   columnMatches(sortedKey, reqKey) {
-    if (!sortedKey || !reqKey) return false;
-    if (sortedKey === reqKey) return true;
-    const sortedCol = sortedKey.split('.').pop();
-    const reqCol = reqKey.split('.').pop();
-    return sortedCol === reqCol;
+    const s = (sortedKey && typeof sortedKey === 'object') ? sortedKey.key : sortedKey;
+    const r = (reqKey && typeof reqKey === 'object') ? reqKey.key : reqKey;
+    if (!s || !r) return false;
+    if (s === r) return true;
+    return s.split('.').pop() === r.split('.').pop();
   }
 
   isSortedBy(actualSortedKeys, requiredKeys) {

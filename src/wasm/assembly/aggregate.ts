@@ -131,7 +131,7 @@ export function maxF64(dataPtr: usize, count: i32): f64 {
   let i: i32 = 0;
   const simdEnd = count & ~1;
 
-  let maxVec = f64x2.splat(f64.MIN_VALUE);
+  let maxVec = f64x2.splat(-f64.MAX_VALUE);
 
   for (; i < simdEnd; i += 2) {
     const vec = v128.load(dataPtr + (<usize>i << 3));

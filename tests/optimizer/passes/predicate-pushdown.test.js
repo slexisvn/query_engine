@@ -300,6 +300,23 @@ describe('PredicatePushdown', () => {
       expect(result.children[0].children[0].type).toBe(PlanNodeType.SCAN);
     });
 
+    it('does not push a predicate that contains an aggregate, even on a group-by column arg', () => {
+      const agg = LogicalAggregate(
+        [colRef('t', 'g')],
+        [{ kind: BoundExprKind.AGGREGATE, name: 'SUM', args: [colRef('t', 'g')], distinct: false, resultType: 'INT32' }],
+        scan('t')
+      );
+      const plan = LogicalFilter(
+        bin({ kind: BoundExprKind.AGGREGATE, name: 'SUM', args: [colRef('t', 'g')], distinct: false, resultType: 'INT32' }, '<', lit(3)),
+        agg
+      );
+
+      const result = pass.apply(plan);
+      expect(result.type).toBe(PlanNodeType.FILTER);
+      expect(result.children[0].type).toBe(PlanNodeType.AGGREGATE);
+      expect(result.children[0].children[0].type).toBe(PlanNodeType.SCAN);
+    });
+
     it('keeps predicate on aggregate output above aggregate', () => {
       const agg = LogicalAggregate(
         [colRef('t', 'status')],

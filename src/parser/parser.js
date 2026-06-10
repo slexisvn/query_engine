@@ -936,3 +936,12 @@ export class Parser {
 export function parse(sql) {
   return new Parser(sql).parse();
 }
+
+export function parseExpression(sql) {
+  const parser = new Parser(sql);
+  const expr = parser.parseExpression();
+  if (!parser.isAt(TokenType.EOF) && !parser.isAt(TokenType.SEMICOLON)) {
+    parser.error(`Unexpected token ${parser.peek().type}`);
+  }
+  return expr;
+}

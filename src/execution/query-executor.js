@@ -7,6 +7,7 @@ import { HashJoinBuild, HashJoinProbe } from './operators/hash-join.js';
 import { MergeJoinOperator } from './operators/merge-join.js';
 import { NestedLoopJoinOperator } from './operators/nested-loop-join.js';
 import { HashAggregateOperator, getAccumulatorFactory } from './operators/hash-aggregate.js';
+import { MorselAggregateOperator, buildMorselAggSpec } from './operators/morsel-aggregate-op.js';
 import { StreamAggregateOperator } from './operators/stream-aggregate.js';
 import { SortOperator, LimitOperator } from './operators/sort.js';
 import { DistinctOperator } from './operators/distinct.js';
@@ -32,11 +33,13 @@ export class QueryExecutor {
     this.cteDefinitions = new Map();
     this.workerPool = null;
     this.parallelDispatch = null;
+    this.morselPool = null;
   }
 
-  setParallelContext(workerPool, parallelDispatch) {
+  setParallelContext(workerPool, parallelDispatch, morselPool = null) {
     this.workerPool = workerPool;
     this.parallelDispatch = parallelDispatch;
+    this.morselPool = morselPool;
   }
 
   _shouldParallelize(storage) {
@@ -98,6 +101,7 @@ export class QueryExecutor {
       case PlanNodeType.TOP_N: return this.buildTopN(node);
       case PlanNodeType.WINDOW: return this.buildWindow(node);
       case PlanNodeType.EMPTY: return this.buildEmpty(node);
+      case PlanNodeType.SINGLE_ROW: return this.buildSingleRow(node);
       case PlanNodeType.EXCHANGE: return this.buildExchange(node);
       case PlanNodeType.PARTIAL_AGGREGATE: return this.buildPartialAggregate(node);
       case PlanNodeType.FINAL_AGGREGATE: return this.buildFinalAggregate(node);
@@ -106,6 +110,21 @@ export class QueryExecutor {
       default:
         throw new Error(`Unsupported plan node: ${node.type}`);
     }
+  }
+
+  async buildSingleRow(node) {
+    return {
+      schema: [],
+      columnMapping: new Map(),
+      register: (graph, currentPipelineId, currentSink) => {
+        graph.setSource(currentPipelineId, async function* () {
+          const chunk = new DataChunk([], 1);
+          await currentSink.consume(chunk);
+          yield chunk;
+          if (currentSink.finalize) await currentSink.finalize();
+        });
+      }
+    };
   }
 
   async buildEmpty(node) {
@@ -583,7 +602,7 @@ export class QueryExecutor {
         tableAlias: expr?.tableAlias || '',
       })),
       ...node.aggregates.map((agg, i) => ({
-        name: agg.name.toLowerCase(),
+        name: agg.outputName || agg.name.toLowerCase(),
         dataType: this.normalizeAggResultType(agg),
         tableAlias: '',
       })),
@@ -631,10 +650,19 @@ export class QueryExecutor {
       };
     }
 
+    const morselSpec = this.morselPool ? buildMorselAggSpec(node, child.schema) : null;
+    const makeAggOp = morselSpec
+      ? () => new MorselAggregateOperator(
+          this.morselPool, child.schema, schema, morselSpec,
+          Config.parallelAggThreshold,
+          () => new HashAggregateOperator(groupByEvals, groupByTypes, aggDefs)
+        )
+      : () => new HashAggregateOperator(groupByEvals, groupByTypes, aggDefs);
+
     return {
       schema, columnMapping,
       register: (graph, currentPipelineId, currentSink) => {
-        const aggOp = new HashAggregateOperator(groupByEvals, groupByTypes, aggDefs, this.parallelDispatch);
+        const aggOp = makeAggOp();
         const aggSink = {
           async consume(chunk) { await aggOp.consume(chunk); },
           async finalize() {} 

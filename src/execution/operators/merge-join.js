@@ -3,6 +3,11 @@ import { Column } from '../../storage/column.js';
 import { JoinType } from '../../planner/logical-plan.js';
 import { DataType } from '../../storage/data-type.js';
 
+function isNullKey(key) {
+  if (key === null || key === undefined) return true;
+  return Array.isArray(key) && key.some(k => k === null || k === undefined);
+}
+
 export class MergeJoinOperator {
   constructor(buildChunks, probeChunks, buildKeyExtractors, probeKeyExtractors, buildColCount, probeColCount, joinType = JoinType.INNER, conditionEvaluator = null) {
     this.buildChunks = buildChunks;
@@ -19,8 +24,14 @@ export class MergeJoinOperator {
     const isSemiAnti = this.joinType === JoinType.SEMI || this.joinType === JoinType.ANTI;
     const isMark = this.joinType === JoinType.MARK;
 
-    const buildRows = this._flattenAndExtractKeys(this.buildChunks, this.buildKeyExtractors);
-    const probeRows = this._flattenAndExtractKeys(this.probeChunks, this.probeKeyExtractors);
+    const buildAll = this._flattenAndExtractKeys(this.buildChunks, this.buildKeyExtractors);
+    const probeAll = this._flattenAndExtractKeys(this.probeChunks, this.probeKeyExtractors);
+
+    const buildRows = buildAll.filter(r => !isNullKey(r.key));
+    const probeRows = probeAll.filter(r => !isNullKey(r.key));
+    const buildNull = buildAll.filter(r => isNullKey(r.key));
+    const probeNull = probeAll.filter(r => isNullKey(r.key));
+    const markUnmatched = buildNull.length > 0 ? null : false;
 
     buildRows.sort((a, b) => this._compareKeys(a.key, b.key));
     probeRows.sort((a, b) => this._compareKeys(a.key, b.key));
@@ -46,7 +57,7 @@ export class MergeJoinOperator {
         if (isSemiAnti && this.joinType === JoinType.ANTI) {
           outputRows.push(this._extractProbeRow(pRow));
         } else if (isMark) {
-          outputRows.push(this._extractProbeRow(pRow).concat([false]));
+          outputRows.push(this._extractProbeRow(pRow).concat([markUnmatched]));
         } else if (this.joinType === JoinType.RIGHT || this.joinType === JoinType.FULL) {
           outputRows.push(this._combineRowWithNulls(pRow, false));
         }
@@ -78,7 +89,7 @@ export class MergeJoinOperator {
             } else if (this.joinType === JoinType.ANTI && !matched) {
               outputRows.push(this._extractProbeRow(probeRows[j]));
             } else if (isMark) {
-              outputRows.push(this._extractProbeRow(probeRows[j]).concat([matched]));
+              outputRows.push(this._extractProbeRow(probeRows[j]).concat([matched ? true : markUnmatched]));
             }
           }
         } else {
@@ -115,11 +126,26 @@ export class MergeJoinOperator {
       if (isSemiAnti && this.joinType === JoinType.ANTI) {
         outputRows.push(this._extractProbeRow(probeRows[p]));
       } else if (isMark) {
-        outputRows.push(this._extractProbeRow(probeRows[p]).concat([false]));
+        outputRows.push(this._extractProbeRow(probeRows[p]).concat([markUnmatched]));
       } else if (this.joinType === JoinType.RIGHT || this.joinType === JoinType.FULL) {
         outputRows.push(this._combineRowWithNulls(probeRows[p], false));
       }
       p++;
+    }
+
+    for (const bRow of buildNull) {
+      if (this.joinType === JoinType.LEFT || this.joinType === JoinType.FULL) {
+        outputRows.push(this._combineRowWithNulls(bRow, true));
+      }
+    }
+    for (const pRow of probeNull) {
+      if (isSemiAnti && this.joinType === JoinType.ANTI) {
+        outputRows.push(this._extractProbeRow(pRow));
+      } else if (isMark) {
+        outputRows.push(this._extractProbeRow(pRow).concat([null]));
+      } else if (this.joinType === JoinType.RIGHT || this.joinType === JoinType.FULL) {
+        outputRows.push(this._combineRowWithNulls(pRow, false));
+      }
     }
 
     if (outputRows.length === 0) return [];

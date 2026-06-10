@@ -79,6 +79,11 @@ export class WindowOperator {
           for (const key of orderKeys) {
             const va = getVal(a, key.eval);
             const vb = getVal(b, key.eval);
+            const an = va === null || va === undefined;
+            const bn = vb === null || vb === undefined;
+            if (an && bn) continue;
+            if (an) return 1;
+            if (bn) return -1;
             const cmp = this.compareValues(va, vb);
             if (cmp !== 0) return key.direction === 'DESC' ? -cmp : cmp;
           }
@@ -160,17 +165,43 @@ export class WindowOperator {
           const valueEval = this.compileExpression(wExpr.args[0], this.childColumnMapping);
           if (orderKeys.length === 0) {
             let total = 0;
+            let count = 0;
             for (let i = 0; i < partition.length; i++) {
               const v = getVal(partition[i], valueEval);
-              if (v !== null) total += typeof v === 'bigint' ? Number(v) : v;
+              if (v !== null && v !== undefined) { total += typeof v === 'bigint' ? Number(v) : v; count++; }
             }
-            for (let i = 0; i < partition.length; i++) result[partition[i]] = total;
+            const sum = count === 0 ? null : total;
+            for (let i = 0; i < partition.length; i++) result[partition[i]] = sum;
           } else {
-            let sum = 0;
+            let total = 0;
+            let count = 0;
             for (let i = 0; i < partition.length; i++) {
               const v = getVal(partition[i], valueEval);
-              if (v !== null) sum += typeof v === 'bigint' ? Number(v) : v;
-              result[partition[i]] = sum;
+              if (v !== null && v !== undefined) { total += typeof v === 'bigint' ? Number(v) : v; count++; }
+              result[partition[i]] = count === 0 ? null : total;
+            }
+          }
+          break;
+        }
+
+        case 'AVG': {
+          const valueEval = this.compileExpression(wExpr.args[0], this.childColumnMapping);
+          if (orderKeys.length === 0) {
+            let total = 0;
+            let count = 0;
+            for (let i = 0; i < partition.length; i++) {
+              const v = getVal(partition[i], valueEval);
+              if (v !== null && v !== undefined) { total += typeof v === 'bigint' ? Number(v) : v; count++; }
+            }
+            const avg = count === 0 ? null : total / count;
+            for (let i = 0; i < partition.length; i++) result[partition[i]] = avg;
+          } else {
+            let total = 0;
+            let count = 0;
+            for (let i = 0; i < partition.length; i++) {
+              const v = getVal(partition[i], valueEval);
+              if (v !== null && v !== undefined) { total += typeof v === 'bigint' ? Number(v) : v; count++; }
+              result[partition[i]] = count === 0 ? null : total / count;
             }
           }
           break;

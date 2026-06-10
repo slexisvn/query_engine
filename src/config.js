@@ -24,6 +24,8 @@ export const Config = {
   dependentJoinConcurrency: env('QE_DEPENDENT_JOIN_CONCURRENCY', 1),
   parallelWorkers: resolveWorkerCount(),
   parallelThreshold: env('QE_PARALLEL_THRESHOLD', 10000),
+  parallelAggThreshold: env('QE_PARALLEL_AGG_THRESHOLD', 50000),
+  aggMorselRows: env('QE_AGG_MORSEL_ROWS', 16384),
   regionSize: env('QE_WASM_REGION_SIZE', 16 * 1024 * 1024),
   morselSize: env('QE_MORSEL_SIZE', 262144),
 

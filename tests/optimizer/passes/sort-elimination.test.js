@@ -186,5 +186,17 @@ describe('SortElimination', () => {
       const result = pass.apply(plan);
       expect(result.type).not.toBe(PlanNodeType.SORT);
     });
+
+    it('does NOT eliminate SORT when child is sorted in the opposite direction', () => {
+      const s = scan('t');
+      s._sortedBy = [{ key: 'T.ID', direction: 'DESC' }];
+      const plan = LogicalSort(
+        [{ expr: colRef('t', 'id'), direction: 'ASC' }],
+        s
+      );
+
+      const result = pass.apply(plan);
+      expect(result.type).toBe(PlanNodeType.SORT);
+    });
   });
 });

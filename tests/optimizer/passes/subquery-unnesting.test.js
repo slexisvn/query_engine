@@ -134,6 +134,21 @@ describe('SubqueryUnnesting', () => {
       expect(result.type).toBe(PlanNodeType.JOIN);
       expect(result.joinType).toBe(JoinType.SEMI);
     });
+
+    it('strips the passthrough subquery projection so correlation columns stay available', () => {
+      const subquery = LogicalProject(
+        [colRef('b', 'val')],
+        LogicalFilter(
+          bin(corrRef('a', 'id'), '=', colRef('b', 'id')),
+          scan('b')
+        )
+      );
+      const plan = depJoin('IN', scan('a'), subquery, [corrRef('a', 'id')], colRef('a', 'val'));
+
+      const result = pass.apply(plan);
+
+      expect(result.children[1].type).not.toBe(PlanNodeType.PROJECT);
+    });
   });
 
   describe('NOT IN → MARK JOIN + FILTER', () => {

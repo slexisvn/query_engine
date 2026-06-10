@@ -70,8 +70,51 @@ describe('JoinElimination', () => {
     });
   });
 
+  describe('LEFT JOIN with renamed right-side columns', () => {
+    function renamed(table, col, outputName) {
+      return { ...colRef(table, col), outputName };
+    }
+
+    it('keeps LEFT JOIN when a renamed right column is referenced by its output name', () => {
+      const rightProject = LogicalProject([renamed('b', 'score', 'rscore')], scan('b'));
+      const join = LogicalJoin(
+        JoinType.LEFT,
+        bin(colRef('a', 'id'), '=', colRef('b', 'id')),
+        scan('a'),
+        rightProject
+      );
+      const plan = LogicalProject(
+        [colRef('a', 'id'), colRef('y', 'rscore')],
+        join
+      );
+
+      const result = pass.apply(plan);
+
+      expect(result.children[0].type).toBe(PlanNodeType.JOIN);
+    });
+
+    it('still eliminates LEFT JOIN when the renamed right columns are unused', () => {
+      const rightProject = LogicalProject([renamed('b', 'score', 'rscore')], scan('b'));
+      const join = LogicalJoin(
+        JoinType.LEFT,
+        bin(colRef('a', 'id'), '=', colRef('b', 'id')),
+        scan('a'),
+        rightProject
+      );
+      const plan = LogicalProject(
+        [colRef('a', 'id')],
+        join
+      );
+
+      const result = pass.apply(plan);
+
+      expect(result.children[0].type).toBe(PlanNodeType.SCAN);
+      expect(result.children[0].table).toBe('a');
+    });
+  });
+
   describe('FILTER parent', () => {
-    it('eliminates LEFT JOIN when right side is unused in FILTER', () => {
+    it('does not eliminate under a bare FILTER (columns may be used above)', () => {
       const join = LogicalJoin(
         JoinType.LEFT,
         bin(colRef('a', 'id'), '=', colRef('b', 'id')),
@@ -86,8 +129,25 @@ describe('JoinElimination', () => {
       const result = pass.apply(plan);
 
       expect(result.type).toBe(PlanNodeType.FILTER);
-      expect(result.children[0].type).toBe(PlanNodeType.SCAN);
-      expect(result.children[0].table).toBe('a');
+      expect(result.children[0].type).toBe(PlanNodeType.JOIN);
+    });
+
+    it('eliminates LEFT JOIN when a PROJECT directly wraps it inside a filtered tree', () => {
+      const join = LogicalJoin(
+        JoinType.LEFT,
+        bin(colRef('a', 'id'), '=', colRef('b', 'id')),
+        scan('a'),
+        scan('b')
+      );
+      const plan = LogicalFilter(
+        bin(colRef('a', 'id'), '>', lit(0)),
+        LogicalProject([colRef('a', 'id'), colRef('a', 'name')], join)
+      );
+
+      const result = pass.apply(plan);
+
+      expect(result.children[0].type).toBe(PlanNodeType.PROJECT);
+      expect(result.children[0].children[0].type).toBe(PlanNodeType.SCAN);
     });
 
     it('keeps LEFT JOIN when right side is used in FILTER condition', () => {
@@ -170,7 +230,7 @@ describe('JoinElimination', () => {
   });
 
   describe('SORT parent', () => {
-    it('eliminates LEFT JOIN when right side is unused in ORDER BY', () => {
+    it('does not eliminate under a bare SORT (columns flow through to output)', () => {
       const join = LogicalJoin(
         JoinType.LEFT,
         bin(colRef('a', 'id'), '=', colRef('b', 'id')),
@@ -185,8 +245,7 @@ describe('JoinElimination', () => {
       const result = pass.apply(plan);
 
       expect(result.type).toBe(PlanNodeType.SORT);
-      expect(result.children[0].type).toBe(PlanNodeType.SCAN);
-      expect(result.children[0].table).toBe('a');
+      expect(result.children[0].type).toBe(PlanNodeType.JOIN);
     });
 
     it('keeps LEFT JOIN when right side is used in ORDER BY', () => {

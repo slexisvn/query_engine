@@ -146,7 +146,17 @@ export class FilterOperator {
     );
 
     if (!result) return null;
-    return this._applySelectionVector(chunk, result.selectionVector, result.matchCount);
+    const count = this._dropNullRows(column, result.selectionVector, result.matchCount);
+    return this._applySelectionVector(chunk, result.selectionVector, count);
+  }
+
+  _dropNullRows(column, sv, count) {
+    if (!column.hasNulls) return count;
+    let w = 0;
+    for (let i = 0; i < count; i++) {
+      if (!column.isNull(sv[i])) sv[w++] = sv[i];
+    }
+    return w;
   }
 
   async _executeBetween(chunk, plan) {
@@ -159,7 +169,8 @@ export class FilterOperator {
     );
 
     if (!result) return null;
-    return this._applySelectionVector(chunk, result.selectionVector, result.matchCount);
+    const count = this._dropNullRows(column, result.selectionVector, result.matchCount);
+    return this._applySelectionVector(chunk, result.selectionVector, count);
   }
 
   async _executeAnd(chunk, plan) {

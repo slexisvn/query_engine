@@ -267,6 +267,22 @@ describe('JoinReorder', () => {
       expect(result.type).toBe(PlanNodeType.JOIN);
     });
   });
+
+  describe('asymmetric joins are not commuted', () => {
+    for (const joinType of [JoinType.SEMI, JoinType.ANTI, JoinType.MARK]) {
+      it(`does not swap children of a ${joinType} join even when cost favors it`, () => {
+        const stats = makeStats({ big: 100000, small: 10 });
+        const pass = new JoinReorder(stats);
+        const plan = LogicalJoin(joinType, eqJoin('big', 'id', 'small', 'fk'), scan('big'), scan('small'));
+
+        const result = pass.apply(plan);
+
+        expect(result.joinType).toBe(joinType);
+        expect(result.children[0].table).toBe('big');
+        expect(result.children[1].table).toBe('small');
+      });
+    }
+  });
 });
 
 function collectScanTables(node) {

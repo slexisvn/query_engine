@@ -12,11 +12,13 @@ export class JoinElimination extends OptimizationPass {
   }
 }
 
+const COLUMN_RESTRICTING_PARENTS = new Set([PlanNodeType.PROJECT, PlanNodeType.AGGREGATE]);
+
 class JoinEliminationRewriter extends PlanRewriter {
   rewriteDefault(node) {
     const newNode = this.rewriteChildren(node);
 
-    if (hasLeftJoinChild(newNode)) {
+    if (COLUMN_RESTRICTING_PARENTS.has(newNode.type) && hasLeftJoinChild(newNode)) {
       return tryEliminateLeftJoin(newNode);
     }
 
@@ -34,11 +36,13 @@ function tryEliminateLeftJoin(parent) {
     if (child.type !== PlanNodeType.JOIN || child.joinType !== JoinType.LEFT) return child;
 
     const rightTables = collectTableAliases(child.children[1]);
+    const rightOutputs = collectOutputNames(child.children[1]);
 
     const usedAbove = new Set();
     collectNodeExprColumns(parent, usedAbove);
 
-    const rightUsed = hasAnyColumnUsed(rightTables, usedAbove);
+    const rightUsed = hasAnyColumnUsed(rightTables, usedAbove)
+      || hasAnyNameUsed(rightOutputs, usedAbove);
 
     if (!rightUsed) {
       return child.children[0];
@@ -106,4 +110,43 @@ function hasAnyColumnUsed(tableAliases, usedColumns) {
     if (tableAliases.has(table)) return true;
   }
   return false;
+}
+
+function hasAnyNameUsed(columnNames, usedColumns) {
+  for (const col of usedColumns) {
+    const name = col.split('.')[1];
+    if (name && columnNames.has(name)) return true;
+  }
+  return false;
+}
+
+function collectOutputNames(node) {
+  const names = new Set();
+  const add = (value) => {
+    const name = (value || '').toUpperCase();
+    if (name) names.add(name);
+  };
+  const outputName = (expr) =>
+    add(expr?.outputName || expr?.alias || expr?.name || expr?.columnName);
+
+  function walk(n) {
+    if (!n) return;
+    switch (n.type) {
+      case PlanNodeType.SCAN:
+        for (const col of n.columns || []) add(col.name || col.columnName);
+        return;
+      case PlanNodeType.PROJECT:
+        for (const expr of n.expressions || []) outputName(expr);
+        return;
+      case PlanNodeType.AGGREGATE:
+        for (const expr of n.groupBy || []) outputName(expr);
+        for (const agg of n.aggregates || []) outputName(agg);
+        return;
+      default:
+        for (const child of getChildren(n)) walk(child);
+    }
+  }
+
+  walk(node);
+  return names;
 }

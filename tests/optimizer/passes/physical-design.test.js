@@ -343,7 +343,7 @@ describe('PhysicalDesign', () => {
 
       const result = pass.apply(plan);
 
-      expect(result._sortedBy).toContain('T.ID');
+      expect(result._sortedBy).toContainEqual({ key: 'T.ID', direction: 'ASC' });
     });
 
     it('FILTER preserves child sort order', () => {

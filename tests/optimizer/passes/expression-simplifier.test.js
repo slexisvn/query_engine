@@ -140,14 +140,14 @@ describe('simplifyExpression', () => {
       expect(result).toBe(col);
     });
 
-    it('X * 0 => 0', () => {
+    it('X * 0 is NOT folded to 0 (NULL * 0 = NULL in SQL)', () => {
       const result = simplifyExpression(bin(colRef('t', 'amount'), '*', lit(0)));
-      expect(result.value).toBe(0);
+      expect(result.kind).toBe(BoundExprKind.BINARY);
     });
 
-    it('0 * X => 0', () => {
+    it('0 * X is NOT folded to 0 (NULL * 0 = NULL in SQL)', () => {
       const result = simplifyExpression(bin(lit(0), '*', colRef('t', 'amount')));
-      expect(result.value).toBe(0);
+      expect(result.kind).toBe(BoundExprKind.BINARY);
     });
 
     it('X / 1 => X', () => {
