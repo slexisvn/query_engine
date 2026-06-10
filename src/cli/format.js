@@ -5,6 +5,11 @@ export function formatResult(result) {
   }
 
   const columnNames = result.columns || Object.keys(result.rows[0]);
+
+  if (columnNames.length === 1 && (columnNames[0] === 'EXPLAIN_PLAN' || columnNames[0] === 'EXPLAIN_ANALYZE')) {
+    console.log(`\n${result.rows[0][columnNames[0]]}\n`);
+    return;
+  }
   const colWidths = columnNames.map(name => name.length);
 
   for (const row of result.rows) {

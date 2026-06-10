@@ -2,6 +2,7 @@ import { Column } from '../../storage/column.js';
 import { DataChunk, DEFAULT_CHUNK_SIZE } from '../../storage/chunk.js';
 import { DataType } from '../../storage/data-type.js';
 import { globalDispatch } from '../../wasm/dispatch.js';
+import { hashValue } from '../../utils/hash.js';
 
 export class HashAggregateOperator {
   constructor(groupByExtractors, groupByTypes, aggregateDefs) {
@@ -63,10 +64,9 @@ export class HashAggregateOperator {
     for (let i = 0; i < size; i++) {
       let key;
       if (groupByCount === 0) {
-        key = '__ALL__';
+        key = GLOBAL_GROUP_KEY;
       } else if (groupByCount === 1) {
-        const v = groupByVals[0][i];
-        key = typeof v === 'bigint' ? v.toString() : String(v);
+        key = groupByVals[0][i];
       } else {
         const parts = new Array(groupByCount);
         for (let g = 0; g < groupByCount; g++) {
@@ -145,6 +145,36 @@ export class HashAggregateOperator {
     return chunks;
   }
 
+  exportPartials(partitionCount) {
+    const mask = partitionCount - 1;
+    const partitions = Array.from({ length: partitionCount }, () => []);
+    for (const [key, group] of this.groups) {
+      partitions[hashGroupKey(key) & mask].push({
+        key,
+        groupValues: group.groupValues,
+        states: group.accumulators.map(acc => acc.exportState()),
+      });
+    }
+    return partitions;
+  }
+
+  absorbPartials(partials) {
+    const aggCount = this.aggregateDefs.length;
+    for (const partial of partials) {
+      let group = this.groups.get(partial.key);
+      if (!group) {
+        group = {
+          groupValues: partial.groupValues,
+          accumulators: this.aggregateDefs.map(def => def.createAccumulator()),
+        };
+        this.groups.set(partial.key, group);
+      }
+      for (let a = 0; a < aggCount; a++) {
+        group.accumulators[a].mergeState(partial.states[a]);
+      }
+    }
+  }
+
   _resolveWasmAggKernel(def) {
     const name = def.name?.toUpperCase();
     if (!name) return null;
@@ -218,13 +248,13 @@ export class HashAggregateOperator {
         : { kind: 'value', result };
     }
 
-    let group = this.groups.get('__ALL__');
+    let group = this.groups.get(GLOBAL_GROUP_KEY);
     if (!group) {
       group = {
         groupValues: [],
         accumulators: this.aggregateDefs.map(def => def.createAccumulator()),
       };
-      this.groups.set('__ALL__', group);
+      this.groups.set(GLOBAL_GROUP_KEY, group);
     }
 
     for (let a = 0; a < contributions.length; a++) {
@@ -239,6 +269,13 @@ export class HashAggregateOperator {
   }
 }
 
+export const GLOBAL_GROUP_KEY = '__ALL__';
+
+export function hashGroupKey(key) {
+  if (key === null || key === undefined) return 0;
+  return hashValue(key);
+}
+
 export class SumAccumulator {
   constructor() { this.sum = 0; this.hasValue = false; }
   add(val) {
@@ -248,42 +285,65 @@ export class SumAccumulator {
     }
   }
   result() { return this.hasValue ? this.sum : null; }
+  exportState() { return this.hasValue ? this.sum : null; }
+  mergeState(state) {
+    if (state !== null && state !== undefined) {
+      this.sum += state;
+      this.hasValue = true;
+    }
+  }
 }
 
 export class CountAccumulator {
   constructor() { this.count = 0; }
   add(val) { if (val !== null && val !== undefined) this.count++; }
   result() { return this.count; }
+  exportState() { return this.count; }
+  mergeState(state) { this.count += state; }
 }
 
 export class CountStarAccumulator {
   constructor() { this.count = 0; }
   add() { this.count++; }
   result() { return this.count; }
+  exportState() { return this.count; }
+  mergeState(state) { this.count += state; }
 }
 
 export class AvgAccumulator {
   constructor() { this.sum = 0; this.count = 0; }
   add(val) { if (val !== null && val !== undefined) { this.sum += Number(val); this.count++; } }
   result() { return this.count > 0 ? this.sum / this.count : null; }
+  exportState() { return { sum: this.sum, count: this.count }; }
+  mergeState(state) { this.sum += state.sum; this.count += state.count; }
 }
 
 export class MinAccumulator {
   constructor() { this.min = null; }
   add(val) { if (val !== null && val !== undefined && (this.min === null || val < this.min)) this.min = val; }
   result() { return this.min; }
+  exportState() { return this.min; }
+  mergeState(state) {
+    if (state !== null && state !== undefined && (this.min === null || state < this.min)) this.min = state;
+  }
 }
 
 export class MaxAccumulator {
   constructor() { this.max = null; }
   add(val) { if (val !== null && val !== undefined && (this.max === null || val > this.max)) this.max = val; }
   result() { return this.max; }
+  exportState() { return this.max; }
+  mergeState(state) {
+    if (state !== null && state !== undefined && (this.max === null || state > this.max)) this.max = state;
+  }
 }
 
 export class CountDistinctAccumulator {
   constructor() { this.values = new Set(); }
   add(val) { if (val !== null && val !== undefined) this.values.add(typeof val === 'bigint' ? Number(val) : val); }
   result() { return this.values.size; }
+  exportState() { return Array.from(this.values); }
+  mergeState(state) { for (const val of state) this.values.add(val); }
 }
 
 export function getAccumulatorFactory(name, distinct = false) {

@@ -39,12 +39,16 @@ const TYPE_TO_BYTE_WIDTH = {
   [DataType.TIMESTAMP]: 8,
 };
 
-export function typedArrayFor(dataType, length) {
+export function typedArrayCtorFor(dataType) {
   const Ctor = TYPE_TO_ARRAY[dataType];
   if (!Ctor) {
     throw new Error(`No TypedArray for type ${dataType}`);
   }
-  return new Ctor(length);
+  return Ctor;
+}
+
+export function typedArrayFor(dataType, length) {
+  return new (typedArrayCtorFor(dataType))(length);
 }
 
 export function byteWidthFor(dataType) {

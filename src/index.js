@@ -414,12 +414,12 @@ export class QueryEngine {
       const { ParallelDispatch } = await import('./parallel/parallel-dispatch.js');
       const parallelDispatch = new ParallelDispatch(pool, regionAllocator, globalDispatch);
 
-      const { MorselAggregate } = await import('./parallel/morsel-aggregate.js');
-      const morselPool = new MorselAggregate(Config.parallelWorkers, Config.aggMorselRows);
+      const { FragmentPool } = await import('./parallel/fragment-pool.js');
+      const fragmentPool = new FragmentPool(Config.parallelWorkers, Config.aggMorselRows);
 
-      this.executor.setParallelContext(pool, parallelDispatch, morselPool);
+      this.executor.setParallelContext(pool, parallelDispatch, fragmentPool);
       this.workerPool = pool;
-      this.morselPool = morselPool;
+      this.fragmentPool = fragmentPool;
       this.parallelEnabled = true;
       return true;
     } catch (_) {
@@ -483,9 +483,9 @@ export class QueryEngine {
       await this.workerPool.shutdown();
       this.workerPool = null;
     }
-    if (this.morselPool) {
-      await this.morselPool.close();
-      this.morselPool = null;
+    if (this.fragmentPool) {
+      await this.fragmentPool.close();
+      this.fragmentPool = null;
     }
     if (this.distributed?.transport) {
       await this.distributed.transport.stop();

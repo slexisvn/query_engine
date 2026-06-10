@@ -5,10 +5,11 @@ import { ChunkSerializer } from './serializer.js';
 import { LRUCache } from '../utils/lru-cache.js';
 
 export class BufferPoolManager {
-  constructor(maxPages, basePath) {
+  constructor(maxPages, basePath, allocatorFactory = null) {
     this.maxPages = maxPages;
     this.cache = new LRUCache(maxPages);
     this.storageDir = basePath;
+    this.allocatorFactory = allocatorFactory;
   }
 
   clear() {
@@ -29,6 +30,9 @@ export class BufferPoolManager {
 
   async readPage(pageId) {
     const data = await fsPromises.readFile(this.getPagePath(pageId));
+    if (this.allocatorFactory) {
+      return ChunkSerializer.deserialize(data, this.allocatorFactory(data.length));
+    }
     return ChunkSerializer.deserialize(data);
   }
 

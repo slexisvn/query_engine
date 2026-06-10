@@ -6,6 +6,12 @@ const env = (key, fallback) => {
   return val !== undefined ? parseInt(val, 10) : fallback;
 };
 
+const envFlag = (key, fallback) => {
+  const val = process.env[key];
+  if (val === undefined) return fallback;
+  return val === '1' || val.toLowerCase() === 'true';
+};
+
 const resolveWorkerCount = () => {
   const raw = env('QE_PARALLEL_WORKERS', 0);
   if (raw > 0) return raw;
@@ -26,6 +32,15 @@ export const Config = {
   parallelThreshold: env('QE_PARALLEL_THRESHOLD', 10000),
   parallelAggThreshold: env('QE_PARALLEL_AGG_THRESHOLD', 50000),
   aggMorselRows: env('QE_AGG_MORSEL_ROWS', 16384),
+  sabColumns: envFlag('QE_SAB_COLUMNS', false),
+  sabArenaSegmentBytes: env('QE_SAB_ARENA_SEGMENT_BYTES', 1 << 20),
+  parallelAggMemoryBytes: env('QE_PARALLEL_AGG_MEMORY_BYTES', 1 << 28),
+  parallelCombineMinGroups: env('QE_PARALLEL_COMBINE_MIN_GROUPS', 8192),
+  aggSpillGroups: env('QE_AGG_SPILL_GROUPS', 1 << 17),
+  vectorGroupRange: env('QE_VECTOR_GROUP_RANGE', 1 << 21),
+  parallelJoinThreshold: env('QE_PARALLEL_JOIN_THRESHOLD', 50000),
+  transportMaxBuffers: env('QE_TRANSPORT_MAX_BUFFERS', 64),
+  aggRadixMultiplier: env('QE_AGG_RADIX_MULTIPLIER', 2),
   regionSize: env('QE_WASM_REGION_SIZE', 16 * 1024 * 1024),
   morselSize: env('QE_MORSEL_SIZE', 262144),
 

@@ -1,5 +1,9 @@
+export function bitmapWordCount(length) {
+  return Math.ceil(length / 32);
+}
+
 export function createBitmap(length) {
-  return new Uint32Array(Math.ceil(length / 32));
+  return new Uint32Array(bitmapWordCount(length));
 }
 
 export function setBit(bitmap, index) {

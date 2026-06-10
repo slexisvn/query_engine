@@ -1,6 +1,7 @@
 import { Column } from './column.js';
 import { DataChunk, DEFAULT_CHUNK_SIZE } from './chunk.js';
 import { BufferPoolManager } from './buffer-pool.js';
+import { columnAllocator } from './sab-arena.js';
 import { Config } from '../config.js';
 
 export class Table {
@@ -9,7 +10,7 @@ export class Table {
     this.schema = schema;
     this.pageIds = [];
     this._rowCount = 0;
-    this.bufferPool = new BufferPoolManager(Config.bufferPoolPages, bufferBasePath);
+    this.bufferPool = new BufferPoolManager(Config.bufferPoolPages, bufferBasePath, columnAllocator);
     this.activeChunk = null;
     this.indexes = [];
   }

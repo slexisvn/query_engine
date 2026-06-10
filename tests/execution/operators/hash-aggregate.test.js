@@ -9,6 +9,7 @@ import {
   MaxAccumulator,
   CountDistinctAccumulator,
   getAccumulatorFactory,
+  hashGroupKey,
 } from '../../../src/execution/operators/hash-aggregate.js';
 import { Column } from '../../../src/storage/column.js';
 import { DataChunk } from '../../../src/storage/chunk.js';
@@ -329,5 +330,139 @@ describe('HashAggregateOperator', () => {
 
       expect(result[0].getValue(0, 0)).toBe(20);
     });
+  });
+});
+
+describe('partial export/absorb (parallel combine contract)', () => {
+  const groupEval = (chunk, row) => chunk.columns[0].get(row);
+
+  function makeOp(defs) {
+    return new HashAggregateOperator([groupEval], ['VARCHAR'], defs);
+  }
+
+  function defs() {
+    return [
+      aggDef('SUM', 1),
+      aggDef('AVG', 1),
+      aggDef('MIN', 1),
+      aggDef('MAX', 1),
+      aggDef('COUNT', 1),
+      countStarDef(),
+    ];
+  }
+
+  async function finalizeRows(op) {
+    const chunks = await op.finalize();
+    const rows = [];
+    for (const chunk of chunks) for (const row of chunk.toRows()) rows.push(row);
+    return rows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  }
+
+  it('absorbing partials from split consumers equals one consumer over all rows', async () => {
+    const rows = [];
+    for (let i = 0; i < 90; i++) rows.push([`g${i % 7}`, i % 9 === 0 ? null : i]);
+    const chunkOf = (slice) => makeChunk([
+      { type: 'VARCHAR', values: slice.map(r => r[0]) },
+      { type: 'FLOAT64', values: slice.map(r => r[1]) },
+    ]);
+
+    const whole = makeOp(defs());
+    await whole.consume(chunkOf(rows));
+
+    const final = makeOp(defs());
+    for (const slice of [rows.slice(0, 30), rows.slice(30, 60), rows.slice(60)]) {
+      const part = makeOp(defs());
+      await part.consume(chunkOf(slice));
+      for (const partition of part.exportPartials(8)) {
+        final.absorbPartials(partition);
+      }
+    }
+
+    expect(await finalizeRows(final)).toEqual(await finalizeRows(whole));
+  });
+
+  it('AVG merges sum and count, not averages of averages', () => {
+    const a = new AvgAccumulator();
+    a.add(1); a.add(2);
+    const b = new AvgAccumulator();
+    b.add(3);
+    const merged = new AvgAccumulator();
+    merged.mergeState(a.exportState());
+    merged.mergeState(b.exportState());
+    expect(merged.result()).toBe(2);
+  });
+
+  it('MIN/MAX merge ignores empty partials and keeps null seed semantics', () => {
+    const min = new MinAccumulator();
+    min.mergeState(new MinAccumulator().exportState());
+    expect(min.result()).toBeNull();
+    min.mergeState(-5);
+    min.mergeState(3);
+    expect(min.result()).toBe(-5);
+
+    const max = new MaxAccumulator();
+    max.mergeState(null);
+    max.mergeState(-7);
+    max.mergeState(-9);
+    expect(max.result()).toBe(-7);
+  });
+
+  it('SUM merge over all-null partials stays null', () => {
+    const sum = new SumAccumulator();
+    sum.mergeState(null);
+    sum.mergeState(null);
+    expect(sum.result()).toBeNull();
+    sum.mergeState(4);
+    expect(sum.result()).toBe(4);
+  });
+
+  it('COUNT DISTINCT merge unions values across partials', () => {
+    const a = new CountDistinctAccumulator();
+    a.add(1); a.add(2);
+    const b = new CountDistinctAccumulator();
+    b.add(2); b.add(3);
+    const merged = new CountDistinctAccumulator();
+    merged.mergeState(a.exportState());
+    merged.mergeState(b.exportState());
+    expect(merged.result()).toBe(3);
+  });
+
+  it('routes the same key to the same radix partition across instances', async () => {
+    const ops = [makeOp([countStarDef()]), makeOp([countStarDef()])];
+    for (const op of ops) {
+      await op.consume(makeChunk([
+        { type: 'VARCHAR', values: ['x', 'y', 'z'] },
+        { type: 'FLOAT64', values: [1, 2, 3] },
+      ]));
+    }
+    const partitionOf = (partitions, key) =>
+      partitions.findIndex(part => part.some(p => p.key === key));
+    const [pa, pb] = ops.map(op => op.exportPartials(16));
+    for (const key of ['x', 'y', 'z']) {
+      expect(partitionOf(pa, key)).toBe(partitionOf(pb, key));
+      expect(partitionOf(pa, key)).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('hashGroupKey is type-aware and stable for numbers, strings, bigints and null', () => {
+    expect(hashGroupKey(null)).toBe(0);
+    expect(hashGroupKey(42)).toBe(hashGroupKey(42));
+    expect(hashGroupKey('42')).toBe(hashGroupKey('42'));
+    expect(hashGroupKey(42n)).toBe(hashGroupKey(42n));
+    expect(hashGroupKey(-0)).toBe(hashGroupKey(-0));
+    expect(typeof hashGroupKey('xin chào')).toBe('number');
+  });
+
+  it('single-key groups use raw values: null group does not collide with the string "null"', async () => {
+    const op = makeOp([countStarDef()]);
+    await op.consume(makeChunk([
+      { type: 'VARCHAR', values: ['null', null, 'null', null, null] },
+      { type: 'FLOAT64', values: [1, 2, 3, 4, 5] },
+    ]));
+    const rows = (await op.finalize()).flatMap(c => c.toRows());
+    const byKey = new Map(rows.map(r => [r[0], r[1]]));
+    expect(byKey.get('null')).toBe(2);
+    expect(byKey.get(null)).toBe(3);
+    expect(rows.length).toBe(2);
   });
 });

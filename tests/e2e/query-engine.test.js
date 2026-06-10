@@ -691,7 +691,7 @@ describe('QueryEngine', () => {
 
         const parEngine = salesEngine();
         const enabled = await parEngine.enableParallel();
-        if (!enabled || !parEngine.morselPool) { parEngine.close(); return; }
+        if (!enabled || !parEngine.fragmentPool) { parEngine.close(); return; }
         Config.parallelAggThreshold = 0;
         const parallel = (await parEngine.run(sql)).rows;
         await parEngine.shutdown();
