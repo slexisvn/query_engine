@@ -123,6 +123,9 @@ export class Column {
   _setNull(index) {
     this.hasNulls = true;
     clearBit(this.nullBitmap, index);
+    if (this.dataType === DataType.VARCHAR) {
+      this.offsets[index + 1] = this.offsets[index];
+    }
     if (index >= this.length) {
       this.length = index + 1;
     }

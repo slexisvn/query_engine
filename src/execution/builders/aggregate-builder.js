@@ -152,21 +152,37 @@ export async function buildPartialAggregate(executor, node) {
     executor.normalizeExecType(expr?.dataType || expr?.resultType || 'VARCHAR')
   );
 
-  const aggDefs = node.aggregates.map(agg => {
+  const aggDefs = [];
+  const aggSchemaCols = [];
+  const mappingAggs = [];
+  for (const agg of node.aggregates) {
+    const funcName = (agg.func || agg.name || '').toUpperCase();
     const valueExtractor = agg.args && agg.args.length > 0
       ? compileExpression(agg.args[0], child.columnMapping)
       : () => 1;
+    const extract = (chunk, rowIdx) => {
+      const val = valueExtractor(chunk, rowIdx);
+      return typeof val === 'bigint' ? Number(val) : val;
+    };
 
-    return {
+    if (funcName === 'AVG_PARTIAL') {
+      aggDefs.push({ name: 'SUM', resultType: 'FLOAT64', createAccumulator: getAccumulatorFactory('SUM'), extractValue: extract });
+      aggDefs.push({ name: 'COUNT', resultType: 'FLOAT64', createAccumulator: getAccumulatorFactory('COUNT'), extractValue: extract });
+      aggSchemaCols.push({ name: '_avg_sum', dataType: 'FLOAT64', tableAlias: '' });
+      aggSchemaCols.push({ name: '_avg_count', dataType: 'FLOAT64', tableAlias: '' });
+      mappingAggs.push({ func: 'SUM', args: agg.args }, { func: 'COUNT', args: agg.args });
+      continue;
+    }
+
+    aggDefs.push({
       name: agg.func || agg.name,
       resultType: executor.normalizeAggResultType(agg),
       createAccumulator: getAccumulatorFactory(agg.func || agg.name, agg.distinct),
-      extractValue: (chunk, rowIdx) => {
-        const val = valueExtractor(chunk, rowIdx);
-        return typeof val === 'bigint' ? Number(val) : val;
-      },
-    };
-  });
+      extractValue: extract,
+    });
+    aggSchemaCols.push({ name: (agg.func || agg.name || '').toLowerCase(), dataType: executor.normalizeAggResultType(agg), tableAlias: '' });
+    mappingAggs.push(agg);
+  }
 
   const schema = [
     ...(node.groupBy || []).map((expr, i) => ({
@@ -174,14 +190,10 @@ export async function buildPartialAggregate(executor, node) {
       dataType: groupByTypes[i],
       tableAlias: expr?.tableAlias || '',
     })),
-    ...node.aggregates.map(agg => ({
-      name: (agg.func || agg.name || '').toLowerCase(),
-      dataType: executor.normalizeAggResultType(agg),
-      tableAlias: '',
-    })),
+    ...aggSchemaCols,
   ];
 
-  const columnMapping = aggregateSchemaMapping(schema, node.groupBy || [], node.aggregates);
+  const columnMapping = aggregateSchemaMapping(schema, node.groupBy || [], mappingAggs);
 
   return {
     schema, columnMapping,
@@ -202,16 +214,41 @@ export async function buildFinalAggregate(executor, node) {
   );
 
   const finalAggs = node.aggregates;
+  const partialAggs = node.partialAggregates || finalAggs;
+  const partialWidth = (agg) => ((agg.func || agg.name || '').toUpperCase() === 'AVG_PARTIAL' ? 2 : 1);
+  const partialStarts = [];
+  let partialOffset = groupByCount;
+  for (let i = 0; i < finalAggs.length; i++) {
+    partialStarts.push(partialOffset);
+    partialOffset += partialWidth(partialAggs[i] || finalAggs[i]);
+  }
+
   const aggDefs = finalAggs.map((agg, aggIdx) => {
     const funcName = (agg.func || agg.name || '').toUpperCase();
-    const partialColIdx = groupByCount + aggIdx;
+    const start = partialStarts[aggIdx];
+
+    if (funcName === 'AVG_FINAL') {
+      return {
+        name: 'AVG',
+        resultType: executor.normalizeAggResultType(agg),
+        createAccumulator: getAccumulatorFactory('AVG_FINAL', false),
+        extractValue: (chunk, rowIdx) => {
+          const s = chunk.columns[start]?.get(rowIdx);
+          const c = chunk.columns[start + 1]?.get(rowIdx);
+          return [
+            typeof s === 'bigint' ? Number(s) : s,
+            typeof c === 'bigint' ? Number(c) : c,
+          ];
+        },
+      };
+    }
 
     return {
-      name: funcName === 'AVG_FINAL' ? 'AVG' : funcName,
+      name: funcName,
       resultType: executor.normalizeAggResultType(agg),
       createAccumulator: getAccumulatorFactory(funcName, false),
       extractValue: (chunk, rowIdx) => {
-        const val = chunk.columns[partialColIdx]?.get(rowIdx);
+        const val = chunk.columns[start]?.get(rowIdx);
         return typeof val === 'bigint' ? Number(val) : val;
       },
     };

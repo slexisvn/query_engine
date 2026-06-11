@@ -8,6 +8,7 @@ import {
   MinAccumulator,
   MaxAccumulator,
   CountDistinctAccumulator,
+  AvgFinalAccumulator,
   getAccumulatorFactory,
   hashGroupKey,
 } from '../../../src/execution/operators/hash-aggregate.js';
@@ -464,5 +465,34 @@ describe('partial export/absorb (parallel combine contract)', () => {
     expect(byKey.get('null')).toBe(2);
     expect(byKey.get(null)).toBe(3);
     expect(rows.length).toBe(2);
+  });
+});
+
+describe('AvgFinalAccumulator (distributed AVG combine)', () => {
+  it('combines (sum,count) partials into a weighted average, not average-of-averages', () => {
+    const acc = new AvgFinalAccumulator();
+    // three workers with uneven partition sizes: sums 1650/1620/1631 over counts 67/67/66
+    acc.add([1650, 67]);
+    acc.add([1620, 67]);
+    acc.add([1631, 66]);
+    expect(acc.result()).toBeCloseTo((1650 + 1620 + 1631) / (67 + 67 + 66), 9);
+    // average-of-averages would be ((1650/67)+(1620/67)+(1631/66))/3 — different value
+    const avgOfAvg = (1650 / 67 + 1620 / 67 + 1631 / 66) / 3;
+    expect(acc.result()).not.toBeCloseTo(avgOfAvg, 4);
+  });
+
+  it('returns null when total count is zero (all-null partitions)', () => {
+    const acc = new AvgFinalAccumulator();
+    acc.add([null, 0]);
+    acc.add([null, 0]);
+    expect(acc.result()).toBeNull();
+  });
+
+  it('factory maps AVG_FINAL to the sum/count combiner', () => {
+    const acc = getAccumulatorFactory('AVG_FINAL')();
+    expect(acc).toBeInstanceOf(AvgFinalAccumulator);
+    acc.add([10, 2]);
+    acc.add([20, 3]);
+    expect(acc.result()).toBeCloseTo(30 / 5, 9);
   });
 });

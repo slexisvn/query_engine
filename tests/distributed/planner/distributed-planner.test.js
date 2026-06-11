@@ -64,6 +64,14 @@ describe('DistributedPlanner', () => {
     expect(leafs.length).toBe(2);
   });
 
+  it('throws (does not silently run local) when a partitioned table has no available workers', () => {
+    const localOnly = new NodeDescriptor({ nodeId: 'coord', host: '127.0.0.1', port: 9400, role: NodeRole.COORDINATOR });
+    const emptyCluster = new ClusterManager(localOnly, { heartbeatIntervalMs: 100000 });
+    const scan = LogicalScan('ORDERS', ['ID'], 'ORDERS');
+    const planner = new DistributedPlanner(pm, emptyCluster);
+    expect(() => planner.fragmentize(scan)).toThrow(/no workers are available/);
+  });
+
   it('produces valid topological order', () => {
     const scan = LogicalScan('ORDERS', ['ID'], 'ORDERS');
     scan._cardinality = 1000;

@@ -7,6 +7,8 @@ import { LoaderFactory } from './loaders/loader-factory.js';
 import { formatResult } from './format.js';
 import { HttpTransport } from '../distributed/transport/http-transport.js';
 import { NodeDescriptor, NodeRole } from '../distributed/cluster/node-descriptor.js';
+import { RoundRobinPartitionStrategy } from '../distributed/partition/partition-strategy.js';
+import { Config } from '../config.js';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -47,9 +49,9 @@ async function main() {
       process.exit(1);
     }
     const loader = LoaderFactory.getLoader(resolvedPath);
-    const tableName = await loader.load(engine, resolvedPath);
+    const tableName = await loader.load(engine, resolvedPath, { maxRows: Config.coordinatorSchemaSampleRows });
     const storage = catalog.getTableStorage(tableName);
-    console.log(`[load] ${tableName} (${storage.rowCount()} rows)`);
+    console.log(`[load] ${tableName} (schema from ${storage.rowCount()} sample rows; data lives on workers)`);
   }
 
   const nodeId = `coordinator-${port}`;
@@ -64,6 +66,12 @@ async function main() {
     transport,
   });
 
+  for (const tableName of engine.catalog.listTables()) {
+    engine.distributed.partitionMap.registerTable(tableName, new RoundRobinPartitionStrategy(), 1, new Map());
+  }
+
+  const partitionPlacements = new Map();
+
   transport.onRegister((reg) => {
     const workerDesc = new NodeDescriptor({
       nodeId: reg.nodeId,
@@ -72,9 +80,32 @@ async function main() {
       role: NodeRole.WORKER,
     });
     engine.distributed.clusterManager.addNode(workerDesc);
+    engine.distributed.clusterManager.recordHeartbeat(reg.nodeId, Date.now());
     transport.registerNode(reg.nodeId, reg.host, reg.port);
+
+    if (reg.partitionIndex !== undefined && reg.partitionIndex !== null && reg.partitionCount) {
+      const partitionMap = engine.distributed.partitionMap;
+      for (const tableName of engine.catalog.listTables()) {
+        let placements = partitionPlacements.get(tableName);
+        if (!placements) {
+          placements = new Map();
+          partitionPlacements.set(tableName, placements);
+        }
+        const nodes = placements.get(reg.partitionIndex) || [];
+        if (!nodes.includes(reg.nodeId)) nodes.push(reg.nodeId);
+        placements.set(reg.partitionIndex, nodes);
+        partitionMap.registerTable(tableName, new RoundRobinPartitionStrategy(), reg.partitionCount, placements);
+      }
+    }
+
     console.log(`\n[cluster] Worker joined: ${reg.nodeId} (${reg.host}:${reg.port})`);
     rl.prompt();
+  });
+
+  transport.onHeartbeat((msg) => {
+    if (msg && msg.nodeId) {
+      engine.distributed.clusterManager.recordHeartbeat(msg.nodeId, Date.now());
+    }
   });
 
   console.log(`[coordinator] Listening on port ${port}`);

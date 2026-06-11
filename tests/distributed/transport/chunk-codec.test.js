@@ -165,4 +165,23 @@ describe('ChunkCodec', () => {
     buf.writeUInt32LE(0xDEADBEEF, 0);
     expect(() => codec.decode(buf)).toThrow('Invalid chunk codec magic number');
   });
+
+  it('roundtrips VARCHAR columns with a trailing NULL (offsets[rowCount])', () => {
+    const cases = [
+      ['x', 'yy', 'zz', 'w', null],
+      ['x', 'yy', null, null],
+      [null, null, null],
+      ['', 'x', null],
+      ['a', null, 'b', null],
+    ];
+    for (const vals of cases) {
+      const col = new Column(DataType.VARCHAR, vals.length);
+      vals.forEach((v, i) => col.set(i, v));
+      col.length = vals.length;
+      const decoded = codec.decode(codec.encode(new DataChunk([col], vals.length)));
+      const out = [];
+      for (let i = 0; i < decoded.size; i++) out.push(decoded.columns[0].get(i));
+      expect(out).toEqual(vals);
+    }
+  });
 });

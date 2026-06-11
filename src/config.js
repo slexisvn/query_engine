@@ -45,6 +45,7 @@ export const Config = {
   morselSize: env('QE_MORSEL_SIZE', 262144),
 
   clusterPort: env('QE_CLUSTER_PORT', 9400),
+  coordinatorSchemaSampleRows: env('QE_COORD_SCHEMA_SAMPLE_ROWS', 1000),
   heartbeatIntervalMs: env('QE_HEARTBEAT_INTERVAL', 3000),
   heartbeatTimeoutMs: env('QE_HEARTBEAT_TIMEOUT', 10000),
   defaultPartitionCount: env('QE_PARTITION_COUNT', 16),

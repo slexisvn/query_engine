@@ -164,7 +164,9 @@ export class QueryCoordinator {
   }
 
   async _executeRemoteFragment(fragment, targetNodeId) {
-    await this._transport.sendFragment(targetNodeId, fragment.toJSON());
+    const json = fragment.toJSON();
+    json.coordinatorNodeId = this._clusterManager.localNode.nodeId;
+    await this._transport.sendFragment(targetNodeId, json);
 
     await this._waitForFragmentCompletion(fragment);
   }
@@ -245,11 +247,11 @@ export class QueryCoordinator {
     return aliveTargets[fragment.fragmentId % aliveTargets.length];
   }
 
-  _buildOutputConfig(fragment) {
+  _buildOutputConfig(fragment, targetNodeId = this._clusterManager.localNode.nodeId) {
     if (!fragment.outputPartitioning) return null;
 
     return {
-      targetNodes: [this._clusterManager.localNode.nodeId],
+      targetNodes: [targetNodeId],
       exchangeType: fragment.outputPartitioning.exchangeType || 'gather',
       partitionCount: fragment.outputPartitioning.partitionCount,
       channelId: `frag-${fragment.fragmentId}-output`,
@@ -262,11 +264,25 @@ export class QueryCoordinator {
 
   _setupFragmentHandler() {
     this._transport.onFragmentReceived(async (fragmentJson) => {
+      const coordinatorNodeId = fragmentJson.coordinatorNodeId || 'coordinator';
       try {
         const { Fragment } = await import('../planner/fragment.js');
         const fragment = Object.assign(new Fragment({ planRoot: fragmentJson.planRoot }), fragmentJson);
-        await this._fragmentExecutor.execute(fragment, this._buildOutputConfig(fragment));
-      } catch (_) {}
+        await this._fragmentExecutor.execute(fragment, this._buildOutputConfig(fragment, coordinatorNodeId));
+        await this._transport.sendControl(coordinatorNodeId, {
+          type: 'fragment_completed',
+          fragmentId: fragmentJson.fragmentId,
+          nodeId: this._clusterManager.localNode.nodeId,
+        });
+      } catch (err) {
+        try {
+          await this._transport.sendControl(coordinatorNodeId, {
+            type: 'fragment_failed',
+            fragmentId: fragmentJson.fragmentId,
+            error: err.message,
+          });
+        } catch (_) {}
+      }
     });
 
     this._transport.onControlMessage((msg) => {

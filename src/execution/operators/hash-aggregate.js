@@ -318,6 +318,21 @@ export class AvgAccumulator {
   mergeState(state) { this.sum += state.sum; this.count += state.count; }
 }
 
+export class AvgFinalAccumulator {
+  constructor() { this.sum = 0; this.count = 0; }
+  add(pair) {
+    if (!pair) return;
+    const s = pair[0], c = pair[1];
+    if (s !== null && s !== undefined && c !== null && c !== undefined) {
+      this.sum += Number(s);
+      this.count += Number(c);
+    }
+  }
+  result() { return this.count > 0 ? this.sum / this.count : null; }
+  exportState() { return { sum: this.sum, count: this.count }; }
+  mergeState(state) { this.sum += state.sum; this.count += state.count; }
+}
+
 export class MinAccumulator {
   constructor() { this.min = null; }
   add(val) { if (val !== null && val !== undefined && (this.min === null || val < this.min)) this.min = val; }
@@ -356,7 +371,7 @@ export function getAccumulatorFactory(name, distinct = false) {
     case 'COUNT_STAR': return () => new CountStarAccumulator();
     case 'AVG': return () => new AvgAccumulator();
     case 'AVG_PARTIAL': return () => new AvgAccumulator();
-    case 'AVG_FINAL': return () => new AvgAccumulator();
+    case 'AVG_FINAL': return () => new AvgFinalAccumulator();
     case 'MIN': return () => new MinAccumulator();
     case 'MAX': return () => new MaxAccumulator();
     default: throw new Error(`Unknown aggregate: ${name}`);

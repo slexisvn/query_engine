@@ -34,6 +34,7 @@ export class CSVLoader extends DataLoader {
     const partitionIndex = options.partitionIndex ?? null;
     const partitionCount = options.partitionCount ?? null;
     const usePartitionFilter = partitionIndex !== null && partitionCount !== null;
+    const maxRows = options.maxRows ?? null;
 
     return new Promise((resolve, reject) => {
       const tableName = path.basename(resolvedPath, path.extname(resolvedPath)).toUpperCase();
@@ -41,6 +42,7 @@ export class CSVLoader extends DataLoader {
       let table = null;
       let batch = [];
       let rowIndex = 0;
+      let done = false;
 
       const flushBatch = async () => {
         if (batch.length === 0) return;
@@ -48,9 +50,18 @@ export class CSVLoader extends DataLoader {
         batch = [];
       };
 
-      const stream = fs.createReadStream(resolvedPath).pipe(csv());
+      const fileStream = fs.createReadStream(resolvedPath);
+      const stream = fileStream.pipe(csv());
+
+      const finish = () => {
+        if (done) return;
+        done = true;
+        fileStream.destroy();
+        flushBatch().then(() => resolve(tableName)).catch(reject);
+      };
 
       stream.on('data', (data) => {
+        if (done) return;
         if (!schema) {
           schema = this.inferSchema(data);
           const bufferPath = engine.tempManager.allocate('buffer', tableName);
@@ -59,6 +70,10 @@ export class CSVLoader extends DataLoader {
         }
 
         const currentRow = rowIndex++;
+        if (maxRows !== null && currentRow >= maxRows) {
+          finish();
+          return;
+        }
         if (usePartitionFilter && (currentRow % partitionCount) !== partitionIndex) {
           return;
         }
@@ -71,6 +86,8 @@ export class CSVLoader extends DataLoader {
       });
 
       stream.on('end', async () => {
+        if (done) return;
+        done = true;
         try {
           await flushBatch();
           resolve(tableName);
@@ -79,7 +96,7 @@ export class CSVLoader extends DataLoader {
         }
       });
 
-      stream.on('error', reject);
+      stream.on('error', (err) => { if (!done) reject(err); });
     });
   }
 

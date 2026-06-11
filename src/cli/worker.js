@@ -5,6 +5,7 @@ import { QueryEngine } from '../index.js';
 import { LoaderFactory } from './loaders/loader-factory.js';
 import { HttpTransport } from '../distributed/transport/http-transport.js';
 import { FragmentExecutor } from '../distributed/execution/fragment-executor.js';
+import { Config } from '../config.js';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -78,6 +79,7 @@ async function main() {
 
   let fragmentsExecuted = 0;
   let fragmentsFailed = 0;
+  let heartbeatTimer = null;
 
   transport.onFragmentReceived(async (fragmentJson) => {
     const startTime = performance.now();
@@ -149,6 +151,9 @@ async function main() {
   try {
     await transport.sendRegister('coordinator', registration);
     console.log('[worker] Registered with coordinator');
+    heartbeatTimer = setInterval(() => {
+      transport.sendHeartbeat('coordinator', { nodeId }).catch(() => {});
+    }, Config.heartbeatIntervalMs);
   } catch (err) {
     console.error(`[worker] Failed to register: ${err.message}`);
     console.error('[worker] Is the coordinator running?');
@@ -163,6 +168,7 @@ async function main() {
 
   async function shutdown() {
     console.log('\n[worker] Shutting down...');
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
     await transport.stop();
     process.exit(0);
   }

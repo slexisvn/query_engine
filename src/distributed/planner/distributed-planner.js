@@ -218,7 +218,9 @@ export class DistributedPlanner {
   }
 
   _selectNodesForPartitions(tableName, partitionIds, workerNodes) {
-    if (workerNodes.length === 0) return [this._clusterManager.localNode.nodeId];
+    if (workerNodes.length === 0) {
+      throw new Error(`Table "${tableName}" is partitioned but no workers are available to scan it`);
+    }
 
     const nodeSet = new Set();
     for (const pid of partitionIds) {

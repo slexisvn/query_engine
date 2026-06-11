@@ -13,6 +13,7 @@ export class HttpTransport extends Transport {
     this._controlCallbacks = [];
     this._fragmentCallbacks = [];
     this._registerCallbacks = [];
+    this._heartbeatCallbacks = [];
     this._agents = new Map();
   }
 
@@ -106,6 +107,20 @@ export class HttpTransport extends Transport {
     this._registerCallbacks.push(callback);
   }
 
+  onHeartbeat(callback) {
+    this._heartbeatCallbacks.push(callback);
+  }
+
+  async sendHeartbeat(targetNodeId, message) {
+    const target = this._nodes.get(targetNodeId);
+    if (!target) return;
+    const body = Buffer.from(JSON.stringify(message));
+    await this._post(target, '/heartbeat', body, {
+      'Content-Type': 'application/json',
+      'Content-Length': body.length,
+    });
+  }
+
   _handleRequest(req, res) {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const path = url.pathname;
@@ -180,6 +195,10 @@ export class HttpTransport extends Transport {
   }
 
   _handleHeartbeat(body, res) {
+    try {
+      const msg = JSON.parse(body.toString());
+      for (const cb of this._heartbeatCallbacks) cb(msg);
+    } catch (_) {}
     res.writeHead(200);
     res.end(JSON.stringify({ ts: Date.now() }));
   }
