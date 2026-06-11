@@ -111,7 +111,9 @@ export async function buildJoin(executor, node) {
           }
         },
         async finalize() {
-          if (node.joinType === JoinType.LEFT || node.joinType === JoinType.FULL) {
+          const buildIsPreservedSide = node.joinType === JoinType.FULL
+            || (node.joinType === JoinType.LEFT && buildNode === node.children[0]);
+          if (buildIsPreservedSide) {
             const unmatchedRows = buildSide.emitUnmatched(probeInput.schema.length);
             if (unmatchedRows.length > 0) {
               await currentSink.consume(probeOp.buildOutputChunk(unmatchedRows));
@@ -312,6 +314,9 @@ export function prepareParallelJoin(executor, node, buildInput, probeInput, buil
   const buildSide = prepareJoinSide(executor, buildNode, buildInput);
   const probeSide = prepareJoinSide(executor, probeNode, probeInput);
 
+  const buildPreserved = node.joinType === JoinType.FULL
+    || (node.joinType === JoinType.LEFT && buildNode === node.children[0]);
+
   const spec = buildJoinSpec({
     build: buildSide.spec,
     probe: probeSide.spec,
@@ -319,6 +324,7 @@ export function prepareParallelJoin(executor, node, buildInput, probeInput, buil
     probeKeys,
     residualCondition,
     joinType: node.joinType,
+    buildPreserved,
     uniqueKeys: !!node._dedupeBuild && !residualCondition,
     buildMapping: buildInput.columnMapping,
     probeMapping: probeInput.columnMapping,

@@ -125,6 +125,10 @@ export async function buildExchangeReceive(executor, node) {
 
   const schema = node.schema || [];
   const columnMapping = new Map();
+  schema.forEach((col, idx) => {
+    if (col.tableAlias) columnMapping.set(`${col.tableAlias}.${col.name}`.toUpperCase(), idx);
+    columnMapping.set(col.name.toUpperCase(), idx);
+  });
 
   return {
     schema,

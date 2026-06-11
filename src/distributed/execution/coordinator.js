@@ -39,7 +39,8 @@ export class QueryCoordinator {
       const planner = new DistributedPlanner(
         this._partitionMap,
         this._clusterManager,
-        this._engine.precomputedStats
+        this._engine.precomputedStats,
+        this._engine.catalog
       );
       const fragmentPlan = planner.fragmentize(distributedPlan);
 
@@ -250,10 +251,12 @@ export class QueryCoordinator {
   _buildOutputConfig(fragment, targetNodeId = this._clusterManager.localNode.nodeId) {
     if (!fragment.outputPartitioning) return null;
 
+    const op = fragment.outputPartitioning;
     return {
-      targetNodes: [targetNodeId],
-      exchangeType: fragment.outputPartitioning.exchangeType || 'gather',
-      partitionCount: fragment.outputPartitioning.partitionCount,
+      targetNodes: (op.targetNodes && op.targetNodes.length > 0) ? op.targetNodes : [targetNodeId],
+      exchangeType: op.exchangeType || 'gather',
+      partitionCount: op.partitionCount,
+      keyColumns: op.keyColumns,
       channelId: `frag-${fragment.fragmentId}-output`,
     };
   }

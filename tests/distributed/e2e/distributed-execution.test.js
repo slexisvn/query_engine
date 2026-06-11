@@ -100,10 +100,45 @@ describe('distributed execution (real fan-out across in-process nodes)', () => {
     'SELECT val % 4 AS g, AVG(val) AS a FROM SALES GROUP BY val % 4 HAVING COUNT(*) > 10',
     'SELECT cat AS g, COUNT(*) AS c, SUM(val) AS s, AVG(val) AS a FROM SALES GROUP BY cat',
     'SELECT cat AS g, MIN(val) AS mn, MAX(val) AS mx FROM SALES WHERE val > 10 GROUP BY cat',
+    'SELECT id, val FROM SALES WHERE val > 25',
+    'SELECT id, val * 2 AS d FROM SALES WHERE val < 40',
+    'SELECT cat AS g, COUNT(*) AS c FROM SALES GROUP BY cat HAVING COUNT(*) > 5',
   ];
 
   for (const sql of cases) {
     it(`matches single-node and fans out: ${sql.slice(0, 46)}...`, async () => {
+      const expected = canon((await oracle.run(sql)).rows);
+      const got = canon((await coord.distributed.coordinator.execute(sql)).rows);
+      expect(got).toEqual(expected);
+    });
+  }
+
+  const ordered = [
+    'SELECT id, val FROM SALES ORDER BY val DESC, id ASC',
+    'SELECT id, val FROM SALES WHERE val > 20 ORDER BY val ASC, id ASC LIMIT 12',
+    'SELECT t.id AS tid, t.val AS tv FROM SALES t JOIN SALES d ON t.id = d.id ORDER BY t.id, t.val',
+  ];
+  for (const sql of ordered) {
+    it(`order-sensitive matches single-node: ${sql.slice(0, 44)}...`, async () => {
+      const norm = rows => rows.map(r => JSON.stringify(Object.keys(r).sort().map(k => [k, r[k]])));
+      const expected = norm((await oracle.run(sql)).rows);
+      const got = norm((await coord.distributed.coordinator.execute(sql)).rows);
+      expect(got).toEqual(expected);
+    });
+  }
+
+  const unordered = [
+    'SELECT DISTINCT cat FROM SALES',
+    'SELECT DISTINCT val % 5 AS m, cat FROM SALES',
+    'SELECT id, SUM(val) OVER (PARTITION BY cat) AS w FROM SALES',
+    'SELECT t.cat AS g, COUNT(*) AS c, SUM(d.val) AS s FROM SALES t JOIN SALES d ON t.id = d.id GROUP BY t.cat',
+    'SELECT t.id AS tid, d.val AS dv FROM SALES t LEFT JOIN SALES d ON t.id = d.id WHERE t.val > 30',
+    // joins on `cat` (NOT the partition key `id`) force a hash-SHUFFLE join across workers
+    'SELECT COUNT(*) AS c, SUM(t.val) AS s FROM SALES t JOIN SALES d ON t.cat = d.cat WHERE t.id < 15 AND d.id < 15',
+    'SELECT t.id AS tid, d.id AS did FROM SALES t LEFT JOIN SALES d ON t.cat = d.cat WHERE t.id < 6 AND d.val < 4',
+  ];
+  for (const sql of unordered) {
+    it(`matches single-node (ORDER BY/DISTINCT/window/JOIN): ${sql.slice(0, 38)}...`, async () => {
       const expected = canon((await oracle.run(sql)).rows);
       const got = canon((await coord.distributed.coordinator.execute(sql)).rows);
       expect(got).toEqual(expected);

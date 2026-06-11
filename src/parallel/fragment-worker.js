@@ -11,7 +11,6 @@ import {
   joinKeyOf,
   joinKeyHash,
   probeJoinRows,
-  emitsUnmatchedBuild,
   materializeRow,
   buildJoinOutputChunk,
 } from '../execution/operators/join-core.js';
@@ -184,7 +183,7 @@ async function handleJoinProbe({ spec, buildChunks, probeChunks, buildRefs, prob
     onMatched: (item) => { matched[item.idx] = 1; },
   });
 
-  if (emitsUnmatchedBuild(spec.joinType)) {
+  if (spec.buildPreserved) {
     for (let i = 0; i < refCount; i++) {
       if (!matched[i]) {
         rows.push(buildRows[i].concat(new Array(spec.probeColCount).fill(null)));

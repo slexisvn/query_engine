@@ -702,6 +702,67 @@ describe('QueryEngine', () => {
     }
   });
 
+  describe('parallel aggregate spill + parallel join match serial', () => {
+    const saved = {
+      aggThr: Config.parallelAggThreshold,
+      joinThr: Config.parallelJoinThreshold,
+      spill: Config.aggSpillGroups,
+      mem: Config.parallelAggMemoryBytes,
+    };
+    afterEach(() => {
+      Config.parallelAggThreshold = saved.aggThr;
+      Config.parallelJoinThreshold = saved.joinThr;
+      Config.aggSpillGroups = saved.spill;
+      Config.parallelAggMemoryBytes = saved.mem;
+    });
+
+    function factEngine() {
+      const k = [], a = [];
+      for (let i = 0; i < 3000; i++) { k.push(i % 250); a.push(i % 19 === 0 ? null : (i % 200) - 100); }
+      const tSchema = [{ name: 'k', dataType: 'INT32' }, { name: 'a', dataType: 'INT32' }];
+      const dSchema = [{ name: 'dk', dataType: 'INT32' }, { name: 'w', dataType: 'INT32' }];
+      const dk = [], w = [];
+      for (let i = 0; i < 250; i++) { dk.push(i); w.push((i % 40) - 20); }
+      const catalog = new Catalog();
+      registerMockTable(catalog, 'T', tSchema, [makeChunk([{ type: 'INT32', values: k }, { type: 'INT32', values: a }])]);
+      registerMockTable(catalog, 'D', dSchema, [makeChunk([{ type: 'INT32', values: dk }, { type: 'INT32', values: w }])]);
+      return new QueryEngine(catalog);
+    }
+
+    const key = r => JSON.stringify(Object.keys(r).sort().map(k => [k, r[k]]));
+
+    it('high-cardinality GROUP BY with forced spill matches serial', async () => {
+      const sql = 'SELECT k AS g, COUNT(*) AS c, SUM(a) AS s, AVG(a) AS av, MIN(a) AS mn, MAX(a) AS mx FROM T GROUP BY k';
+      const serial = (await factEngine().run(sql)).rows;
+
+      const par = factEngine();
+      const enabled = await par.enableParallel();
+      if (!enabled || !par.fragmentPool) { par.close(); return; }
+      Config.parallelAggThreshold = 0;
+      Config.parallelAggMemoryBytes = 1 << 30;
+      Config.aggSpillGroups = 8;
+      const parallel = (await par.run(sql)).rows;
+      await par.shutdown();
+
+      expect(parallel.map(key).sort()).toEqual(serial.map(key).sort());
+    });
+
+    it('parallel hash join matches serial', async () => {
+      const sql = 'SELECT t.k AS k, COUNT(*) AS c, SUM(d.w) AS s FROM T t JOIN D d ON t.k = d.dk GROUP BY t.k';
+      const serial = (await factEngine().run(sql)).rows;
+
+      const par = factEngine();
+      const enabled = await par.enableParallel();
+      if (!enabled || !par.fragmentPool) { par.close(); return; }
+      Config.parallelAggThreshold = 0;
+      Config.parallelJoinThreshold = 0;
+      const parallel = (await par.run(sql)).rows;
+      await par.shutdown();
+
+      expect(parallel.map(key).sort()).toEqual(serial.map(key).sort());
+    });
+  });
+
   describe('WASM/SIMD ungrouped aggregate correctness', () => {
     function negEngine(aVals, bVals) {
       const schema = [{ name: 'a', dataType: 'INT32' }, { name: 'b', dataType: 'FLOAT64' }];
@@ -942,5 +1003,52 @@ describe('QueryEngine', () => {
       expect(row[keys[2]]).toBe(45);
       engine.close();
     });
+  });
+});
+
+describe('LEFT/FULL join outer-side semantics (HASH path)', () => {
+  // Regression: a LEFT join must preserve only the LEFT side. A bug emitted unmatched
+  // BUILD-side (right/inner) rows too (FULL semantics) whenever the HASH strategy was used.
+  function engine(tRows, dRows) {
+    const tSchema = [{ name: 'k', dataType: 'INT32' }, { name: 'tv', dataType: 'INT32' }];
+    const dSchema = [{ name: 'dk', dataType: 'INT32' }, { name: 'w', dataType: 'INT32' }];
+    const catalog = new Catalog();
+    registerMockTable(catalog, 'L', tSchema, [makeChunk([
+      { type: 'INT32', values: tRows.map(r => r[0]) }, { type: 'INT32', values: tRows.map(r => r[1]) },
+    ])]);
+    registerMockTable(catalog, 'R', dSchema, [makeChunk([
+      { type: 'INT32', values: dRows.map(r => r[0]) }, { type: 'INT32', values: dRows.map(r => r[1]) },
+    ])]);
+    return new QueryEngine(catalog);
+  }
+
+  it('LEFT join drops unmatched right rows and keeps unmatched left rows', async () => {
+    // L keys 0..49 (200 rows), R keys 0..24 + 200..224 (250 rows). R keys 200..224 are unmatched.
+    const tRows = [], dRows = [];
+    for (let i = 0; i < 200; i++) tRows.push([i % 50, i]);
+    for (let i = 0; i < 200; i++) dRows.push([i % 25, i]);
+    for (let i = 0; i < 50; i++) dRows.push([200 + (i % 25), i]); // unmatched right keys
+    const e = engine(tRows, dRows);
+    const rows = (await e.run('SELECT l.k AS k, r.w AS w FROM L l LEFT JOIN R r ON l.k = r.dk')).rows;
+    // no output row may have a key from R-only (>=200): all output keys come from L (0..49)
+    expect(rows.every(r => r.k !== null && r.k < 50)).toBe(true);
+    // every L row appears at least once (matched fan-out or null-filled)
+    const lKeys = new Set(rows.map(r => r.k));
+    for (let k = 0; k < 50; k++) expect(lKeys.has(k)).toBe(true);
+    // L keys 25..49 are unmatched -> appear exactly once each with null w
+    const unmatched = rows.filter(r => r.k >= 25 && r.k < 50);
+    expect(unmatched.every(r => r.w === null)).toBe(true);
+    expect(unmatched.length).toBe(100); // 25 keys * 4 L rows each
+  });
+
+  it('FULL join keeps unmatched rows from both sides', async () => {
+    const tRows = [], dRows = [];
+    for (let i = 0; i < 60; i++) tRows.push([i % 30, i]);   // L keys 0..29
+    for (let i = 0; i < 60; i++) dRows.push([15 + (i % 30), i]); // R keys 15..44
+    const e = engine(tRows, dRows);
+    const rows = (await e.run('SELECT l.k AS lk, r.dk AS rk FROM L l FULL OUTER JOIN R r ON l.k = r.dk')).rows;
+    // L-only keys 0..14 present with null rk; R-only keys 30..44 present with null lk
+    expect(rows.some(r => r.lk !== null && r.lk < 15 && r.rk === null)).toBe(true);
+    expect(rows.some(r => r.rk !== null && r.rk >= 30 && r.lk === null)).toBe(true);
   });
 });

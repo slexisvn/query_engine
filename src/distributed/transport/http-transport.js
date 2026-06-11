@@ -10,6 +10,7 @@ export class HttpTransport extends Transport {
     this._server = null;
     this._nodes = new Map();
     this._chunkListeners = new Map();
+    this._pendingChunks = new Map();
     this._controlCallbacks = [];
     this._fragmentCallbacks = [];
     this._registerCallbacks = [];
@@ -56,10 +57,16 @@ export class HttpTransport extends Transport {
 
   onChunkReceived(channelId, callback) {
     this._chunkListeners.set(channelId, callback);
+    const pending = this._pendingChunks.get(channelId);
+    if (pending) {
+      this._pendingChunks.delete(channelId);
+      for (const { sourceNodeId, data } of pending) callback(sourceNodeId, data);
+    }
   }
 
   removeChunkListener(channelId) {
     this._chunkListeners.delete(channelId);
+    this._pendingChunks.delete(channelId);
   }
 
   async sendFragment(targetNodeId, fragment) {
@@ -161,6 +168,10 @@ export class HttpTransport extends Transport {
     const callback = this._chunkListeners.get(channelId);
     if (callback) {
       callback(sourceNodeId, body);
+    } else {
+      let pending = this._pendingChunks.get(channelId);
+      if (!pending) { pending = []; this._pendingChunks.set(channelId, pending); }
+      pending.push({ sourceNodeId, data: body });
     }
     res.writeHead(200);
     res.end();

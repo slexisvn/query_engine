@@ -323,7 +323,7 @@ export function schemasEqual(a, b) {
 
 export function buildJoinSpec({
   build, probe, buildKeys, probeKeys, residualCondition,
-  joinType, uniqueKeys, buildMapping, probeMapping, combinedMapping,
+  joinType, buildPreserved, uniqueKeys, buildMapping, probeMapping, combinedMapping,
 }) {
   if (!stagesResolvable(build.baseSchema, build.stages)) return null;
   if (!stagesResolvable(probe.baseSchema, probe.stages)) return null;
@@ -343,6 +343,7 @@ export function buildJoinSpec({
     probeKeys,
     residualCondition: residualCondition || null,
     joinType,
+    buildPreserved: !!buildPreserved,
     uniqueKeys: !!uniqueKeys,
     buildColCount: build.schema.length,
     probeColCount: probe.schema.length,

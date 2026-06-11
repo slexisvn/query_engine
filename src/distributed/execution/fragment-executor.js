@@ -96,9 +96,13 @@ export class FragmentExecutor {
   }
 
   async _setupSender(outputConfig) {
+    let keyExtractors = outputConfig.keyExtractors || [];
+    if (outputConfig.keyColumns && outputConfig.keyColumns.length > 0) {
+      keyExtractors = outputConfig.keyColumns.map(idx => (chunk, rowIdx) => chunk.columns[idx].get(rowIdx));
+    }
     const sender = new ExchangeSender(this._transport, outputConfig.targetNodes, {
       exchangeType: outputConfig.exchangeType,
-      keyExtractors: outputConfig.keyExtractors || [],
+      keyExtractors,
       partitionCount: outputConfig.partitionCount,
       channelId: outputConfig.channelId,
     });

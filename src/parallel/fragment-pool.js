@@ -6,7 +6,7 @@ import { SabArena } from '../storage/sab-arena.js';
 import { MorselScheduler } from './morsel-scheduler.js';
 import { shareChunk, encodeChunkSet, transportBytes, ChunkSetReader } from './chunk-transport.js';
 import { instantiateAggregate } from '../execution/fragment-spec.js';
-import { probeJoinRows, emitsOnUnmatchedProbe, emitsUnmatchedBuild, buildJoinOutputChunk } from '../execution/operators/join-core.js';
+import { probeJoinRows, emitsOnUnmatchedProbe, buildJoinOutputChunk } from '../execution/operators/join-core.js';
 
 async function* completionOrder(promises) {
   const queue = [];
@@ -294,7 +294,7 @@ export class FragmentPool {
       const buildRefs = concatRefs(replies.map(r => r.buildPartitions[p]));
       const probeRefs = concatRefs(replies.map(r => r.probePartitions[p]));
       const needProbe = probeRefs.length > 0 && (buildRefs.length > 0 || emitsOnUnmatchedProbe(spec.joinType));
-      const needBuild = buildRefs.length > 0 && emitsUnmatchedBuild(spec.joinType);
+      const needBuild = buildRefs.length > 0 && spec.buildPreserved;
       if (!needProbe && !needBuild) continue;
       const worker = this.workers[tasks.length % this.workers.length];
       tasks.push(this._request(worker, {

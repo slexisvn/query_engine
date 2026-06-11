@@ -92,11 +92,13 @@ async function main() {
         fragmentJson
       );
 
-      const outputConfig = fragmentJson.outputPartitioning
+      const op = fragmentJson.outputPartitioning;
+      const outputConfig = op
         ? {
-          targetNodes: ['coordinator'],
-          exchangeType: fragmentJson.outputPartitioning.exchangeType || 'gather',
-          partitionCount: fragmentJson.outputPartitioning.partitionCount,
+          targetNodes: (op.targetNodes && op.targetNodes.length > 0) ? op.targetNodes : ['coordinator'],
+          exchangeType: op.exchangeType || 'gather',
+          partitionCount: op.partitionCount,
+          keyColumns: op.keyColumns,
           channelId: `frag-${fragment.fragmentId}-output`,
         }
         : null;
