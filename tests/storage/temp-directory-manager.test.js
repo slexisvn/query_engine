@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { TempDirectoryManager } from '../../src/storage/temp-directory-manager.js';
+import { TempDirectoryManager } from '../../src/storage/temp-space/temp-directory-manager.js';
 
 describe('TempDirectoryManager', () => {
   const managers = [];

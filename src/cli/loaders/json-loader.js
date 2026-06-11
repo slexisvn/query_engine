@@ -16,8 +16,8 @@ export class JSONLoader extends DataLoader {
     for await (const obj of streamJsonArray(filePath)) {
       if (!schema) {
         schema = this.inferSchema(obj);
-        const bufferPath = engine.tempManager.allocate('buffer', tableName);
-        table = new Table(tableName, schema, bufferPath);
+        const pageStore = engine.storageBackend.createPageStore(engine.tempManager.allocate('buffer', tableName));
+        table = new Table(tableName, schema, pageStore);
         this.registerToCatalog(engine, tableName, schema, table);
       }
 

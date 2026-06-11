@@ -5,7 +5,6 @@ import { SortOperator, LimitOperator } from '../operators/sort.js';
 import { DistinctOperator } from '../operators/distinct.js';
 import { UnionOperator } from '../operators/union.js';
 import { WindowOperator } from '../operators/window.js';
-import { SpillManager, FsStorage } from '../../storage/spill-manager.js';
 import { CancelToken } from '../pipeline.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 import { registerBufferedChild } from './builder-utils.js';
@@ -82,8 +81,8 @@ export async function buildSort(executor, node) {
     schema: child.schema,
     columnMapping: child.columnMapping,
     register: (graph, currentPipelineId, currentSink) => {
-      const spillPath = executor.tempManager.allocate('spill', 'sort');
-      const sortOp = new SortOperator(keyExtractors, node.limit, node.offset || 0, new SpillManager(new FsStorage(spillPath)));
+      const spillHandle = executor.tempManager.allocate('spill', 'sort');
+      const sortOp = new SortOperator(keyExtractors, node.limit, node.offset || 0, executor.storageBackend.createSpillManager(spillHandle));
       const sortSink = {
         async consume(chunk) { await sortOp.consume(chunk); },
         async finalize() {}
@@ -116,8 +115,8 @@ export async function buildTopN(executor, node) {
     schema: child.schema,
     columnMapping: child.columnMapping,
     register: (graph, currentPipelineId, currentSink) => {
-      const spillPath = executor.tempManager.allocate('spill', 'topn');
-      const sortOp = new SortOperator(keyExtractors, node.count, node.offset || 0, new SpillManager(new FsStorage(spillPath)));
+      const spillHandle = executor.tempManager.allocate('spill', 'topn');
+      const sortOp = new SortOperator(keyExtractors, node.count, node.offset || 0, executor.storageBackend.createSpillManager(spillHandle));
       const sortSink = {
         async consume(chunk) { await sortOp.consume(chunk); },
         async finalize() {}

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { SortOperator, LimitOperator } from '../../../src/execution/operators/sort.js';
-import { SpillManager, MemoryStorage } from '../../../src/storage/spill-manager.js';
+import { SpillManager } from '../../../src/storage/spill-manager/spill-manager.js';
+import { MemoryStorage } from '../../../src/storage/spill-manager/memory-storage.js';
 import { Column } from '../../../src/storage/column.js';
 import { DataChunk } from '../../../src/storage/chunk.js';
 import { Config } from '../../../src/config.js';

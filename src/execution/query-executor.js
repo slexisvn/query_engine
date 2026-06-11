@@ -7,6 +7,7 @@ import { ResultSink } from './result-sink.js';
 import { PipelineGraph } from './pipeline.js';
 import { TaskScheduler } from './scheduler.js';
 import { Config } from '../config.js';
+import { MemoryStorageBackend } from '../storage/backend/memory-storage-backend.js';
 import { buildScan, buildIndexScan, buildSingleRow, buildEmpty } from './builders/source-builders.js';
 import {
   buildFilter, buildProject, buildSort, buildTopN,
@@ -44,9 +45,10 @@ const BUILDERS = {
 };
 
 export class QueryExecutor {
-  constructor(catalog, tempManager) {
+  constructor(catalog, tempManager, storageBackend = null) {
     this.catalog = catalog;
     this.tempManager = tempManager;
+    this.storageBackend = storageBackend ?? new MemoryStorageBackend();
     this.cteResults = new Map();
     this.cteDefinitions = new Map();
     this.workerPool = null;

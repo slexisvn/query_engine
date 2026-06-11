@@ -132,7 +132,8 @@ export class ChunkSerializer {
 }
 
 function copyBytesInto(buffer, offset, view, byteLength) {
-  buffer.copy(new Uint8Array(view.buffer, view.byteOffset, byteLength), 0, offset, offset + byteLength);
+  const dest = new Uint8Array(view.buffer, view.byteOffset, byteLength);
+  dest.set(buffer.subarray(offset, offset + byteLength));
   return offset + byteLength;
 }
 

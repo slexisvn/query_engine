@@ -15,7 +15,8 @@ export class QueryCoordinator {
     this._fragmentExecutor = new FragmentExecutor(
       queryEngine.catalog,
       queryEngine.tempManager,
-      transport
+      transport,
+      queryEngine.storageBackend
     );
     this._nextQueryId = 1;
     this._setupFragmentHandler();

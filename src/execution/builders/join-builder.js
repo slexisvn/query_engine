@@ -4,7 +4,6 @@ import { extractJoinKeys } from '../join-utils.js';
 import { HashJoinBuild, HashJoinProbe } from '../operators/hash-join.js';
 import { MergeJoinOperator } from '../operators/merge-join.js';
 import { NestedLoopJoinOperator } from '../operators/nested-loop-join.js';
-import { SpillManager, FsStorage } from '../../storage/spill-manager.js';
 import {
   extractStageChain,
   buildJoinSpec,
@@ -70,12 +69,12 @@ export async function buildJoin(executor, node) {
     });
   }
 
-  const joinSpillPath = executor.tempManager.allocate('spill', 'join');
+  const joinSpillHandle = executor.tempManager.allocate('spill', 'join');
   const makeBuildSide = () => new HashJoinBuild(
     buildKeys.map(k => compileExpression(k, buildInput.columnMapping)),
     node.joinType,
     !!node._dedupeBuild && !conditionEvaluator,
-    new SpillManager(new FsStorage(joinSpillPath)),
+    executor.storageBackend.createSpillManager(joinSpillHandle),
   );
   const makeProbeOp = (buildSide) => new HashJoinProbe(
     buildSide,

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { HashJoinBuild, HashJoinProbe } from '../../../src/execution/operators/hash-join.js';
-import { SpillManager, MemoryStorage } from '../../../src/storage/spill-manager.js';
+import { SpillManager } from '../../../src/storage/spill-manager/spill-manager.js';
+import { MemoryStorage } from '../../../src/storage/spill-manager/memory-storage.js';
 import { Column } from '../../../src/storage/column.js';
 import { DataChunk } from '../../../src/storage/chunk.js';
 import { JoinType } from '../../../src/planner/logical-plan.js';

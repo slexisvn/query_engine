@@ -1,39 +1,23 @@
-import { promises as fsPromises } from 'fs';
-import fs from 'fs';
-import path from 'path';
-import { ChunkSerializer } from './serializer.js';
 import { LRUCache } from '../utils/lru-cache.js';
 
 export class BufferPoolManager {
-  constructor(maxPages, basePath, allocatorFactory = null) {
+  constructor(maxPages, pageStore) {
     this.maxPages = maxPages;
     this.cache = new LRUCache(maxPages);
-    this.storageDir = basePath;
-    this.allocatorFactory = allocatorFactory;
+    this.pageStore = pageStore;
   }
 
   clear() {
     this.cache.clear();
-    if (fs.existsSync(this.storageDir)) {
-      fs.rmSync(this.storageDir, { recursive: true, force: true });
-    }
-  }
-
-  getPagePath(pageId) {
-    return path.join(this.storageDir, `${pageId}.qdat`);
+    this.pageStore.clear();
   }
 
   async writePage(pageId, chunk) {
-    const data = ChunkSerializer.serialize(chunk);
-    await fsPromises.writeFile(this.getPagePath(pageId), data);
+    await this.pageStore.write(pageId, chunk);
   }
 
   async readPage(pageId) {
-    const data = await fsPromises.readFile(this.getPagePath(pageId));
-    if (this.allocatorFactory) {
-      return ChunkSerializer.deserialize(data, this.allocatorFactory(data.length));
-    }
-    return ChunkSerializer.deserialize(data);
+    return this.pageStore.read(pageId);
   }
 
   async fetchPage(pageId, bypassCache = false) {

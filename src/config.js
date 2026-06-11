@@ -1,21 +1,14 @@
 import { DEFAULT_CHUNK_SIZE } from './storage/chunk.js';
-import { availableParallelism } from 'os';
+import { getEnvInt, getEnvFloat, getEnvFlag, getCpuCount } from './runtime/platform.js';
 
-const env = (key, fallback) => {
-  const val = process.env[key];
-  return val !== undefined ? parseInt(val, 10) : fallback;
-};
-
-const envFlag = (key, fallback) => {
-  const val = process.env[key];
-  if (val === undefined) return fallback;
-  return val === '1' || val.toLowerCase() === 'true';
-};
+const env = getEnvInt;
+const envFlag = getEnvFlag;
+const envFloat = getEnvFloat;
 
 const resolveWorkerCount = () => {
   const raw = env('QE_PARALLEL_WORKERS', 0);
   if (raw > 0) return raw;
-  return Math.max(1, availableParallelism() - 1);
+  return Math.max(1, getCpuCount() - 1);
 };
 
 export const Config = {
@@ -26,7 +19,7 @@ export const Config = {
   wasmMinChunkSize: env('QE_WASM_MIN_CHUNK', 4096),
   sinkQueueCapacity: env('QE_SINK_QUEUE_CAPACITY', 8),
   btreeOrder: env('QE_BTREE_ORDER', 128),
-  indexScanSelectivityThreshold: parseFloat(process.env.QE_INDEX_SELECTIVITY_THRESHOLD || '0.3'),
+  indexScanSelectivityThreshold: envFloat('QE_INDEX_SELECTIVITY_THRESHOLD', 0.3),
   dependentJoinConcurrency: env('QE_DEPENDENT_JOIN_CONCURRENCY', 1),
   parallelWorkers: resolveWorkerCount(),
   parallelThreshold: env('QE_PARALLEL_THRESHOLD', 10000),
@@ -57,6 +50,6 @@ export const Config = {
   codecCompression: env('QE_CODEC_COMPRESSION', 0),
   distributedWorkers: env('QE_DISTRIBUTED_WORKERS', 0),
   phiAccrualWindowSize: env('QE_PHI_WINDOW_SIZE', 100),
-  phiAccrualThreshold: parseFloat(process.env.QE_PHI_THRESHOLD || '8.0'),
-  networkCostPerByte: parseFloat(process.env.QE_NETWORK_COST_PER_BYTE || '0.001'),
+  phiAccrualThreshold: envFloat('QE_PHI_THRESHOLD', 8.0),
+  networkCostPerByte: envFloat('QE_NETWORK_COST_PER_BYTE', 0.001),
 };

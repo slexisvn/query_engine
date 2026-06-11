@@ -1,16 +1,15 @@
 import { Column } from './column.js';
 import { DataChunk, DEFAULT_CHUNK_SIZE } from './chunk.js';
 import { BufferPoolManager } from './buffer-pool.js';
-import { columnAllocator } from './sab-arena.js';
 import { Config } from '../config.js';
 
 export class Table {
-  constructor(name, schema, bufferBasePath) {
+  constructor(name, schema, pageStore) {
     this.name = name;
     this.schema = schema;
     this.pageIds = [];
     this._rowCount = 0;
-    this.bufferPool = new BufferPoolManager(Config.bufferPoolPages, bufferBasePath, columnAllocator);
+    this.bufferPool = new BufferPoolManager(Config.bufferPoolPages, pageStore);
     this.activeChunk = null;
     this.indexes = [];
   }

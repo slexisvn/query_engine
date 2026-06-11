@@ -6,12 +6,12 @@ import { ExchangeReceiver } from './exchange-operator.js';
 import { FragmentState } from '../planner/fragment.js';
 
 export class FragmentExecutor {
-  constructor(catalog, tempManager, transport, options = {}) {
+  constructor(catalog, tempManager, transport, storageBackend, options = {}) {
     this._catalog = catalog;
     this._tempManager = tempManager;
     this._transport = transport;
     this._activeFragments = new Map();
-    this._localExecutor = new QueryExecutor(catalog, tempManager);
+    this._localExecutor = new QueryExecutor(catalog, tempManager, storageBackend);
   }
 
   async execute(fragment, outputConfig) {

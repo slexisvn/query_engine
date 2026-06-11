@@ -75,7 +75,7 @@ async function main() {
 
   transport.registerNode('coordinator', coordHost, coordPort);
 
-  const fragmentExecutor = new FragmentExecutor(catalog, engine.tempManager, transport);
+  const fragmentExecutor = new FragmentExecutor(catalog, engine.tempManager, transport, engine.storageBackend);
 
   let fragmentsExecuted = 0;
   let fragmentsFailed = 0;
