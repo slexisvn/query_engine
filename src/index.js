@@ -2,8 +2,28 @@ import { QueryEngine, setDefaultStorageBackend } from './engine/query-engine.js'
 import { NodeStorageBackend } from './storage/backend/node-storage-backend.js';
 import { configureWasmSource } from './wasm/loader.js';
 import { nodeByteSource } from './wasm/node-byte-source.js';
+import { Catalog } from './catalog/catalog.js';
+import { DataType } from './storage/data-type.js';
+import { InMemoryRelation } from './dataframe/in-memory-relation.js';
 
 setDefaultStorageBackend((options) => new NodeStorageBackend(options));
 configureWasmSource(nodeByteSource);
 
-export { QueryEngine };
+export { QueryEngine, Catalog, DataType, InMemoryRelation };
+export {
+  DataFrame, GroupedData,
+  Col, col, lit, expr, sum, avg, min, max, count, countStar,
+} from './dataframe/index.js';
+
+export function createEngine(options = {}) {
+  const catalog = options.catalog || new Catalog();
+  return new QueryEngine(catalog, options);
+}
+
+export function registerTable(engine, name, rows, declaredSchema = null) {
+  const relation = InMemoryRelation.fromRows(rows, declaredSchema);
+  const schema = relation.getSchema();
+  engine.catalog.registerTable(name, schema);
+  engine.catalog.registerTableStorage(name, relation);
+  return schema;
+}
