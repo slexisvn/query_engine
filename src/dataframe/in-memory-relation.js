@@ -80,4 +80,80 @@ export class InMemoryRelation {
 
     return new InMemoryRelation(schema, buildChunks(schema, rowValues));
   }
+
+  static builder(declaredSchema = null) {
+    return new RelationBuilder(declaredSchema);
+  }
+}
+
+export class RelationBuilder {
+  constructor(declaredSchema = null) {
+    this._declaredSchema = declaredSchema;
+    this.schema = null;
+    this._names = null;
+    this._extractByIndex = false;
+    this._chunks = [];
+    this._chunk = null;
+    this._finished = false;
+  }
+
+  _initFrom(rows) {
+    const declaredSchema = this._declaredSchema;
+    this._names = declaredSchema
+      ? declaredSchema.map(c => c.name)
+      : (rows.length > 0 ? Object.keys(rows[0]) : []);
+    this._extractByIndex = Array.isArray(rows[0]);
+
+    if (declaredSchema) {
+      this.schema = declaredSchema.map(c => ({ name: c.name, dataType: c.dataType }));
+    } else {
+      const extract = this._extractByIndex
+        ? (row, i) => row[i]
+        : (row, i) => row[this._names[i]];
+      this.schema = this._names.map((name, i) => ({
+        name,
+        dataType: inferColumnType(rows.map(row => extract(row, i))),
+      }));
+    }
+    this._chunk = DataChunk.fromSchema(this.schema, DEFAULT_CHUNK_SIZE);
+  }
+
+  appendRows(rows) {
+    if (this._finished) throw new Error('RelationBuilder: appendRows after finish()');
+    if (!rows || rows.length === 0) return this;
+    if (this.schema === null) this._initFrom(rows);
+
+    const schema = this.schema;
+    const names = this._names;
+    const extract = this._extractByIndex
+      ? (row, i) => row[i]
+      : (row, i) => row[names[i]];
+
+    for (const row of rows) {
+      if (this._chunk.size >= DEFAULT_CHUNK_SIZE) {
+        this._chunks.push(this._chunk);
+        this._chunk = DataChunk.fromSchema(schema, DEFAULT_CHUNK_SIZE);
+      }
+      this._chunk.appendRow(schema.map((col, i) => coerceForColumn(extract(row, i), col.dataType)));
+    }
+    return this;
+  }
+
+  finish() {
+    if (this._finished) throw new Error('RelationBuilder: finish() called twice');
+    this._finished = true;
+
+    if (this.schema === null) {
+      this.schema = this._declaredSchema
+        ? this._declaredSchema.map(c => ({ name: c.name, dataType: c.dataType }))
+        : [];
+      this._chunk = DataChunk.fromSchema(this.schema, DEFAULT_CHUNK_SIZE);
+    }
+    if (this._chunk.size > 0 || this._chunks.length === 0) this._chunks.push(this._chunk);
+
+    const relation = new InMemoryRelation(this.schema, this._chunks);
+    this._chunk = null;
+    this._chunks = [];
+    return relation;
+  }
 }
