@@ -10,6 +10,10 @@ setDefaultStorageBackend((options) => new MemoryStorageBackend(options));
 configureWasmSource(fetchByteSource);
 
 export { QueryEngine, Catalog, DataType, InMemoryRelation, setWasmBaseUrl };
+export {
+  DataFrame, GroupedData,
+  Col, col, lit, expr, sum, avg, min, max, count, countStar,
+} from './dataframe/index.js';
 
 export function createEngine(options = {}) {
   const catalog = options.catalog || new Catalog();

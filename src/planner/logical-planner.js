@@ -115,7 +115,7 @@ export class LogicalPlanner {
 
       case 'CTERef': {
         const cteId = _cteIdCounter++;
-        const ctePlan = this.planQuery(bound.query);
+        const ctePlan = bound.query.prebuiltPlan ?? this.planQuery(bound.query);
         this.cteMap.set(bound.cteName.toUpperCase(), ctePlan);
         return LP.LogicalCTEScan(bound.cteName, cteId);
       }

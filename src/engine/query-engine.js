@@ -203,15 +203,28 @@ export class QueryEngine {
     return new DataFrame(this, plan, schema);
   }
 
-  sql(sqlString) {
+  sql(sqlString, options = {}) {
     const ast = this.parseSQL(sqlString);
     if (ast.kind === 'CreateTableStmt' || ast.kind === 'DropTableStmt'
       || ast.kind === 'ExplainStmt' || ast.kind === 'ExplainAnalyzeStmt') {
       throw new Error('sql() supports query statements only');
     }
-    const bound = this.bind(ast);
+    const binder = new Binder(this.catalog, this.functionRegistry);
+    for (const frame of options.frames || []) {
+      binder.cteScopes.set(frame.name.toUpperCase(), {
+        name: frame.name,
+        columns: frame.columns,
+        bound: { prebuiltPlan: frame.plan },
+      });
+    }
+    const bound = binder.bind(ast);
     const logicalPlan = this.plan(bound);
-    const cteMap = logicalPlan._cteMap || null;
+    let cteMap = logicalPlan._cteMap || null;
+    for (const frame of options.frames || []) {
+      if (!frame.cteMap) continue;
+      cteMap = cteMap || new Map();
+      for (const [k, v] of frame.cteMap) if (!cteMap.has(k)) cteMap.set(k, v);
+    }
     const schema = DFSchema.fromFields(bound.outputColumns.map((c, i) => ({
       name: c.name,
       dataType: c.dataType,

@@ -43,3 +43,29 @@ describe('DataFrame / SQL equivalence', () => {
     expect(dfRows).toEqual(sqlRows);
   });
 });
+
+describe('DataFrame.sql against self', () => {
+  it('runs a projection + WHERE query referencing self', async () => {
+    const result = df.sql('SELECT id, city FROM self WHERE age >= 18');
+    const sqlRows = (await engine.run('SELECT id, city FROM __DF0 WHERE age >= 18')).rows;
+    const dfRows = await df.filter(col('age').ge(lit(18))).select('id', 'city').collect();
+    expect(sortRows(await result.collect())).toEqual(sortRows(sqlRows));
+    expect(sortRows(await result.collect())).toEqual(sortRows(dfRows));
+  });
+
+  it('runs a GROUP BY aggregate referencing self', async () => {
+    const result = df.sql('SELECT city, SUM(spend) AS total FROM self GROUP BY city');
+    const sqlRows = (await engine.run('SELECT city, SUM(spend) AS total FROM __DF0 GROUP BY city')).rows;
+    const dfRows = await df.groupBy('city').agg(sum('spend').alias('total')).collect();
+    expect(sortRows(await result.collect())).toEqual(sortRows(sqlRows));
+    expect(sortRows(await result.collect())).toEqual(sortRows(dfRows));
+  });
+
+  it('returns a lazy DataFrame that stays chainable', async () => {
+    const result = df.sql('SELECT id, city, spend FROM self WHERE age >= 18');
+    const chained = await result.filter(col('spend').gt(lit(80))).select('id').collect();
+    const sqlRows = (await engine.run(
+      'SELECT id FROM __DF0 WHERE age >= 18 AND spend > 80')).rows;
+    expect(sortRows(chained)).toEqual(sortRows(sqlRows));
+  });
+});

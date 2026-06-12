@@ -25,6 +25,7 @@ import { Col, col, expr } from './column-expr.js';
 
 const LEFT_JOIN_PREFIX = '__l';
 const RIGHT_JOIN_PREFIX = '__r';
+const SELF_FRAME_NAME = 'self';
 
 function fieldCol(field) {
   return new Col(
@@ -93,6 +94,18 @@ export class DataFrame {
 
   explain() {
     return planToString(this._plan);
+  }
+
+  sql(sqlString) {
+    const columns = this._schema.fields.map(f => ({ name: f.name, dataType: f.dataType }));
+    return this._engine.sql(sqlString, {
+      frames: [{
+        name: SELF_FRAME_NAME,
+        columns,
+        plan: this._plan,
+        cteMap: this._cteMap,
+      }],
+    });
   }
 
   select(...items) {
