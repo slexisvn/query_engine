@@ -40,6 +40,9 @@ export async function buildJoin(executor, node) {
     node.condition, buildInput.columnMapping, probeInput.columnMapping
   );
 
+  const buildPreserved = node.joinType === JoinType.FULL
+    || (node.joinType === JoinType.LEFT && buildNode === node.children[0]);
+
   const conditionEvaluator = residualCondition
     ? compileExpression(residualCondition, combinedMapping)
     : null;
@@ -75,6 +78,7 @@ export async function buildJoin(executor, node) {
     node.joinType,
     !!node._dedupeBuild && !conditionEvaluator,
     executor.storageBackend.createSpillManager(joinSpillHandle),
+    buildPreserved,
   );
   const makeProbeOp = (buildSide) => new HashJoinProbe(
     buildSide,
@@ -110,9 +114,7 @@ export async function buildJoin(executor, node) {
           }
         },
         async finalize() {
-          const buildIsPreservedSide = node.joinType === JoinType.FULL
-            || (node.joinType === JoinType.LEFT && buildNode === node.children[0]);
-          if (buildIsPreservedSide) {
+          if (buildPreserved) {
             const unmatchedRows = buildSide.emitUnmatched(probeInput.schema.length);
             if (unmatchedRows.length > 0) {
               await currentSink.consume(probeOp.buildOutputChunk(unmatchedRows));

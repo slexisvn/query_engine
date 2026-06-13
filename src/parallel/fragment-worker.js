@@ -128,13 +128,15 @@ async function handleJoinPartition({ spec, buildChunks, probeChunks, buildSchedu
   const buildReader = new StagedReader(new ChunkSetReader(buildChunks), join.buildOperators);
   const probeReader = new StagedReader(new ChunkSetReader(probeChunks), join.probeOperators);
   const probeNullRows = [];
-  const build = await partitionRefs(buildReader, join.buildExtractors, buildScheduler, partitionCount, null);
+  const buildNullRows = spec.buildPreserved ? [] : null;
+  const build = await partitionRefs(buildReader, join.buildExtractors, buildScheduler, partitionCount, buildNullRows);
   const probe = await partitionRefs(probeReader, join.probeExtractors, probeScheduler, partitionCount, probeNullRows);
   return {
     buildPartitions: build.partitions,
     buildNullCount: build.nullCount,
     probePartitions: probe.partitions,
     probeNullRows,
+    buildNullRows: buildNullRows || [],
   };
 }
 

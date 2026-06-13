@@ -289,6 +289,21 @@ export class FragmentPool {
       }
     }
 
+    if (spec.buildPreserved) {
+      const buildNullRows = [];
+      for (const reply of replies) {
+        for (const row of reply.buildNullRows || []) buildNullRows.push(row.concat(new Array(spec.probeColCount).fill(null)));
+      }
+      for (let offset = 0; offset < buildNullRows.length; offset += DEFAULT_CHUNK_SIZE) {
+        yield buildJoinOutputChunk(buildNullRows.slice(offset, offset + DEFAULT_CHUNK_SIZE), {
+          joinType: spec.joinType,
+          buildColCount: spec.buildColCount,
+          buildSchema: outputTypes.build,
+          probeSchema: outputTypes.probe,
+        });
+      }
+    }
+
     const tasks = [];
     for (let p = 0; p < partitionCount; p++) {
       const buildRefs = concatRefs(replies.map(r => r.buildPartitions[p]));

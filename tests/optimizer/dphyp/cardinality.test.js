@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { DefaultCardinalityEstimator } from '../../../src/optimizer/dphyp/cardinality.js';
 import { BoundExprKind } from '../../../src/binder/expression-binder.js';
 import { PlanNodeType, JoinType } from '../../../src/planner/logical-plan.js';
+import { EquiDepthHistogram } from '../../../src/catalog/statistics.js';
 
 function makeColRef(table, column) {
   return { kind: BoundExprKind.COLUMN_REF, tableAlias: table, columnName: column };
@@ -169,6 +170,102 @@ describe('DefaultCardinalityEstimator', () => {
       const semi = est.estimateSemiJoin(1000, 500, cond);
       const anti = est.estimateAntiJoin(1000, 500, cond);
       expect(anti).toBe(Math.max(1, 1000 - semi));
+    });
+  });
+
+  describe('estimateJoin with MCV / histogram (skew-aware)', () => {
+    function mcvCol(ndv, mcv, extra = {}) {
+      return { ndv, min: 0, max: ndv, nullFraction: 0, mcv, ...extra };
+    }
+    function joinStats(colA, colB) {
+      const stats = new Map();
+      const a = new Map(); a.set('FK', colA);
+      const b = new Map(); b.set('PK', colB);
+      stats.set('A', { rowCount: 10000, columnStats: a });
+      stats.set('B', { rowCount: 10000, columnStats: b });
+      return stats;
+    }
+    const joinCond = makeBinary(makeColRef('A', 'FK'), '=', makeColRef('B', 'PK'));
+
+    it('a shared hot MCV value yields a far larger estimate than the NDV-only formula', () => {
+      const est = new DefaultCardinalityEstimator(joinStats(
+        mcvCol(1000, { values: ['0'], frequencies: [0.5] }),
+        mcvCol(1000, { values: ['0'], frequencies: [0.5] }),
+      ));
+      const ndvOnly = Math.round((10000 * 10000) / 1000);
+      expect(est.estimateJoin(10000, 10000, joinCond)).toBeGreaterThan(ndvOnly * 5);
+    });
+
+    it('a uniform MCV distribution stays close to the NDV-only estimate', () => {
+      const flat = { values: [], frequencies: [] };
+      for (let i = 0; i < 10; i++) { flat.values.push(String(i)); flat.frequencies.push(1 / 1000); }
+      const est = new DefaultCardinalityEstimator(joinStats(mcvCol(1000, flat), mcvCol(1000, { ...flat })));
+      const ndvOnly = Math.round((10000 * 10000) / 1000);
+      const r = est.estimateJoin(10000, 10000, joinCond);
+      expect(r).toBeGreaterThan(ndvOnly * 0.7);
+      expect(r).toBeLessThan(ndvOnly * 1.4);
+    });
+
+    it('falls back to NDV-only when one side has no MCV or histogram', () => {
+      const est = new DefaultCardinalityEstimator(joinStats(
+        mcvCol(1000, { values: ['0'], frequencies: [0.5] }),
+        mcvCol(500, null),
+      ));
+      const ndvOnly = Math.round((10000 * 10000) / Math.max(1000, 500));
+      expect(est.estimateJoin(10000, 10000, joinCond)).toBe(ndvOnly);
+    });
+
+    it('clamps selectivity so the estimate never exceeds the cartesian product', () => {
+      const est = new DefaultCardinalityEstimator(joinStats(
+        mcvCol(10, { values: ['0'], frequencies: [0.9] }),
+        mcvCol(10, { values: ['0'], frequencies: [0.9] }),
+      ));
+      expect(est.estimateJoin(10000, 10000, joinCond)).toBeLessThanOrEqual(10000 * 10000);
+    });
+
+    it('does not throw when ndv is smaller than the MCV list', () => {
+      const est = new DefaultCardinalityEstimator(joinStats(
+        mcvCol(2, { values: ['0', '1', '2'], frequencies: [0.4, 0.3, 0.2] }),
+        mcvCol(2, { values: ['0', '1', '2'], frequencies: [0.4, 0.3, 0.2] }),
+      ));
+      const r = est.estimateJoin(100, 100, joinCond);
+      expect(Number.isFinite(r)).toBe(true);
+      expect(r).toBeGreaterThan(0);
+    });
+
+    it('a more concentrated histogram (lower distinct-per-bucket) estimates a larger join', () => {
+      const boundaries = [10, 20, 30, 40];
+      const counts = [25, 25, 25, 25];
+      const concentrated = new EquiDepthHistogram(boundaries, 100, counts, [1, 1, 25, 25]);
+      const spread = new EquiDepthHistogram(boundaries, 100, counts, [25, 25, 25, 25]);
+      const col = (h) => ({ ndv: 76, min: 0, max: 40, nullFraction: 0, mcv: null, histogram: h });
+
+      const concEst = new DefaultCardinalityEstimator(joinStats(col(concentrated), col(concentrated)));
+      const spreadEst = new DefaultCardinalityEstimator(joinStats(col(spread), col(spread)));
+      expect(concEst.estimateJoin(10000, 10000, joinCond))
+        .toBeGreaterThan(spreadEst.estimateJoin(10000, 10000, joinCond));
+    });
+
+    it('semi join credits a hot value confirmed present on the build side', () => {
+      const withOverlap = new DefaultCardinalityEstimator(joinStats(
+        mcvCol(1000, { values: ['0'], frequencies: [0.6] }),
+        mcvCol(50, { values: ['0'], frequencies: [0.5] }),
+      ));
+      const noStats = new DefaultCardinalityEstimator(joinStats(
+        { ndv: 1000, nullFraction: 0, mcv: null },
+        { ndv: 50, nullFraction: 0, mcv: null },
+      ));
+      expect(withOverlap.estimateSemiJoin(10000, 10000, joinCond))
+        .toBeGreaterThan(noStats.estimateSemiJoin(10000, 10000, joinCond));
+    });
+
+    it('anti join remains the complement of the MCV-aware semi join', () => {
+      const est = new DefaultCardinalityEstimator(joinStats(
+        mcvCol(1000, { values: ['0'], frequencies: [0.6] }),
+        mcvCol(50, { values: ['0'], frequencies: [0.5] }),
+      ));
+      const semi = est.estimateSemiJoin(10000, 10000, joinCond);
+      expect(est.estimateAntiJoin(10000, 10000, joinCond)).toBe(Math.max(1, 10000 - semi));
     });
   });
 
@@ -361,6 +458,39 @@ describe('DefaultCardinalityEstimator', () => {
       };
       const sel = est.estimateSelectivity(pred);
       expect(sel).toBeCloseTo(0.98, 2);
+    });
+
+    it('respects a zero null fraction instead of falling back to the default', () => {
+      const est = new DefaultCardinalityEstimator(makeStats());
+      const pred = {
+        kind: BoundExprKind.IS_NULL,
+        expr: makeColRef('ORDERS', 'AMOUNT'),
+        negated: false,
+      };
+      const sel = est.estimateSelectivity(pred);
+      expect(sel).toBeLessThan(0.05);
+    });
+
+    it('IS NOT NULL on a non-nullable column is near-certain', () => {
+      const est = new DefaultCardinalityEstimator(makeStats());
+      const pred = {
+        kind: BoundExprKind.IS_NULL,
+        expr: makeColRef('ORDERS', 'AMOUNT'),
+        negated: true,
+      };
+      const sel = est.estimateSelectivity(pred);
+      expect(sel).toBeCloseTo(1.0, 4);
+    });
+
+    it('falls back to a default null fraction when stats are absent', () => {
+      const est = new DefaultCardinalityEstimator(new Map());
+      const pred = {
+        kind: BoundExprKind.IS_NULL,
+        expr: makeColRef('ORDERS', 'UNKNOWN'),
+        negated: false,
+      };
+      const sel = est.estimateSelectivity(pred);
+      expect(sel).toBeCloseTo(0.05, 4);
     });
   });
 

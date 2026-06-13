@@ -69,24 +69,58 @@ export class DefaultCardinalityEstimator {
       return Math.max(1, Math.round(leftCard * rightCard * sel));
     }
 
-    const leftNdvs = [];
-    const rightNdvs = [];
+    let selectivity = 1.0;
     for (const pred of equiPreds) {
-      leftNdvs.push(this.getColumnNdv(pred.left));
-      rightNdvs.push(this.getColumnNdv(pred.right));
+      selectivity *= this.estimateEquiJoinSelectivity(pred.left, pred.right, leftCard, rightCard);
     }
 
-    const combinedLeftNdv = Math.min(
-      leftNdvs.reduce((acc, n) => acc * n, 1),
-      leftCard
-    );
-    const combinedRightNdv = Math.min(
-      rightNdvs.reduce((acc, n) => acc * n, 1),
-      rightCard
-    );
-    const divisor = Math.max(combinedLeftNdv, combinedRightNdv, 1);
+    return Math.max(1, Math.round(leftCard * rightCard * selectivity));
+  }
 
-    return Math.max(1, Math.round((leftCard * rightCard) / divisor));
+  estimateEquiJoinSelectivity(leftExpr, rightExpr, leftCard, rightCard) {
+    const sA = this.getColumnStats(leftExpr);
+    const sB = this.getColumnStats(rightExpr);
+    const ndA = Math.min(this.getColumnNdv(leftExpr), leftCard);
+    const ndB = Math.min(this.getColumnNdv(rightExpr), rightCard);
+
+    const mcvA = sA?.mcv, mcvB = sB?.mcv;
+    const hasMcv = mcvA?.values?.length && mcvB?.values?.length;
+    const tailRate = this._histogramJoinCollision(sA, sB);
+
+    if (!hasMcv && tailRate === null) {
+      return 1 / Math.max(ndA, ndB, 1);
+    }
+
+    let matched = 0, sumMcvA = 0, sumMcvB = 0, mcvLenA = 0, mcvLenB = 0;
+    if (hasMcv) {
+      const freqB = new Map();
+      for (let i = 0; i < mcvB.values.length; i++) freqB.set(mcvB.values[i], mcvB.frequencies[i]);
+      for (let i = 0; i < mcvA.values.length; i++) {
+        sumMcvA += mcvA.frequencies[i];
+        const fb = freqB.get(mcvA.values[i]);
+        if (fb !== undefined) matched += mcvA.frequencies[i] * fb;
+      }
+      for (let i = 0; i < mcvB.frequencies.length; i++) sumMcvB += mcvB.frequencies[i];
+      mcvLenA = mcvA.values.length;
+      mcvLenB = mcvB.values.length;
+    }
+
+    const otherA = Math.max(0, (1 - (sA?.nullFraction || 0)) - sumMcvA);
+    const otherB = Math.max(0, (1 - (sB?.nullFraction || 0)) - sumMcvB);
+    const ndOtherA = Math.max(1, ndA - mcvLenA);
+    const ndOtherB = Math.max(1, ndB - mcvLenB);
+    const rate = tailRate !== null ? tailRate : 1 / Math.max(ndOtherA, ndOtherB);
+    const tail = otherA * otherB * rate;
+
+    return Math.max(MIN_SELECTIVITY, Math.min(1, matched + tail));
+  }
+
+  _histogramJoinCollision(sA, sB) {
+    const hA = sA?.histogram, hB = sB?.histogram;
+    if (!hA?.bucketDistincts || !hB?.bucketDistincts || !hA.totalCount || !hB.totalCount) return null;
+    const minA = toNumber(sA.min), minB = toNumber(sB.min);
+    if (minA === null || minB === null) return null;
+    return histogramJoinCollision(hA, minA, hB, minB);
   }
 
   estimateLeftJoin(leftCard, rightCard, condition) {
@@ -100,13 +134,35 @@ export class DefaultCardinalityEstimator {
     if (equiPreds.length > 0) {
       let selectivity = 1.0;
       for (const pred of equiPreds) {
-        const leftNdv = this.getColumnNdv(pred.left);
-        const rightNdv = this.getColumnNdv(pred.right);
-        selectivity = Math.min(selectivity, Math.min(1.0, rightNdv / Math.max(leftNdv, 1)));
+        selectivity = Math.min(selectivity, this.estimateSemiJoinSelectivity(pred.left, pred.right));
       }
       return Math.max(1, Math.round(leftCard * selectivity));
     }
     return Math.max(1, Math.round(leftCard * 0.5));
+  }
+
+  estimateSemiJoinSelectivity(leftExpr, rightExpr) {
+    const ndvA = this.getColumnNdv(leftExpr);
+    const ndvB = this.getColumnNdv(rightExpr);
+    const sA = this.getColumnStats(leftExpr);
+    const sB = this.getColumnStats(rightExpr);
+    const mcvA = sA?.mcv, mcvB = sB?.mcv;
+    if (!mcvA?.values?.length || !mcvB?.values?.length) {
+      return Math.min(1.0, ndvB / Math.max(ndvA, 1));
+    }
+
+    const setB = new Set(mcvB.values);
+    let matchfreq = 0, sumMcvA = 0;
+    for (let i = 0; i < mcvA.values.length; i++) {
+      sumMcvA += mcvA.frequencies[i];
+      if (setB.has(mcvA.values[i])) matchfreq += mcvA.frequencies[i];
+    }
+
+    const otherA = Math.max(0, (1 - (sA?.nullFraction || 0)) - sumMcvA);
+    const ndOtherA = Math.max(1, ndvA - mcvA.values.length);
+    const ndOtherB = Math.max(1, ndvB - mcvB.values.length);
+    const tailMatch = otherA * Math.min(1, ndOtherB / ndOtherA);
+    return Math.max(MIN_SELECTIVITY, Math.min(1, matchfreq + tailMatch));
   }
 
   estimateAntiJoin(leftCard, rightCard, condition) {
@@ -299,7 +355,7 @@ export class DefaultCardinalityEstimator {
 
   estimateIsNullSelectivity(predicate) {
     const stats = this.getColumnStats(predicate.expr);
-    const nullFrac = stats?.nullFraction || 0.05;
+    const nullFrac = stats?.nullFraction ?? 0.05;
     return predicate.negated ? Math.max(MIN_SELECTIVITY, 1 - nullFrac) : Math.max(MIN_SELECTIVITY, nullFrac);
   }
 
@@ -439,4 +495,60 @@ function toNumber(value) {
   if (typeof value === 'bigint') return Number(value);
   if (typeof value === 'number') return value;
   return null;
+}
+
+function bucketRanges(hist, colMin) {
+  const lows = new Array(hist.numBuckets);
+  const highs = new Array(hist.numBuckets);
+  for (let i = 0; i < hist.numBuckets; i++) {
+    lows[i] = i === 0 ? colMin : toNumber(hist.boundaries[i - 1]);
+    highs[i] = toNumber(hist.boundaries[i]);
+  }
+  return { lows, highs };
+}
+
+function findBucket(ranges, value) {
+  const { highs } = ranges;
+  let lo = 0, hi = highs.length - 1, ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >>> 1;
+    if (highs[mid] >= value) { ans = mid; hi = mid - 1; } else lo = mid + 1;
+  }
+  return ans >= 0 && value >= ranges.lows[ans] ? ans : -1;
+}
+
+function segFraction(ranges, idx, segWidth) {
+  const bw = ranges.highs[idx] - ranges.lows[idx];
+  return bw > 0 ? Math.min(1, segWidth / bw) : 1;
+}
+
+function histogramJoinCollision(hA, minA, hB, minB) {
+  const A = bucketRanges(hA, minA);
+  const B = bucketRanges(hB, minB);
+  const lo = Math.max(A.lows[0], B.lows[0]);
+  const hi = Math.min(A.highs[hA.numBuckets - 1], B.highs[hB.numBuckets - 1]);
+  if (hi <= lo) return 0;
+
+  const points = new Set([lo, hi]);
+  for (let i = 0; i < hA.numBuckets; i++) if (A.highs[i] > lo && A.highs[i] < hi) points.add(A.highs[i]);
+  for (let i = 0; i < hB.numBuckets; i++) if (B.highs[i] > lo && B.highs[i] < hi) points.add(B.highs[i]);
+  const pts = [...points].sort((x, y) => x - y);
+
+  const totA = hA.totalCount, totB = hB.totalCount;
+  let collision = 0;
+  for (let s = 0; s < pts.length - 1; s++) {
+    const p = pts[s], q = pts[s + 1];
+    const width = q - p;
+    const ai = findBucket(A, (p + q) / 2);
+    const bi = findBucket(B, (p + q) / 2);
+    if (ai < 0 || bi < 0) continue;
+    const fracA = segFraction(A, ai, width);
+    const fracB = segFraction(B, bi, width);
+    const rowsA = hA.bucketCounts[ai] * fracA;
+    const rowsB = hB.bucketCounts[bi] * fracB;
+    const dA = Math.max(1, hA.bucketDistincts[ai] * fracA);
+    const dB = Math.max(1, hB.bucketDistincts[bi] * fracB);
+    collision += (rowsA / totA) * (rowsB / totB) / Math.max(dA, dB);
+  }
+  return Math.max(0, Math.min(1, collision));
 }

@@ -18,13 +18,15 @@ function getPartition(keyStr) {
 }
 
 export class HashJoinBuild {
-  constructor(keyExtractors, joinType, uniqueKeys, spillManager) {
+  constructor(keyExtractors, joinType, uniqueKeys, spillManager, buildPreserved = false) {
     this.keyExtractors = keyExtractors;
     this.joinType = joinType || JoinType.INNER;
     this.uniqueKeys = !!uniqueKeys;
+    this.buildPreserved = !!buildPreserved;
     this.hashTable = new Map();
     this.buildSchema = null;
     this.hasNullKey = false;
+    this.nullKeyRows = [];
 
     this.spillManager = spillManager;
     this.partitions = Array.from({ length: Config.hashJoinPartitions }, () => ({
@@ -56,6 +58,7 @@ export class HashJoinBuild {
       const key = this.buildKey(flat, i);
       if (key === null) {
         this.hasNullKey = true;
+        if (this.buildPreserved) this.nullKeyRows.push(chunkRows[i]);
         continue;
       }
       const pIdx = getPartition(key);
@@ -151,6 +154,11 @@ export class HashJoinBuild {
           }
         }
       }
+    }
+    for (let n = 0; n < this.nullKeyRows.length; n++) {
+      const outRow = [...this.nullKeyRows[n]];
+      for (let c = 0; c < probeColCount; c++) outRow.push(null);
+      rows.push(outRow);
     }
     return rows;
   }

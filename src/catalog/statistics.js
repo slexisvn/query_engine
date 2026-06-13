@@ -54,11 +54,18 @@ export class TableStatistics {
 }
 
 export class EquiDepthHistogram {
-  constructor(boundaries, numRows) {
-    this.boundaries = boundaries;  
+  constructor(boundaries, numRows, bucketCounts = null, bucketDistincts = null) {
+    this.boundaries = boundaries;
     this.numBuckets = boundaries.length;
     this.numRows = numRows;
     this.rowsPerBucket = numRows / Math.max(this.numBuckets, 1);
+    this.bucketCounts = bucketCounts;
+    this.bucketDistincts = bucketDistincts;
+    this.totalCount = bucketCounts ? bucketCounts.reduce((a, b) => a + b, 0) : null;
+  }
+
+  bucketInfo() {
+    return { boundaries: this.boundaries, bucketCounts: this.bucketCounts, bucketDistincts: this.bucketDistincts };
   }
 
   estimateLessThan(value) {
@@ -186,7 +193,18 @@ export class StatisticsCollector {
       boundaries.push(sorted[idx]);
     }
 
-    return new EquiDepthHistogram(boundaries, totalRows);
+    const bucketCounts = new Array(numBuckets).fill(0);
+    const bucketDistincts = new Array(numBuckets).fill(0);
+    const bucketOf = (j) => Math.min(Math.floor(j / step), numBuckets - 1);
+    for (let j = 0; j < sorted.length; j++) {
+      const b = bucketOf(j);
+      bucketCounts[b]++;
+      if (j === 0 || bucketOf(j - 1) !== b || toNum(sorted[j]) !== toNum(sorted[j - 1])) {
+        bucketDistincts[b]++;
+      }
+    }
+
+    return new EquiDepthHistogram(boundaries, totalRows, bucketCounts, bucketDistincts);
   }
 
   static _buildMCV(valueCounts, nonNullCount) {

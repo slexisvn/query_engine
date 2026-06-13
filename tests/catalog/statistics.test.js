@@ -140,6 +140,38 @@ describe('EquiDepthHistogram', () => {
       expect(wide).toBeGreaterThanOrEqual(narrow);
     });
   });
+
+  describe('per-bucket statistics', () => {
+    it('round-trips bucketCounts and bucketDistincts via bucketInfo', () => {
+      const h = new EquiDepthHistogram([10, 20, 30], 90, [5, 8, 7], [1, 6, 7]);
+      const info = h.bucketInfo();
+      expect(info.boundaries).toEqual([10, 20, 30]);
+      expect(info.bucketCounts).toEqual([5, 8, 7]);
+      expect(info.bucketDistincts).toEqual([1, 6, 7]);
+      expect(h.totalCount).toBe(20);
+    });
+
+    it('defaults per-bucket fields to null when not provided', () => {
+      const h = new EquiDepthHistogram([10, 20], 50);
+      expect(h.bucketInfo().bucketCounts).toBeNull();
+      expect(h.bucketInfo().bucketDistincts).toBeNull();
+      expect(h.totalCount).toBeNull();
+    });
+
+    it('collector builds per-bucket distinct counts that expose skew', () => {
+      const hot = Array.from({ length: 24 }, () => 0);
+      const tail = [];
+      for (let v = 1; v <= 24; v++) tail.push(v);
+      const hist = StatisticsCollector._buildHistogram([...hot, ...tail], 48);
+
+      expect(hist.bucketCounts).not.toBeNull();
+      expect(hist.bucketDistincts).not.toBeNull();
+      expect(hist.bucketCounts.reduce((a, b) => a + b, 0)).toBe(48);
+      const firstBucketDistinct = hist.bucketDistincts[0];
+      const lastBucketDistinct = hist.bucketDistincts[hist.numBuckets - 1];
+      expect(firstBucketDistinct).toBeLessThan(lastBucketDistinct);
+    });
+  });
 });
 
 describe('StatisticsCollector', () => {

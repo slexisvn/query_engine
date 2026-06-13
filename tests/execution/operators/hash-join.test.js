@@ -261,6 +261,47 @@ describe('HashJoinBuild + HashJoinProbe', () => {
     });
   });
 
+  describe('preserved build side with null keys', () => {
+    it('emits null-key build rows as unmatched when the build side is preserved', async () => {
+      const buildSide = new HashJoinBuild([keyAt(0)], JoinType.LEFT, false, memSpill(), true);
+      await buildSide.consume(makeChunk([
+        { type: 'INT32', values: [1, null, 3] },
+        { type: 'VARCHAR', values: ['a', 'b', 'c'] },
+      ]));
+      await buildSide.finalize();
+
+      const probe = new HashJoinProbe(buildSide, [keyAt(0)], 2, 1, JoinType.LEFT);
+      const matchChunk = await probe.process(makeChunk([{ type: 'INT32', values: [1] }]));
+      const matchedLabels = (matchChunk ? matchChunk.toRows() : []).map(r => r[1]);
+
+      const unmatched = buildSide.emitUnmatched(1);
+      const unmatchedLabels = unmatched.map(r => r[1]);
+
+      expect(matchedLabels).toEqual(['a']);
+      expect(unmatchedLabels).toContain('b');
+      expect(unmatchedLabels).toContain('c');
+      expect(matchedLabels.length + unmatched.length).toBe(3);
+      const nullKeyRow = unmatched.find(r => r[1] === 'b');
+      expect(nullKeyRow[0]).toBeNull();
+      expect(nullKeyRow[2]).toBeNull();
+    });
+
+    it('still drops null-key build rows when the build side is not preserved', async () => {
+      const buildSide = new HashJoinBuild([keyAt(0)], JoinType.LEFT, false, memSpill(), false);
+      await buildSide.consume(makeChunk([
+        { type: 'INT32', values: [1, null, 3] },
+        { type: 'VARCHAR', values: ['a', 'b', 'c'] },
+      ]));
+      await buildSide.finalize();
+
+      const probe = new HashJoinProbe(buildSide, [keyAt(0)], 2, 1, JoinType.LEFT);
+      await probe.process(makeChunk([{ type: 'INT32', values: [1] }]));
+
+      const unmatchedLabels = buildSide.emitUnmatched(1).map(r => r[1]);
+      expect(unmatchedLabels).toEqual(['c']);
+    });
+  });
+
   describe('spill path', () => {
     let savedMemoryLimit;
 
