@@ -13,10 +13,11 @@ const BROWSER_ENTRY = join(SRC, 'browser.js');
 const BUFFER_SHIM = join(__dirname, 'buffer-shim.js');
 
 const WASM_SOURCE = join(ROOT, 'build', 'wasm', 'core.wasm');
-const WASM_DEST = join(DIST, 'core.wasm');
+const WASM_DIR = join(DIST, 'wasm');
+const WASM_DEST = join(WASM_DIR, 'core.wasm');
 
-const NODE_OUTFILE = join(DIST, 'query-engine.node.js');
-const BROWSER_OUTFILE = join(DIST, 'query-engine.browser.js');
+const NODE_OUTFILE = join(DIST, 'bundle', 'node', 'query-engine.node.js');
+const BROWSER_OUTFILE = join(DIST, 'bundle', 'browser', 'query-engine.browser.js');
 
 const NODE_ONLY_SUBSYSTEMS = /(^|\/)(parallel|distributed)\//;
 
@@ -36,8 +37,8 @@ const externalizeNodeSubsystemsPlugin = {
 };
 
 // The node entry loads wasm via a path relative to src/wasm/node-byte-source.js.
-// Once bundled into dist/ that relative path no longer points at build/wasm, so
-// replace the module with a shim that reads core.wasm sitting next to the bundle.
+// Once bundled into dist/bundle/node/ that relative path no longer points at the
+// wasm, so replace the module with a shim that reads core.wasm from dist/wasm/.
 const nodeWasmShimPlugin = {
   name: 'node-wasm-shim',
   setup(build) {
@@ -49,7 +50,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 export function nodeByteSource(name) {
-  return readFile(join(here, name + '.wasm'));
+  return readFile(join(here, '../../wasm', name + '.wasm'));
 }
 `,
     }));
@@ -95,7 +96,7 @@ async function run() {
     : args.includes('--browser') ? 'browser'
     : 'both';
 
-  await mkdir(DIST, { recursive: true });
+  await mkdir(WASM_DIR, { recursive: true });
 
   const tasks = [];
   if (only !== 'browser') tasks.push(buildNode());

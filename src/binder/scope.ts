@@ -1,24 +1,50 @@
+export interface ColumnInfo { name: string; dataType: string | null; }
+
+export interface TableInfo { originalName: string; columns: ColumnInfo[]; isCTE?: boolean; }
+
+export interface ResolvedTable { table: TableInfo; depth: number; }
+
+export interface ResolvedColumn {
+  tableAlias: string;
+  tableName: string;
+  column: ColumnInfo;
+  columnIndex: number;
+  depth: number;
+}
+
+export interface ColumnEntry {
+  tableAlias: string;
+  tableName: string;
+  column: ColumnInfo;
+  columnIndex: number;
+}
+
 export class BinderScope {
-  constructor(parent = null) {
+  parent: BinderScope | null;
+  tables: Map<string, TableInfo>;
+  columns: Map<string, ColumnInfo[]>;
+  correlatedRefs: unknown[];
+
+  constructor(parent: BinderScope | null = null) {
     this.parent = parent;
     this.tables = new Map();
     this.columns = new Map();
     this.correlatedRefs = [];
   }
 
-  addTable(alias, tableInfo) {
+  addTable(alias: string, tableInfo: TableInfo): void {
     this.tables.set(alias.toUpperCase(), tableInfo);
   }
 
-  addColumn(alias, columnInfo) {
+  addColumn(alias: string, columnInfo: ColumnInfo): void {
     const key = alias.toUpperCase();
     if (!this.columns.has(key)) {
       this.columns.set(key, []);
     }
-    this.columns.get(key).push(columnInfo);
+    this.columns.get(key)!.push(columnInfo);
   }
 
-  resolveTable(name) {
+  resolveTable(name: string): ResolvedTable | null {
     const upper = name.toUpperCase();
     const local = this.tables.get(upper);
     if (local) return { table: local, depth: 0 };
@@ -29,7 +55,7 @@ export class BinderScope {
     return null;
   }
 
-  resolveColumn(name, tableAlias = null) {
+  resolveColumn(name: string, tableAlias: string | null = null): ResolvedColumn | null {
     const upper = name.toUpperCase();
 
     if (tableAlias) {
@@ -51,7 +77,7 @@ export class BinderScope {
       };
     }
 
-    let found = null;
+    let found: ResolvedColumn | null = null;
     let foundDepth = 0;
 
     for (const [alias, tableInfo] of this.tables) {
@@ -82,8 +108,8 @@ export class BinderScope {
     return null;
   }
 
-  getAllColumns() {
-    const result = [];
+  getAllColumns(): ColumnEntry[] {
+    const result: ColumnEntry[] = [];
     for (const [alias, tableInfo] of this.tables) {
       for (let i = 0; i < tableInfo.columns.length; i++) {
         result.push({
@@ -97,7 +123,7 @@ export class BinderScope {
     return result;
   }
 
-  getTableColumns(tableAlias) {
+  getTableColumns(tableAlias: string): ColumnEntry[] | null {
     const upper = tableAlias.toUpperCase();
     const tableInfo = this.tables.get(upper);
     if (!tableInfo) return null;
@@ -109,7 +135,7 @@ export class BinderScope {
     }));
   }
 
-  child() {
+  child(): BinderScope {
     return new BinderScope(this);
   }
 }

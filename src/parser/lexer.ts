@@ -1,118 +1,118 @@
-export const TokenType = {
-  IDENT: 'IDENT',
-  NUMBER: 'NUMBER',
-  STRING: 'STRING',
-  COMMA: 'COMMA',
-  DOT: 'DOT',
-  STAR: 'STAR',
-  LPAREN: 'LPAREN',
-  RPAREN: 'RPAREN',
-  EQ: 'EQ',
-  NEQ: 'NEQ',
-  LT: 'LT',
-  GT: 'GT',
-  LTE: 'LTE',
-  GTE: 'GTE',
-  PLUS: 'PLUS',
-  MINUS: 'MINUS',
-  SLASH: 'SLASH',
-  PERCENT: 'PERCENT',
-  SEMICOLON: 'SEMICOLON',
-  CONCAT: 'CONCAT',
-  COLON: 'COLON',
-  EOF: 'EOF',
-  EXPLAIN: 'EXPLAIN',
+export enum TokenType {
+  IDENT = 'IDENT',
+  NUMBER = 'NUMBER',
+  STRING = 'STRING',
+  COMMA = 'COMMA',
+  DOT = 'DOT',
+  STAR = 'STAR',
+  LPAREN = 'LPAREN',
+  RPAREN = 'RPAREN',
+  EQ = 'EQ',
+  NEQ = 'NEQ',
+  LT = 'LT',
+  GT = 'GT',
+  LTE = 'LTE',
+  GTE = 'GTE',
+  PLUS = 'PLUS',
+  MINUS = 'MINUS',
+  SLASH = 'SLASH',
+  PERCENT = 'PERCENT',
+  SEMICOLON = 'SEMICOLON',
+  CONCAT = 'CONCAT',
+  COLON = 'COLON',
+  EOF = 'EOF',
+  EXPLAIN = 'EXPLAIN',
 
-  SELECT: 'SELECT',
-  FROM: 'FROM',
-  WHERE: 'WHERE',
-  AND: 'AND',
-  OR: 'OR',
-  NOT: 'NOT',
-  AS: 'AS',
-  ON: 'ON',
-  JOIN: 'JOIN',
-  INNER: 'INNER',
-  LEFT: 'LEFT',
-  RIGHT: 'RIGHT',
-  FULL: 'FULL',
-  OUTER: 'OUTER',
-  CROSS: 'CROSS',
-  IN: 'IN',
-  EXISTS: 'EXISTS',
-  BETWEEN: 'BETWEEN',
-  LIKE: 'LIKE',
-  IS: 'IS',
-  NULL: 'NULL',
-  TRUE: 'TRUE',
-  FALSE: 'FALSE',
-  CASE: 'CASE',
-  WHEN: 'WHEN',
-  THEN: 'THEN',
-  ELSE: 'ELSE',
-  END: 'END',
-  DISTINCT: 'DISTINCT',
-  ALL: 'ALL',
-  GROUP: 'GROUP',
-  BY: 'BY',
-  HAVING: 'HAVING',
-  ORDER: 'ORDER',
-  ASC: 'ASC',
-  DESC: 'DESC',
-  LIMIT: 'LIMIT',
-  OFFSET: 'OFFSET',
-  UNION: 'UNION',
-  EXCEPT: 'EXCEPT',
-  INTERSECT: 'INTERSECT',
-  WITH: 'WITH',
-  CAST: 'CAST',
-  INTERVAL: 'INTERVAL',
-  EXTRACT: 'EXTRACT',
-  SUBSTRING: 'SUBSTRING',
-  TRIM: 'TRIM',
-  YEAR: 'YEAR',
-  MONTH: 'MONTH',
-  DAY: 'DAY',
-  DATE: 'DATE',
-  SUM: 'SUM',
-  AVG: 'AVG',
-  COUNT: 'COUNT',
-  MIN: 'MIN',
-  MAX: 'MAX',
-  CREATE: 'CREATE',
-  VIEW: 'VIEW',
-  NULLS: 'NULLS',
-  FIRST: 'FIRST',
-  LAST: 'LAST',
-  FETCH: 'FETCH',
-  NEXT: 'NEXT',
-  ROWS: 'ROWS',
-  ONLY: 'ONLY',
-  SOME: 'SOME',
-  ANY: 'ANY',
-  LEADING: 'LEADING',
-  TRAILING: 'TRAILING',
-  BOTH: 'BOTH',
-  FOR: 'FOR',
-  TIMESTAMP: 'TIMESTAMP',
-  HOUR: 'HOUR',
-  MINUTE: 'MINUTE',
-  SECOND: 'SECOND',
-  OVER: 'OVER',
-  PARTITION: 'PARTITION',
-  RANGE: 'RANGE',
-  UNBOUNDED: 'UNBOUNDED',
-  PRECEDING: 'PRECEDING',
-  FOLLOWING: 'FOLLOWING',
-  CURRENT: 'CURRENT',
-  ROW: 'ROW',
-  NATURAL: 'NATURAL',
-  USING: 'USING',
-  TABLE: 'TABLE',
-  DROP: 'DROP',
-  IF: 'IF',
-  ANALYZE: 'ANALYZE',
-};
+  SELECT = 'SELECT',
+  FROM = 'FROM',
+  WHERE = 'WHERE',
+  AND = 'AND',
+  OR = 'OR',
+  NOT = 'NOT',
+  AS = 'AS',
+  ON = 'ON',
+  JOIN = 'JOIN',
+  INNER = 'INNER',
+  LEFT = 'LEFT',
+  RIGHT = 'RIGHT',
+  FULL = 'FULL',
+  OUTER = 'OUTER',
+  CROSS = 'CROSS',
+  IN = 'IN',
+  EXISTS = 'EXISTS',
+  BETWEEN = 'BETWEEN',
+  LIKE = 'LIKE',
+  IS = 'IS',
+  NULL = 'NULL',
+  TRUE = 'TRUE',
+  FALSE = 'FALSE',
+  CASE = 'CASE',
+  WHEN = 'WHEN',
+  THEN = 'THEN',
+  ELSE = 'ELSE',
+  END = 'END',
+  DISTINCT = 'DISTINCT',
+  ALL = 'ALL',
+  GROUP = 'GROUP',
+  BY = 'BY',
+  HAVING = 'HAVING',
+  ORDER = 'ORDER',
+  ASC = 'ASC',
+  DESC = 'DESC',
+  LIMIT = 'LIMIT',
+  OFFSET = 'OFFSET',
+  UNION = 'UNION',
+  EXCEPT = 'EXCEPT',
+  INTERSECT = 'INTERSECT',
+  WITH = 'WITH',
+  CAST = 'CAST',
+  INTERVAL = 'INTERVAL',
+  EXTRACT = 'EXTRACT',
+  SUBSTRING = 'SUBSTRING',
+  TRIM = 'TRIM',
+  YEAR = 'YEAR',
+  MONTH = 'MONTH',
+  DAY = 'DAY',
+  DATE = 'DATE',
+  SUM = 'SUM',
+  AVG = 'AVG',
+  COUNT = 'COUNT',
+  MIN = 'MIN',
+  MAX = 'MAX',
+  CREATE = 'CREATE',
+  VIEW = 'VIEW',
+  NULLS = 'NULLS',
+  FIRST = 'FIRST',
+  LAST = 'LAST',
+  FETCH = 'FETCH',
+  NEXT = 'NEXT',
+  ROWS = 'ROWS',
+  ONLY = 'ONLY',
+  SOME = 'SOME',
+  ANY = 'ANY',
+  LEADING = 'LEADING',
+  TRAILING = 'TRAILING',
+  BOTH = 'BOTH',
+  FOR = 'FOR',
+  TIMESTAMP = 'TIMESTAMP',
+  HOUR = 'HOUR',
+  MINUTE = 'MINUTE',
+  SECOND = 'SECOND',
+  OVER = 'OVER',
+  PARTITION = 'PARTITION',
+  RANGE = 'RANGE',
+  UNBOUNDED = 'UNBOUNDED',
+  PRECEDING = 'PRECEDING',
+  FOLLOWING = 'FOLLOWING',
+  CURRENT = 'CURRENT',
+  ROW = 'ROW',
+  NATURAL = 'NATURAL',
+  USING = 'USING',
+  TABLE = 'TABLE',
+  DROP = 'DROP',
+  IF = 'IF',
+  ANALYZE = 'ANALYZE',
+}
 
 const NON_KEYWORD_TOKENS = new Set([
   'IDENT', 'NUMBER', 'STRING', 'COMMA', 'DOT', 'STAR',
@@ -120,15 +120,19 @@ const NON_KEYWORD_TOKENS = new Set([
   'PLUS', 'MINUS', 'SLASH', 'PERCENT', 'SEMICOLON', 'CONCAT', 'COLON', 'EOF',
 ]);
 
-const KEYWORDS = new Map();
+const KEYWORDS = new Map<string, TokenType>();
 for (const key of Object.keys(TokenType)) {
   if (!NON_KEYWORD_TOKENS.has(key)) {
-    KEYWORDS.set(key, TokenType[key]);
+    KEYWORDS.set(key, TokenType[key as keyof typeof TokenType]);
   }
 }
 
 export class Token {
-  constructor(type, value, position) {
+  type: TokenType;
+  value: string;
+  position: number;
+
+  constructor(type: TokenType, value: string, position: number) {
     this.type = type;
     this.value = value;
     this.position = position;
@@ -136,14 +140,18 @@ export class Token {
 }
 
 export class Lexer {
-  constructor(input) {
+  input: string;
+  pos: number;
+  tokens: Token[];
+
+  constructor(input: string) {
     this.input = input;
     this.pos = 0;
     this.tokens = [];
     this._tokenize();
   }
 
-  _tokenize() {
+  _tokenize(): void {
     while (this.pos < this.input.length) {
       this._skipWhitespaceAndComments();
       if (this.pos >= this.input.length) break;
@@ -165,7 +173,7 @@ export class Lexer {
     this.tokens.push(new Token(TokenType.EOF, '', this.pos));
   }
 
-  _skipWhitespaceAndComments() {
+  _skipWhitespaceAndComments(): void {
     while (this.pos < this.input.length) {
       const ch = this.input[this.pos];
 
@@ -185,7 +193,7 @@ export class Lexer {
     }
   }
 
-  _readString(start) {
+  _readString(start: number): Token {
     this.pos++;
     let value = '';
     while (this.pos < this.input.length) {
@@ -205,7 +213,7 @@ export class Lexer {
     throw new Error(`Unterminated string at position ${start}`);
   }
 
-  _readNumber(start) {
+  _readNumber(start: number): Token {
     while (this.pos < this.input.length && this._isDigit(this.input[this.pos])) {
       this.pos++;
     }
@@ -218,7 +226,7 @@ export class Lexer {
     return new Token(TokenType.NUMBER, this.input.slice(start, this.pos), start);
   }
 
-  _readIdentOrKeyword(start) {
+  _readIdentOrKeyword(start: number): Token {
     while (this.pos < this.input.length && this._isIdentPart(this.input[this.pos])) {
       this.pos++;
     }
@@ -231,7 +239,7 @@ export class Lexer {
     return new Token(TokenType.IDENT, value, start);
   }
 
-  _readSymbol(start) {
+  _readSymbol(start: number): Token {
     const ch = this.input[this.pos];
     this.pos++;
 
@@ -277,15 +285,15 @@ export class Lexer {
     }
   }
 
-  _isDigit(ch) {
+  _isDigit(ch: string): boolean {
     return ch >= '0' && ch <= '9';
   }
 
-  _isIdentStart(ch) {
+  _isIdentStart(ch: string): boolean {
     return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch === '_';
   }
 
-  _isIdentPart(ch) {
+  _isIdentPart(ch: string): boolean {
     return this._isIdentStart(ch) || this._isDigit(ch);
   }
 }

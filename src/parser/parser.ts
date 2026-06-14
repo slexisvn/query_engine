@@ -1,14 +1,17 @@
-import { Lexer, TokenType } from './lexer.js';
+import { Lexer, Token, TokenType } from './lexer.js';
 import * as AST from './ast.js';
 
 export class Parser {
-  constructor(sql) {
+  tokens: Token[];
+  pos: number;
+
+  constructor(sql: string) {
     const lexer = new Lexer(sql);
     this.tokens = lexer.tokens;
     this.pos = 0;
   }
 
-  parse() {
+  parse(): AST.Statement {
     if (this.isAt(TokenType.CREATE)) {
       return this.parseCreateTable();
     }
@@ -36,7 +39,7 @@ export class Parser {
     return isExplain ? AST.ExplainStmt(stmt) : stmt;
   }
 
-  parseCreateTable() {
+  parseCreateTable(): AST.CreateTableStmtNode {
     this.advance();
     this.expect(TokenType.TABLE);
     let ifNotExists = false;
@@ -48,7 +51,7 @@ export class Parser {
     }
     const name = this.expectIdent();
     this.expect(TokenType.LPAREN);
-    const columns = [];
+    const columns: AST.ColumnDefNode[] = [];
     do {
       const colName = this.expectIdent();
       const colType = this.parseTypeName();
@@ -58,7 +61,7 @@ export class Parser {
     return AST.CreateTableStmt(name, columns, ifNotExists);
   }
 
-  parseDropTable() {
+  parseDropTable(): AST.DropTableStmtNode {
     this.advance();
     this.expect(TokenType.TABLE);
     let ifExists = false;
@@ -71,7 +74,7 @@ export class Parser {
     return AST.DropTableStmt(name, ifExists);
   }
 
-  parseQueryExpr() {
+  parseQueryExpr(): AST.QueryStmt {
     let left = this.parseSelectStmt();
 
     while (this.isAt(TokenType.UNION) || this.isAt(TokenType.EXCEPT) || this.isAt(TokenType.INTERSECT)) {
@@ -85,8 +88,8 @@ export class Parser {
     return left;
   }
 
-  parseSelectStmt() {
-    let withClause = null;
+  parseSelectStmt(): AST.QueryStmt {
+    let withClause: AST.WithClauseNode | null = null;
     if (this.isAt(TokenType.WITH)) {
       withClause = this.parseWithClause();
     }
@@ -105,36 +108,36 @@ export class Parser {
 
     const selectItems = this.parseSelectItems();
 
-    let from = null;
+    let from: AST.FromItem | null = null;
     if (this.tryConsume(TokenType.FROM)) {
       from = this.parseFromClause();
     }
 
-    let where = null;
+    let where: AST.Expr | null = null;
     if (this.tryConsume(TokenType.WHERE)) {
       where = this.parseExpression();
     }
 
-    let groupBy = null;
+    let groupBy: AST.Expr[] | null = null;
     if (this.tryConsume(TokenType.GROUP)) {
       this.expect(TokenType.BY);
       groupBy = this.parseExpressionList();
     }
 
-    let having = null;
+    let having: AST.Expr | null = null;
     if (this.tryConsume(TokenType.HAVING)) {
       having = this.parseExpression();
     }
 
-    let orderBy = null;
+    let orderBy: AST.OrderKeyNode[] | null = null;
     if (this.isAt(TokenType.ORDER)) {
       this.advance();
       this.expect(TokenType.BY);
       orderBy = this.parseOrderByList();
     }
 
-    let limit = null;
-    let offset = null;
+    let limit: AST.Expr | null = null;
+    let offset: AST.Expr | null = null;
 
     if (this.tryConsume(TokenType.LIMIT)) {
       limit = this.parseExpression();
@@ -155,18 +158,18 @@ export class Parser {
     return AST.SelectStmt({ withClause, distinct: !!distinct, selectItems, from, where, groupBy, having, orderBy, limit, offset });
   }
 
-  parseWithClause() {
+  parseWithClause(): AST.WithClauseNode {
     this.advance();
-    const ctes = [];
+    const ctes: AST.CTENode[] = [];
     do {
       ctes.push(this.parseCTE());
     } while (this.tryConsume(TokenType.COMMA));
     return AST.WithClause(ctes);
   }
 
-  parseCTE() {
+  parseCTE(): AST.CTENode {
     const name = this.expectIdent();
-    let columnAliases = null;
+    let columnAliases: string[] | null = null;
     if (this.isAt(TokenType.LPAREN) && !this.isLookaheadSelect()) {
       this.advance();
       columnAliases = [];
@@ -182,15 +185,15 @@ export class Parser {
     return AST.CTE(name, query, columnAliases);
   }
 
-  parseSelectItems() {
-    const items = [];
+  parseSelectItems(): AST.SelectItemNode[] {
+    const items: AST.SelectItemNode[] = [];
     do {
       items.push(this.parseSelectItem());
     } while (this.tryConsume(TokenType.COMMA));
     return items;
   }
 
-  parseSelectItem() {
+  parseSelectItem(): AST.SelectItemNode {
     if (this.isAt(TokenType.STAR)) {
       this.advance();
       return AST.SelectItem(AST.AllColumns());
@@ -204,7 +207,7 @@ export class Parser {
     }
 
     const expr = this.parseExpression();
-    let alias = null;
+    let alias: string | null = null;
     if (this.tryConsume(TokenType.AS)) {
       alias = this.expectIdent();
     } else if (this.isAt(TokenType.IDENT)) {
@@ -213,7 +216,7 @@ export class Parser {
     return AST.SelectItem(expr, alias);
   }
 
-  parseFromClause() {
+  parseFromClause(): AST.FromItem {
     let left = this.parseTableRef();
 
     while (this.isJoinKeyword()) {
@@ -228,7 +231,7 @@ export class Parser {
     return left;
   }
 
-  parseTableRef() {
+  parseTableRef(): AST.FromItem {
     if (this.isAt(TokenType.LPAREN)) {
       if (this.isSubqueryStart()) {
         return this.parseSubqueryRef();
@@ -249,11 +252,11 @@ export class Parser {
     return AST.TableRef(name, alias);
   }
 
-  parseSubqueryRef() {
+  parseSubqueryRef(): AST.SubqueryRefNode {
     this.expect(TokenType.LPAREN);
     const query = this.parseQueryExpr();
     this.expect(TokenType.RPAREN);
-    let alias = null;
+    let alias: string | null = null;
     if (this.tryConsume(TokenType.AS)) {
       alias = this.expectIdent();
     } else if (this.isAt(TokenType.IDENT)) {
@@ -262,7 +265,7 @@ export class Parser {
     return AST.SubqueryRef(query, alias);
   }
 
-  parseJoin(left) {
+  parseJoin(left: AST.FromItem): AST.JoinRefNode {
     let joinType = 'INNER';
     let isNatural = false;
 
@@ -288,8 +291,8 @@ export class Parser {
     this.expect(TokenType.JOIN);
     const right = this.parseTableRef();
 
-    let condition = null;
-    let usingColumns = null;
+    let condition: AST.Expr | null = null;
+    let usingColumns: string[] | null = null;
 
     if (isNatural) {
       const node = AST.JoinRef(left, right, joinType, null);
@@ -315,11 +318,11 @@ export class Parser {
     return node;
   }
 
-  parseExpression() {
+  parseExpression(): AST.Expr {
     return this.parseOr();
   }
 
-  parseOr() {
+  parseOr(): AST.Expr {
     let left = this.parseAnd();
     while (this.isAt(TokenType.OR)) {
       this.advance();
@@ -329,7 +332,7 @@ export class Parser {
     return left;
   }
 
-  parseAnd() {
+  parseAnd(): AST.Expr {
     let left = this.parseNot();
     while (this.isAt(TokenType.AND)) {
       this.advance();
@@ -339,7 +342,7 @@ export class Parser {
     return left;
   }
 
-  parseNot() {
+  parseNot(): AST.Expr {
     if (this.isAt(TokenType.NOT)) {
       this.advance();
       const operand = this.parseNot();
@@ -348,7 +351,7 @@ export class Parser {
     return this.parseComparison();
   }
 
-  parseComparison() {
+  parseComparison(): AST.Expr {
     if (this.isAt(TokenType.EXISTS)) {
       return this.parseExists();
     }
@@ -379,7 +382,7 @@ export class Parser {
       return AST.IsNullExpr(left, !!negated);
     }
 
-    const opMap = {
+    const opMap: Record<string, string> = {
       [TokenType.EQ]: '=',
       [TokenType.NEQ]: '<>',
       [TokenType.LT]: '<',
@@ -404,7 +407,7 @@ export class Parser {
     return left;
   }
 
-  parseBetween(left, negated) {
+  parseBetween(left: AST.Expr, negated: boolean): AST.BetweenExprNode {
     this.advance();
     const low = this.parseAddition();
     this.expect(TokenType.AND);
@@ -412,7 +415,7 @@ export class Parser {
     return AST.BetweenExpr(left, low, high, negated);
   }
 
-  parseIn(left, negated) {
+  parseIn(left: AST.Expr, negated: boolean): AST.InExprNode {
     this.advance();
     this.expect(TokenType.LPAREN);
 
@@ -427,13 +430,13 @@ export class Parser {
     return AST.InExpr(left, list, negated);
   }
 
-  parseLike(left, negated) {
+  parseLike(left: AST.Expr, negated: boolean): AST.LikeExprNode {
     this.advance();
     const pattern = this.parseAddition();
     return AST.LikeExpr(left, pattern, negated);
   }
 
-  parseExists() {
+  parseExists(): AST.ExistsExprNode {
     this.advance();
     this.expect(TokenType.LPAREN);
     const query = this.parseQueryExpr();
@@ -441,7 +444,7 @@ export class Parser {
     return AST.ExistsExpr(query, false);
   }
 
-  parseAddition() {
+  parseAddition(): AST.Expr {
     let left = this.parseMultiplication();
     while (this.isAt(TokenType.PLUS) || this.isAt(TokenType.MINUS) || this.isAt(TokenType.CONCAT)) {
       const op = this.advance().value;
@@ -451,7 +454,7 @@ export class Parser {
     return left;
   }
 
-  parseMultiplication() {
+  parseMultiplication(): AST.Expr {
     let left = this.parseUnary();
     while (this.isAt(TokenType.STAR) || this.isAt(TokenType.SLASH) || this.isAt(TokenType.PERCENT)) {
       const op = this.advance().value;
@@ -461,7 +464,7 @@ export class Parser {
     return left;
   }
 
-  parseUnary() {
+  parseUnary(): AST.Expr {
     if (this.isAt(TokenType.MINUS)) {
       this.advance();
       const operand = this.parseUnary();
@@ -474,7 +477,7 @@ export class Parser {
     return this.parsePrimary();
   }
 
-  parsePrimary() {
+  parsePrimary(): AST.Expr {
     const token = this.peek();
 
     if (token.type === TokenType.NUMBER) {
@@ -606,7 +609,7 @@ export class Parser {
     this.error(`Unexpected token ${token.type} (${token.value})`);
   }
 
-  parseAggregateCall() {
+  parseAggregateCall(): AST.AggregateCallNode | AST.WindowCallNode {
     const name = this.advance().value;
     this.expect(TokenType.LPAREN);
 
@@ -630,9 +633,9 @@ export class Parser {
     return AST.AggregateCall(name, args, !!distinct);
   }
 
-  parseFunctionCallNamed(name) {
+  parseFunctionCallNamed(name: string): AST.FunctionCallNode | AST.WindowCallNode {
     this.expect(TokenType.LPAREN);
-    let args = [];
+    let args: AST.Expr[] = [];
     if (!this.isAt(TokenType.RPAREN)) {
       args = this.parseExpressionList();
     }
@@ -645,17 +648,17 @@ export class Parser {
     return AST.FunctionCall(name, args);
   }
 
-  parseWindowCall(name, args) {
+  parseWindowCall(name: string, args: AST.Expr[]): AST.WindowCallNode {
     this.expect(TokenType.OVER);
     this.expect(TokenType.LPAREN);
 
-    let partitionBy = [];
+    let partitionBy: AST.Expr[] = [];
     if (this.tryConsume(TokenType.PARTITION)) {
       this.expect(TokenType.BY);
       partitionBy = this.parseExpressionList();
     }
 
-    let orderBy = [];
+    let orderBy: AST.OrderKeyNode[] = [];
     if (this.isAt(TokenType.ORDER)) {
       this.advance();
       this.expect(TokenType.BY);
@@ -668,15 +671,15 @@ export class Parser {
     return AST.WindowCall(name, args, windowSpec);
   }
 
-  parseCaseExpr() {
+  parseCaseExpr(): AST.CaseExprNode {
     this.advance();
-    let operand = null;
+    let operand: AST.Expr | null = null;
 
     if (!this.isAt(TokenType.WHEN)) {
       operand = this.parseExpression();
     }
 
-    const whenClauses = [];
+    const whenClauses: AST.WhenClauseNode[] = [];
     while (this.tryConsume(TokenType.WHEN)) {
       const condition = this.parseExpression();
       this.expect(TokenType.THEN);
@@ -684,7 +687,7 @@ export class Parser {
       whenClauses.push(AST.WhenClause(condition, result));
     }
 
-    let elseExpr = null;
+    let elseExpr: AST.Expr | null = null;
     if (this.tryConsume(TokenType.ELSE)) {
       elseExpr = this.parseExpression();
     }
@@ -693,7 +696,7 @@ export class Parser {
     return AST.CaseExpr(operand, whenClauses, elseExpr);
   }
 
-  parseCast() {
+  parseCast(): AST.CastExprNode {
     this.advance();
     this.expect(TokenType.LPAREN);
     const expr = this.parseExpression();
@@ -703,7 +706,7 @@ export class Parser {
     return AST.CastExpr(expr, targetType);
   }
 
-  parseExtract() {
+  parseExtract(): AST.ExtractExprNode {
     this.advance();
     this.expect(TokenType.LPAREN);
     const field = this.peek().value;
@@ -714,12 +717,13 @@ export class Parser {
     return AST.ExtractExpr(field.toUpperCase(), source);
   }
 
-  parseSubstringFn() {
+  parseSubstringFn(): AST.SubstringExprNode {
     this.advance();
     this.expect(TokenType.LPAREN);
     const expr = this.parseExpression();
 
-    let from, length = null;
+    let from: AST.Expr;
+    let length: AST.Expr | null = null;
     if (this.isAtKeyword('FROM')) {
       this.advance();
       from = this.parseExpression();
@@ -739,16 +743,16 @@ export class Parser {
     return AST.SubstringExpr(expr, from, length);
   }
 
-  parseTrim() {
+  parseTrim(): AST.FunctionCallNode {
     this.advance();
     this.expect(TokenType.LPAREN);
 
-    let trimSpec = null;
+    let trimSpec: string | null = null;
     if (this.isAt(TokenType.LEADING) || this.isAt(TokenType.TRAILING) || this.isAt(TokenType.BOTH)) {
       trimSpec = this.advance().value;
     }
 
-    let trimChar = null;
+    let trimChar: AST.Expr | null = null;
     if (!this.isAt(TokenType.FROM) && trimSpec !== null) {
       if (!this.isAt(TokenType.FROM)) {
         trimChar = this.parseExpression();
@@ -766,16 +770,16 @@ export class Parser {
     return AST.FunctionCall('TRIM', args);
   }
 
-  parseInterval() {
+  parseInterval(): AST.IntervalExprNode {
     this.advance();
     const valueToken = this.expect(TokenType.STRING);
     const unit = this.expectIdent().toUpperCase();
     return AST.IntervalExpr(valueToken.value, unit);
   }
 
-  parseTypeName() {
+  parseTypeName(): AST.TypeNameNode {
     const name = this.expectIdent().toUpperCase();
-    const params = [];
+    const params: number[] = [];
     if (this.tryConsume(TokenType.LPAREN)) {
       do {
         params.push(parseInt(this.expect(TokenType.NUMBER).value, 10));
@@ -785,23 +789,23 @@ export class Parser {
     return AST.TypeName(name, params);
   }
 
-  parseExpressionList() {
-    const list = [];
+  parseExpressionList(): AST.Expr[] {
+    const list: AST.Expr[] = [];
     do {
       list.push(this.parseExpression());
     } while (this.tryConsume(TokenType.COMMA));
     return list;
   }
 
-  parseOrderByList() {
-    const list = [];
+  parseOrderByList(): AST.OrderKeyNode[] {
+    const list: AST.OrderKeyNode[] = [];
     do {
       const expr = this.parseExpression();
       let direction = 'ASC';
       if (this.tryConsume(TokenType.ASC)) direction = 'ASC';
       else if (this.tryConsume(TokenType.DESC)) direction = 'DESC';
 
-      let nullOrder = null;
+      let nullOrder: string | null = null;
       if (this.tryConsume(TokenType.NULLS)) {
         if (this.tryConsume(TokenType.FIRST)) nullOrder = 'FIRST';
         else if (this.tryConsume(TokenType.LAST)) nullOrder = 'LAST';
@@ -812,23 +816,23 @@ export class Parser {
     return list;
   }
 
-  peek() {
+  peek(): Token {
     return this.tokens[this.pos];
   }
 
-  peekAhead(offset) {
+  peekAhead(offset: number): Token | null {
     return this.tokens[this.pos + offset] || null;
   }
 
-  advance() {
+  advance(): Token {
     return this.tokens[this.pos++];
   }
 
-  isAt(type) {
+  isAt(type: TokenType): boolean {
     return this.peek().type === type;
   }
 
-  tryConsume(type) {
+  tryConsume(type: TokenType): boolean {
     if (this.isAt(type)) {
       this.advance();
       return true;
@@ -836,14 +840,14 @@ export class Parser {
     return false;
   }
 
-  expect(type) {
+  expect(type: TokenType): Token {
     if (!this.isAt(type)) {
       this.error(`Expected ${type}, got ${this.peek().type} (${this.peek().value})`);
     }
     return this.advance();
   }
 
-  expectIdent() {
+  expectIdent(): string {
     const token = this.peek();
     if (token.type === TokenType.IDENT) {
       this.advance();
@@ -856,7 +860,7 @@ export class Parser {
     this.error(`Expected identifier, got ${token.type} (${token.value})`);
   }
 
-  isNonReservedKeyword(type) {
+  isNonReservedKeyword(type: TokenType): boolean {
     return [
       TokenType.YEAR, TokenType.MONTH, TokenType.DAY, TokenType.DATE,
       TokenType.FIRST, TokenType.LAST, TokenType.NULLS, TokenType.VIEW,
@@ -876,18 +880,18 @@ export class Parser {
     ].includes(type);
   }
 
-  isAggregateKeyword(type) {
+  isAggregateKeyword(type: TokenType): boolean {
     return [TokenType.SUM, TokenType.AVG, TokenType.COUNT, TokenType.MIN, TokenType.MAX].includes(type);
   }
 
-  isJoinKeyword() {
+  isJoinKeyword(): boolean {
     const type = this.peek().type;
     return type === TokenType.JOIN || type === TokenType.INNER || type === TokenType.LEFT
       || type === TokenType.RIGHT || type === TokenType.FULL || type === TokenType.CROSS
       || type === TokenType.NATURAL;
   }
 
-  isClauseKeyword() {
+  isClauseKeyword(): boolean {
     const type = this.peek().type;
     return type === TokenType.WHERE || type === TokenType.GROUP || type === TokenType.HAVING
       || type === TokenType.ORDER || type === TokenType.LIMIT || type === TokenType.UNION
@@ -895,7 +899,7 @@ export class Parser {
       || type === TokenType.FETCH;
   }
 
-  isSubqueryStart() {
+  isSubqueryStart(): boolean {
     let depth = 0;
     for (let i = this.pos; i < this.tokens.length; i++) {
       if (this.tokens[i].type === TokenType.LPAREN) depth++;
@@ -908,7 +912,7 @@ export class Parser {
     return false;
   }
 
-  isLookaheadSelect() {
+  isLookaheadSelect(): boolean {
     let depth = 1;
     for (let i = this.pos + 1; i < this.tokens.length; i++) {
       if (this.tokens[i].type === TokenType.LPAREN) depth++;
@@ -921,23 +925,23 @@ export class Parser {
     return false;
   }
 
-  isAtKeyword(keyword) {
+  isAtKeyword(keyword: string): boolean {
     const t = this.peek();
     const upper = keyword.toUpperCase();
-    return t.type === upper || t.value === upper;
+    return (t.type as string) === upper || t.value === upper;
   }
 
-  error(message) {
+  error(message: string): never {
     const token = this.peek();
     throw new Error(`Parse error at position ${token.position}: ${message}`);
   }
 }
 
-export function parse(sql) {
+export function parse(sql: string): AST.Statement {
   return new Parser(sql).parse();
 }
 
-export function parseExpression(sql) {
+export function parseExpression(sql: string): AST.Expr {
   const parser = new Parser(sql);
   const expr = parser.parseExpression();
   if (!parser.isAt(TokenType.EOF) && !parser.isAt(TokenType.SEMICOLON)) {

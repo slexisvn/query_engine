@@ -1,29 +1,85 @@
 import { NodeKind } from '../parser/ast.js';
+import type * as AST from '../parser/ast.js';
 import { DataType, dateToEpochDays, timestampToEpochMs } from '../storage/data-type.js';
-import { BinderScope } from './scope.js';
+import { BinderScope, type ColumnInfo } from './scope.js';
 import * as BE from './expression-binder.js';
 
+export interface TableMeta { name: string; columns: ColumnInfo[]; }
+
+export interface CatalogLike { getTable(name: string): TableMeta | undefined; }
+
+export interface OutputColumn { name: string; expr: BE.BoundExpr; dataType: string | null; }
+
+export interface BoundSelectItem { expr: BE.BoundExpr; alias: string | null; inferredName: string | null; }
+
+export interface BoundOrderKey { expr: BE.BoundExpr; direction: string; nullOrder: string | null; }
+
+export interface BoundTableRef { type: 'TableRef'; tableName: string; alias: string; columns: ColumnInfo[]; }
+
+export interface BoundCTERef { type: 'CTERef'; cteName: string; alias: string; columns: ColumnInfo[]; query: BoundQuery; }
+
+export interface BoundJoinRef { type: 'JoinRef'; joinType: string; left: BoundFrom; right: BoundFrom; condition: BE.BoundExpr | null; }
+
+export interface BoundSubqueryRef { type: 'SubqueryRef'; alias: string; query: BoundQuery; columns: OutputColumn[]; }
+
+export type BoundFrom = BoundTableRef | BoundCTERef | BoundJoinRef | BoundSubqueryRef;
+
+export interface BoundSelect {
+  type: 'BoundSelect';
+  plan: BoundFrom | null;
+  selectItems: BoundSelectItem[];
+  where: BE.BoundExpr | null;
+  groupBy: BE.BoundExpr[] | null;
+  aggregates: BE.BoundExpr[];
+  having: BE.BoundExpr | null;
+  orderBy: BoundOrderKey[] | null;
+  limit: BE.BoundExpr | null;
+  offset: BE.BoundExpr | null;
+  distinct: boolean;
+  outputColumns: OutputColumn[];
+}
+
+export interface BoundSetOp {
+  type: 'SetOp';
+  op: string;
+  all: boolean;
+  left: BoundQuery;
+  right: BoundQuery;
+  outputColumns: OutputColumn[];
+}
+
+export type BoundQuery = BoundSelect | BoundSetOp;
+
+interface CteInfo { name: string; columns: ColumnInfo[]; bound: BoundQuery; }
+
+interface JoinSide { type?: string; columns?: ColumnInfo[]; alias?: string; tableName?: string; cteName?: string; }
+
 export class Binder {
-  constructor(catalog, functionRegistry) {
+  catalog: CatalogLike;
+  functionRegistry: unknown;
+  cteScopes: Map<string, CteInfo>;
+  aggregatesFound: BE.BoundExpr[];
+
+  constructor(catalog: CatalogLike, functionRegistry: unknown) {
     this.catalog = catalog;
     this.functionRegistry = functionRegistry;
     this.cteScopes = new Map();
     this.aggregatesFound = [];
   }
 
-  bind(ast) {
+  bind(ast: AST.QueryStmt): BoundQuery {
     const scope = new BinderScope();
     return this.bindQuery(ast, scope);
   }
 
-  bindQuery(node, scope) {
+  bindQuery(node: AST.QueryStmt, scope: BinderScope): BoundQuery {
     if (node.kind === NodeKind.SET_OP) {
       return this.bindSetOp(node, scope);
     }
     return this.bindSelect(node, scope);
   }
 
-  bindSetOp(node, scope) {
+  bindSetOp(node: AST.SetOpNode, scope: BinderScope): BoundSetOp {
     const left = this.bindQuery(node.left, scope);
     const right = this.bindQuery(node.right, scope);
     return {
@@ -36,32 +92,32 @@ export class Binder {
     };
   }
 
-  bindSelect(node, scope) {
+  bindSelect(node: AST.SelectStmtNode, scope: BinderScope): BoundSelect {
     if (node.withClause) {
       this.bindWithClause(node.withClause, scope);
     }
 
     const fromScope = scope.child();
 
-    let plan = null;
+    let plan: BoundFrom | null = null;
     if (node.from) {
       plan = this.bindFrom(node.from, fromScope);
     }
 
     const savedAggregates = this.aggregatesFound;
     this.aggregatesFound = [];
-    let outputColumns = [];
+    let outputColumns: OutputColumn[] = [];
 
     const boundSelectItems = this.bindSelectItems(node.selectItems, fromScope);
 
-    let where = null;
+    let where: BE.BoundExpr | null = null;
     if (node.where) {
       where = this.bindExpression(node.where, fromScope);
     }
 
     const aggregates = [...this.aggregatesFound];
 
-    const selectAliasMap = new Map();
+    const selectAliasMap = new Map<string, BE.BoundExpr>();
     for (const item of boundSelectItems) {
       const alias = item.alias || item.inferredName;
       if (alias) {
@@ -69,7 +125,7 @@ export class Binder {
       }
     }
 
-    let groupBy = null;
+    let groupBy: BE.BoundExpr[] | null = null;
     if (node.groupBy) {
       groupBy = node.groupBy.map(expr => {
         if (expr.kind === NodeKind.COLUMN_REF && !expr.table) {
@@ -80,7 +136,7 @@ export class Binder {
       });
     }
 
-    let having = null;
+    let having: BE.BoundExpr | null = null;
     if (node.having) {
       having = this.bindExpression(node.having, fromScope);
       aggregates.push(...this.aggregatesFound.slice(aggregates.length));
@@ -88,10 +144,10 @@ export class Binder {
 
     this.aggregatesFound = savedAggregates;
 
-    let orderBy = null;
+    let orderBy: BoundOrderKey[] | null = null;
     if (node.orderBy) {
       orderBy = node.orderBy.map(ok => {
-        if (ok.expr.kind === 'ColumnRef' && !ok.expr.table) {
+        if (ok.expr.kind === NodeKind.COLUMN_REF && !ok.expr.table) {
           const aliasExpr = selectAliasMap.get(ok.expr.name.toUpperCase());
           if (aliasExpr) {
             return { expr: aliasExpr, direction: ok.direction, nullOrder: ok.nullOrder };
@@ -105,12 +161,12 @@ export class Binder {
       });
     }
 
-    let limit = null;
+    let limit: BE.BoundExpr | null = null;
     if (node.limit) {
       limit = this.bindExpression(node.limit, fromScope);
     }
 
-    let offset = null;
+    let offset: BE.BoundExpr | null = null;
     if (node.offset) {
       offset = this.bindExpression(node.offset, fromScope);
     }
@@ -137,7 +193,7 @@ export class Binder {
     };
   }
 
-  bindWithClause(withClause, scope) {
+  bindWithClause(withClause: AST.WithClauseNode, scope: BinderScope): void {
     for (const cte of withClause.ctes) {
       const cteScope = scope.child();
       const bound = this.bindQuery(cte.query, cteScope);
@@ -153,7 +209,7 @@ export class Binder {
     }
   }
 
-  bindFrom(node, scope) {
+  bindFrom(node: AST.FromItem, scope: BinderScope): BoundFrom {
     switch (node.kind) {
       case NodeKind.TABLE_REF:
         return this.bindTableRef(node, scope);
@@ -162,11 +218,11 @@ export class Binder {
       case NodeKind.SUBQUERY_REF:
         return this.bindSubqueryRef(node, scope);
       default:
-        throw new Error(`Unknown FROM node kind: ${node.kind}`);
+        throw new Error(`Unknown FROM node kind: ${(node as AST.FromItem).kind}`);
     }
   }
 
-  bindTableRef(node, scope) {
+  bindTableRef(node: AST.TableRefNode, scope: BinderScope): BoundTableRef | BoundCTERef {
     const upperName = node.name.toUpperCase();
     const cte = this.cteScopes.get(upperName);
     if (cte) {
@@ -202,11 +258,11 @@ export class Binder {
     };
   }
 
-  bindJoinRef(node, scope) {
+  bindJoinRef(node: AST.JoinRefNode, scope: BinderScope): BoundJoinRef {
     const left = this.bindFrom(node.left, scope);
     const right = this.bindFrom(node.right, scope);
 
-    let condition = null;
+    let condition: BE.BoundExpr | null = null;
 
     if (node.natural) {
       condition = this.buildNaturalJoinCondition(left, right, scope);
@@ -225,7 +281,7 @@ export class Binder {
     };
   }
 
-  buildNaturalJoinCondition(left, right, scope) {
+  buildNaturalJoinCondition(left: BoundFrom, right: BoundFrom, scope: BinderScope): BE.BoundExpr | null {
     const leftCols = this.getRefColumnNames(left);
     const rightCols = this.getRefColumnNames(right);
     const common = leftCols.filter(n => rightCols.includes(n));
@@ -233,8 +289,8 @@ export class Binder {
     return this.buildUsingCondition(common, left, right, scope);
   }
 
-  buildUsingCondition(columnNames, left, right, scope) {
-    let condition = null;
+  buildUsingCondition(columnNames: string[], left: BoundFrom, right: BoundFrom, scope: BinderScope): BE.BoundExpr | null {
+    let condition: BE.BoundExpr | null = null;
     for (const colName of columnNames) {
       const leftRef = scope.resolveColumn(colName, this.getRefAlias(left));
       const rightRef = scope.resolveColumn(colName, this.getRefAlias(right));
@@ -249,16 +305,16 @@ export class Binder {
     return condition;
   }
 
-  getRefColumnNames(ref) {
+  getRefColumnNames(ref: JoinSide): string[] {
     const cols = ref.columns || [];
     return cols.map(c => c.name.toUpperCase());
   }
 
-  getRefAlias(ref) {
+  getRefAlias(ref: JoinSide): string | null {
     return ref.alias || ref.tableName || ref.cteName || null;
   }
 
-  bindSubqueryRef(node, scope) {
+  bindSubqueryRef(node: AST.SubqueryRefNode, scope: BinderScope): BoundSubqueryRef {
     const subScope = scope.child();
     const bound = this.bindQuery(node.query, subScope);
 
@@ -276,8 +332,8 @@ export class Binder {
     };
   }
 
-  bindSelectItems(items, scope) {
-    const result = [];
+  bindSelectItems(items: AST.SelectItemNode[], scope: BinderScope): BoundSelectItem[] {
+    const result: BoundSelectItem[] = [];
     for (const item of items) {
       if (item.expr.kind === NodeKind.ALL_COLUMNS) {
         const expanded = this.expandStar(item.expr, scope);
@@ -294,7 +350,7 @@ export class Binder {
     return result;
   }
 
-  expandStar(node, scope) {
+  expandStar(node: AST.AllColumnsNode, scope: BinderScope): BoundSelectItem[] {
     if (node.table) {
       const cols = scope.getTableColumns(node.table);
       if (!cols) throw new Error(`Unknown table for star: ${node.table}`);
@@ -311,8 +367,8 @@ export class Binder {
     }));
   }
 
-  bindExpression(node, scope) {
-    if (!node) return null;
+  bindExpression(node: AST.Expr | AST.QuantifiedSubqueryNode, scope: BinderScope): BE.BoundExpr {
+    if (!node) return null as unknown as BE.BoundExpr;
 
     switch (node.kind) {
       case NodeKind.COLUMN_REF:
@@ -374,7 +430,7 @@ export class Binder {
           this.bindExpression(node.expr, scope),
           this.bindExpression(node.from, scope),
           node.length ? this.bindExpression(node.length, scope) : null,
-        ].filter(Boolean), DataType.VARCHAR);
+        ].filter(Boolean) as BE.BoundExpr[], DataType.VARCHAR);
 
       case NodeKind.INTERVAL_EXPR:
         return BE.BoundInterval(parseInt(node.value, 10), node.unit);
@@ -386,11 +442,11 @@ export class Binder {
         throw new Error('Star expression in unexpected position');
 
       default:
-        throw new Error(`Unhandled expression kind: ${node.kind}`);
+        throw new Error(`Unhandled expression kind: ${(node as { kind: string }).kind}`);
     }
   }
 
-  bindWindowCall(node, scope) {
+  bindWindowCall(node: AST.WindowCallNode, scope: BinderScope): BE.BoundWindowNode {
     const args = node.args.map(a => this.bindExpression(a, scope));
     const partitionBy = node.windowSpec.partitionBy.map(e => this.bindExpression(e, scope));
     const orderBy = node.windowSpec.orderBy.map(ok => ({
@@ -402,7 +458,7 @@ export class Binder {
     return BE.BoundWindow(node.name.toUpperCase(), args, partitionBy, orderBy, resultType);
   }
 
-  bindColumnRef(node, scope) {
+  bindColumnRef(node: AST.ColumnRefNode, scope: BinderScope): BE.BoundColumnRefNode {
     const resolved = scope.resolveColumn(node.name, node.table);
     if (!resolved) {
       throw new Error(`Unknown column: ${node.table ? `${node.table}.` : ''}${node.name}`);
@@ -416,16 +472,16 @@ export class Binder {
     );
   }
 
-  bindLiteral(node) {
+  bindLiteral(node: AST.LiteralNode): BE.BoundLiteralNode {
     if (node.value === null) {
       return BE.BoundLiteral(null, null);
     }
     if (node.dataType === 'DATE') {
-      const [y, m, d] = node.value.split('-').map(Number);
+      const [y, m, d] = (node.value as string).split('-').map(Number);
       return BE.BoundLiteral(dateToEpochDays(y, m, d), DataType.DATE);
     }
     if (node.dataType === 'TIMESTAMP') {
-      const parts = node.value.split(/[T ]/);
+      const parts = (node.value as string).split(/[T ]/);
       const [y, mo, d] = parts[0].split('-').map(Number);
       let h = 0, mi = 0, s = 0, ms = 0;
       if (parts[1]) {
@@ -455,7 +511,7 @@ export class Binder {
     return BE.BoundLiteral(node.value, DataType.VARCHAR);
   }
 
-  bindBinaryExpr(node, scope) {
+  bindBinaryExpr(node: AST.BinaryExprNode, scope: BinderScope): BE.BoundBinaryNode {
     const left = this.bindExpression(node.left, scope);
     const right = this.bindExpression(node.right, scope);
     const op = node.op;
@@ -474,7 +530,7 @@ export class Binder {
     return BE.BoundBinary(op, left, right, resultType);
   }
 
-  bindUnaryExpr(node, scope) {
+  bindUnaryExpr(node: AST.UnaryExprNode, scope: BinderScope): BE.BoundUnaryNode {
     const operand = this.bindExpression(node.operand, scope);
     if (node.op === 'NOT') {
       return BE.BoundUnary('NOT', operand, DataType.BOOLEAN);
@@ -482,7 +538,7 @@ export class Binder {
     return BE.BoundUnary(node.op, operand, BE.getExprType(operand));
   }
 
-  bindAggregateCall(node, scope) {
+  bindAggregateCall(node: AST.AggregateCallNode, scope: BinderScope): BE.BoundAggregateNode {
     const args = node.args.map(a => this.bindExpression(a, scope));
     const resultType = this.inferAggregateType(node.name, args);
     const bound = BE.BoundAggregate(node.name, args, node.distinct, resultType);
@@ -490,13 +546,13 @@ export class Binder {
     return bound;
   }
 
-  bindFunctionCall(node, scope) {
+  bindFunctionCall(node: AST.FunctionCallNode, scope: BinderScope): BE.BoundFunctionNode {
     const args = node.args.map(a => this.bindExpression(a, scope));
     const resultType = this.inferFunctionType(node.name, args);
     return BE.BoundFunction(node.name.toUpperCase(), args, resultType);
   }
 
-  bindCaseExpr(node, scope) {
+  bindCaseExpr(node: AST.CaseExprNode, scope: BinderScope): BE.BoundCaseNode {
     const operand = node.operand ? this.bindExpression(node.operand, scope) : null;
     const whenClauses = node.whenClauses.map(wc => ({
       condition: this.bindExpression(wc.condition, scope),
@@ -507,43 +563,44 @@ export class Binder {
     return BE.BoundCase(operand, whenClauses, elseExpr, resultType);
   }
 
-  bindCastExpr(node, scope) {
+  bindCastExpr(node: AST.CastExprNode, scope: BinderScope): BE.BoundCastNode {
     const expr = this.bindExpression(node.expr, scope);
     const targetType = this.resolveTypeName(node.targetType);
     return BE.BoundCast(expr, targetType);
   }
 
-  bindInExpr(node, scope) {
+  bindInExpr(node: AST.InExprNode, scope: BinderScope): BE.BoundInListNode {
     const expr = this.bindExpression(node.expr, scope);
-    if (node.list.kind === NodeKind.SUBQUERY_EXPR) {
+    const inList = node.list;
+    if (!Array.isArray(inList) && inList.kind === NodeKind.SUBQUERY_EXPR) {
       const subScope = scope.child();
-      const subPlan = this.bindQuery(node.list.query, subScope);
+      const subPlan = this.bindQuery(inList.query, subScope);
       return BE.BoundInList(expr, BE.BoundSubquery(subPlan, 'IN'), node.negated);
     }
-    const list = node.list.map(e => this.bindExpression(e, scope));
+    const list = (inList as AST.Expr[]).map(e => this.bindExpression(e, scope));
     return BE.BoundInList(expr, list, node.negated);
   }
 
-  bindExistsExpr(node, scope) {
+  bindExistsExpr(node: AST.ExistsExprNode, scope: BinderScope): BE.BoundExistsNode {
     const subScope = scope.child();
     const subPlan = this.bindQuery(node.query, subScope);
     return BE.BoundExists(subPlan, node.negated);
   }
 
-  bindSubqueryExpr(node, scope) {
+  bindSubqueryExpr(node: AST.SubqueryExprNode, scope: BinderScope): BE.BoundSubqueryNode {
     const subScope = scope.child();
     const subPlan = this.bindQuery(node.query, subScope);
     return BE.BoundSubquery(subPlan, 'SCALAR');
   }
 
-  inferColumnName(node) {
+  inferColumnName(node: AST.Expr): string | null {
     if (node.kind === NodeKind.COLUMN_REF) return node.name;
     if (node.kind === NodeKind.AGGREGATE_CALL) return node.name.toLowerCase();
     if (node.kind === NodeKind.FUNCTION_CALL) return node.name.toLowerCase();
     return null;
   }
 
-  inferArithmeticType(left, right) {
+  inferArithmeticType(left: string | null, right: string | null): string {
     if (left === DataType.FLOAT64 || right === DataType.FLOAT64) return DataType.FLOAT64;
     if (left === DataType.DECIMAL || right === DataType.DECIMAL) return DataType.DECIMAL;
     if (left === DataType.INT64 || right === DataType.INT64) return DataType.INT64;
@@ -551,7 +608,7 @@ export class Binder {
     return DataType.INT32;
   }
 
-  inferAggregateType(name, args) {
+  inferAggregateType(name: string, args: BE.BoundExpr[]): string {
     switch (name.toUpperCase()) {
       case 'COUNT':
       case 'COUNT_STAR':
@@ -568,7 +625,7 @@ export class Binder {
     }
   }
 
-  inferFunctionType(name, args) {
+  inferFunctionType(name: string, args: BE.BoundExpr[]): string | null {
     switch (name.toUpperCase()) {
       case 'SUBSTRING': case 'TRIM': case 'UPPER': case 'LOWER': case 'REPLACE':
         return DataType.VARCHAR;
@@ -585,7 +642,7 @@ export class Binder {
     }
   }
 
-  inferWindowType(name, args) {
+  inferWindowType(name: string, args: BE.BoundExpr[]): string | null {
     switch (name.toUpperCase()) {
       case 'ROW_NUMBER': case 'RANK': case 'DENSE_RANK':
         return DataType.INT64;
@@ -598,9 +655,9 @@ export class Binder {
     }
   }
 
-  resolveTypeName(typeName) {
+  resolveTypeName(typeName: AST.TypeNameNode): string {
     const name = typeName.name.toUpperCase();
-    const map = {
+    const map: Record<string, string> = {
       'INTEGER': DataType.INT32, 'INT': DataType.INT32, 'INT32': DataType.INT32,
       'BIGINT': DataType.INT64, 'INT64': DataType.INT64,
       'FLOAT': DataType.FLOAT64, 'DOUBLE': DataType.FLOAT64, 'REAL': DataType.FLOAT64,

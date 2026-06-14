@@ -3,7 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const WASM_DIR = join(__dirname, '../../build/wasm');
+const WASM_DIR = join(__dirname, '../../wasm');
 const WASM_EXTENSION = '.wasm';
 
 export function nodeByteSource(name) {

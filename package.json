@@ -3,15 +3,14 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "test": "vitest run",
-    "test:e2e": "vitest run --config vitest.config.e2e.js",
-    "test:e2e:coverage": "vitest run --config vitest.config.e2e.js --coverage",
-    "test:watch": "vitest",
-    "start": "node src/cli/index.js",
-    "build:wasm": "asc --config src/wasm/assembly/asconfig.json --target release",
+    "typecheck": "tsc --noEmit",
+    "build:js": "tsc -p tsconfig.build.json && node scripts/copy-wasm.js",
     "build": "node scripts/build.js",
-    "build:node": "node scripts/build.js --node",
-    "build:browser": "node scripts/build.js --browser",
+    "build:wasm": "asc --config src/wasm/assembly/asconfig.json --target release",
+    "pretest": "npm run build:js",
+    "test": "vitest run",
+    "prestart": "npm run build:js",
+    "start": "node dist/js/cli/index.js",
     "serve": "node scripts/serve.js"
   },
   "devDependencies": {
@@ -19,6 +18,7 @@
     "assemblyscript": "^0.27.0",
     "buffer": "^6.0.3",
     "esbuild": "^0.25.0",
+    "typescript": "^6.0.3",
     "vitest": "^3.2.1"
   },
   "dependencies": {
