@@ -1,4 +1,9 @@
-import type { BoundExpr } from '../binder/expression-binder.js';
+import type { BoundExpr, BoundColumnRefNode, BoundWindowNode } from '../binder/expression-binder.js';
+import type { ColumnInfo } from '../binder/scope.js';
+
+export type IndexScanValue = string | number | bigint | null;
+
+export type ProjectedExpr = BoundExpr & { outputName?: string };
 
 export enum PlanNodeType {
   SCAN = 'Scan',
@@ -75,7 +80,7 @@ interface PlanNodeBase {
 export interface LogicalScanNode extends PlanNodeBase {
   type: PlanNodeType.SCAN;
   table: string;
-  columns: any[];
+  columns: ColumnInfo[];
   alias: string;
 }
 
@@ -87,7 +92,7 @@ export interface LogicalFilterNode extends PlanNodeBase {
 
 export interface LogicalProjectNode extends PlanNodeBase {
   type: PlanNodeType.PROJECT;
-  expressions: any[];
+  expressions: ProjectedExpr[];
   children: LogicalPlanNode[];
 }
 
@@ -101,8 +106,8 @@ export interface LogicalJoinNode extends PlanNodeBase {
 
 export interface LogicalAggregateNode extends PlanNodeBase {
   type: PlanNodeType.AGGREGATE;
-  groupBy: any[];
-  aggregates: any[];
+  groupBy: BoundExpr[];
+  aggregates: BoundExpr[];
   physicalStrategy: PhysicalStrategy;
   children: LogicalPlanNode[];
 }
@@ -147,7 +152,7 @@ export interface LogicalCTEAnchorNode extends PlanNodeBase {
 
 export interface LogicalDependentJoinNode extends PlanNodeBase {
   type: PlanNodeType.DEPENDENT_JOIN;
-  correlatedColumns: any[];
+  correlatedColumns: BoundColumnRefNode[];
   subqueryType: string;
   condition: BoundExpr | null;
   children: LogicalPlanNode[];
@@ -168,17 +173,17 @@ export interface LogicalIndexScanNode extends PlanNodeBase {
   indexName: string;
   columnName: string;
   scanType: string;
-  scanKey: any;
-  scanLow: any;
-  scanHigh: any;
+  scanKey: IndexScanValue;
+  scanLow: IndexScanValue;
+  scanHigh: IndexScanValue;
   lowInc: boolean;
   highInc: boolean;
-  columns: any[];
+  columns: ColumnInfo[];
 }
 
 export interface LogicalWindowNode extends PlanNodeBase {
   type: PlanNodeType.WINDOW;
-  windowExprs: any[];
+  windowExprs: BoundExpr[];
   children: LogicalPlanNode[];
 }
 
@@ -190,24 +195,24 @@ export interface LogicalMaterializeNode extends PlanNodeBase {
 export interface LogicalExchangeNode extends PlanNodeBase {
   type: PlanNodeType.EXCHANGE;
   exchangeType: string;
-  partitionKeys: any[];
+  partitionKeys: BoundExpr[];
   partitionCount: number;
   children: LogicalPlanNode[];
 }
 
 export interface LogicalPartialAggregateNode extends PlanNodeBase {
   type: PlanNodeType.PARTIAL_AGGREGATE;
-  groupBy: any[];
-  aggregates: any[];
+  groupBy: BoundExpr[];
+  aggregates: BoundExpr[];
   physicalStrategy: PhysicalStrategy;
   children: LogicalPlanNode[];
 }
 
 export interface LogicalFinalAggregateNode extends PlanNodeBase {
   type: PlanNodeType.FINAL_AGGREGATE;
-  groupBy: any[];
-  aggregates: any[];
-  partialAggregates: any[];
+  groupBy: BoundExpr[];
+  aggregates: BoundExpr[];
+  partialAggregates: BoundExpr[];
   physicalStrategy: PhysicalStrategy;
   children: LogicalPlanNode[];
 }
@@ -221,8 +226,8 @@ export interface LogicalMergeExchangeNode extends PlanNodeBase {
 
 export interface LogicalExchangeReceiveNode extends PlanNodeBase {
   type: PlanNodeType.EXCHANGE_RECEIVE;
-  sourceFragmentIds: any[];
-  schema: any[];
+  sourceFragmentIds: number[];
+  schema: ColumnInfo[];
   children: LogicalPlanNode[];
 }
 
@@ -245,7 +250,7 @@ export type LogicalPlanNode =
   | LogicalMergeExchangeNode | LogicalExchangeReceiveNode | LogicalSingleRowNode
   | LogicalEmptyNode;
 
-export function LogicalScan(table: string, columns: any[], alias?: string): LogicalScanNode {
+export function LogicalScan(table: string, columns: ColumnInfo[], alias?: string): LogicalScanNode {
   return { type: PlanNodeType.SCAN, table, columns, alias: alias || table };
 }
 
@@ -253,7 +258,7 @@ export function LogicalFilter(condition: BoundExpr | null, child: LogicalPlanNod
   return { type: PlanNodeType.FILTER, condition, children: [child] };
 }
 
-export function LogicalProject(expressions: any[], child: LogicalPlanNode): LogicalProjectNode {
+export function LogicalProject(expressions: ProjectedExpr[], child: LogicalPlanNode): LogicalProjectNode {
   return { type: PlanNodeType.PROJECT, expressions, children: [child] };
 }
 
@@ -267,7 +272,7 @@ export function LogicalJoin(joinType: JoinType, condition: BoundExpr | null, lef
   };
 }
 
-export function LogicalAggregate(groupBy: any[], aggregates: any[], child: LogicalPlanNode, physicalStrategy: PhysicalStrategy = PhysicalStrategy.HASH): LogicalAggregateNode {
+export function LogicalAggregate(groupBy: BoundExpr[], aggregates: BoundExpr[], child: LogicalPlanNode, physicalStrategy: PhysicalStrategy = PhysicalStrategy.HASH): LogicalAggregateNode {
   return {
     type: PlanNodeType.AGGREGATE,
     groupBy,
@@ -301,7 +306,7 @@ export function LogicalCTEAnchor(cteName: string, cteId: number, producer: Logic
   return { type: PlanNodeType.CTE_ANCHOR, cteName, cteId, children: [producer, consumer] };
 }
 
-export function LogicalDependentJoin(child: LogicalPlanNode, subquery: LogicalPlanNode, correlatedColumns: any[], subqueryType: string, condition: BoundExpr | null): LogicalDependentJoinNode {
+export function LogicalDependentJoin(child: LogicalPlanNode, subquery: LogicalPlanNode, correlatedColumns: BoundColumnRefNode[], subqueryType: string, condition: BoundExpr | null): LogicalDependentJoinNode {
   return {
     type: PlanNodeType.DEPENDENT_JOIN,
     correlatedColumns,
@@ -315,7 +320,7 @@ export function LogicalTopN(orderKeys: LogicalOrderKey[], count: number, offset:
   return { type: PlanNodeType.TOP_N, orderKeys, count, offset: offset || 0, children: [child] };
 }
 
-export function LogicalIndexScan(table: string, alias: string | undefined, indexName: string, columnName: string, scanType: string, scanKey: any, scanLow: any, scanHigh: any, lowInc: boolean, highInc: boolean, columns: any[]): LogicalIndexScanNode {
+export function LogicalIndexScan(table: string, alias: string | undefined, indexName: string, columnName: string, scanType: string, scanKey: IndexScanValue, scanLow: IndexScanValue, scanHigh: IndexScanValue, lowInc: boolean, highInc: boolean, columns: ColumnInfo[]): LogicalIndexScanNode {
   return {
     type: PlanNodeType.INDEX_SCAN,
     table, alias: alias || table, indexName, columnName,
@@ -324,7 +329,7 @@ export function LogicalIndexScan(table: string, alias: string | undefined, index
   };
 }
 
-export function LogicalWindow(windowExprs: any[], child: LogicalPlanNode): LogicalWindowNode {
+export function LogicalWindow(windowExprs: BoundExpr[], child: LogicalPlanNode): LogicalWindowNode {
   return { type: PlanNodeType.WINDOW, windowExprs, children: [child] };
 }
 
@@ -332,7 +337,7 @@ export function LogicalMaterialize(child: LogicalPlanNode): LogicalMaterializeNo
   return { type: PlanNodeType.MATERIALIZE, children: [child] };
 }
 
-export function LogicalExchange(exchangeType: string, partitionKeys: any[] | null | undefined, partitionCount: number | null | undefined, child: LogicalPlanNode): LogicalExchangeNode {
+export function LogicalExchange(exchangeType: string, partitionKeys: BoundExpr[] | null | undefined, partitionCount: number | null | undefined, child: LogicalPlanNode): LogicalExchangeNode {
   return {
     type: PlanNodeType.EXCHANGE,
     exchangeType,
@@ -342,7 +347,7 @@ export function LogicalExchange(exchangeType: string, partitionKeys: any[] | nul
   };
 }
 
-export function LogicalPartialAggregate(groupBy: any[], aggregates: any[], child: LogicalPlanNode): LogicalPartialAggregateNode {
+export function LogicalPartialAggregate(groupBy: BoundExpr[], aggregates: BoundExpr[], child: LogicalPlanNode): LogicalPartialAggregateNode {
   return {
     type: PlanNodeType.PARTIAL_AGGREGATE,
     groupBy,
@@ -352,7 +357,7 @@ export function LogicalPartialAggregate(groupBy: any[], aggregates: any[], child
   };
 }
 
-export function LogicalFinalAggregate(groupBy: any[], aggregates: any[], partialAggregates: any[], child: LogicalPlanNode): LogicalFinalAggregateNode {
+export function LogicalFinalAggregate(groupBy: BoundExpr[], aggregates: BoundExpr[], partialAggregates: BoundExpr[], child: LogicalPlanNode): LogicalFinalAggregateNode {
   return {
     type: PlanNodeType.FINAL_AGGREGATE,
     groupBy,
@@ -372,7 +377,7 @@ export function LogicalMergeExchange(orderKeys: LogicalOrderKey[], limit: number
   };
 }
 
-export function LogicalExchangeReceive(sourceFragmentIds: any[], schema: any[] | null | undefined): LogicalExchangeReceiveNode {
+export function LogicalExchangeReceive(sourceFragmentIds: number[], schema: ColumnInfo[] | null | undefined): LogicalExchangeReceiveNode {
   return {
     type: PlanNodeType.EXCHANGE_RECEIVE,
     sourceFragmentIds,
@@ -417,7 +422,7 @@ export function planToString(node: LogicalPlanNode, indent: number = 0): string 
       str += `(${node.subqueryType})`;
       break;
     case PlanNodeType.WINDOW:
-      str += `(${node.windowExprs.map(w => w.name).join(', ')})`;
+      str += `(${node.windowExprs.map(w => (w as BoundWindowNode).name).join(', ')})`;
       break;
     case PlanNodeType.TOP_N:
       str += `(${node.count}${node.offset ? `, offset=${node.offset}` : ''})`;

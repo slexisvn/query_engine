@@ -1,5 +1,5 @@
 import { PlanNodeType, JoinType, PhysicalStrategy, type LogicalPlanNode } from './logical-plan.js';
-import { BoundExprKind, type BoundExpr } from '../binder/expression-binder.js';
+import { BoundExprKind, type BoundExpr, type BoundAggregateNode, type BoundWindowNode } from '../binder/expression-binder.js';
 
 export function formatExpression(expr: BoundExpr | null | undefined): string {
   if (!expr) return '';
@@ -66,7 +66,7 @@ function formatNode(node: LogicalPlanNode): string {
         aggStr += ` (group by: ${node.groupBy.map(g => formatExpression(g)).join(', ')})`;
       }
       if (node.aggregates && node.aggregates.length > 0) {
-        aggStr += ` (aggs: ${node.aggregates.map(a => `${a.name}(${a.args.map((arg: any) => formatExpression(arg)).join(', ')})`).join(', ')})`;
+        aggStr += ` (aggs: ${node.aggregates.map(a => `${(a as BoundAggregateNode).name}(${(a as BoundAggregateNode).args.map(arg => formatExpression(arg)).join(', ')})`).join(', ')})`;
       }
       return aggStr;
     }
@@ -101,7 +101,7 @@ function formatNode(node: LogicalPlanNode): string {
     case PlanNodeType.EMPTY:
       return `Empty (short-circuit)`;
     case PlanNodeType.WINDOW: {
-      const wExprs = node.windowExprs.map(w => w.name).join(', ');
+      const wExprs = node.windowExprs.map(w => (w as BoundWindowNode).name).join(', ');
       return `Window (${wExprs})`;
     }
     default:

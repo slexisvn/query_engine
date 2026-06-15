@@ -1,5 +1,8 @@
 import { NodeKind } from '../parser/ast.js';
 import { DataType } from '../storage/data-type.js';
+import type { BoundQuery } from './binder.js';
+
+export type LiteralValue = string | number | boolean | bigint | null;
 
 export enum BoundExprKind {
   COLUMN_REF = 'BoundColumnRef',
@@ -43,7 +46,7 @@ export interface BoundColumnRefNode {
   isCorrelated: boolean;
 }
 
-export interface BoundLiteralNode { kind: BoundExprKind.LITERAL; value: unknown; dataType: string | null; }
+export interface BoundLiteralNode { kind: BoundExprKind.LITERAL; value: LiteralValue; dataType: string | null; }
 
 export interface BoundBinaryNode { kind: BoundExprKind.BINARY; op: string; left: BoundExpr; right: BoundExpr; resultType: string; }
 
@@ -71,13 +74,13 @@ export interface BoundLikeNode { kind: BoundExprKind.LIKE; expr: BoundExpr; patt
 
 export interface BoundIsNullNode { kind: BoundExprKind.IS_NULL; expr: BoundExpr; negated: boolean; resultType: string; }
 
-export interface BoundSubqueryNode { kind: BoundExprKind.SUBQUERY; plan: unknown; subqueryType: string; }
+export interface BoundSubqueryNode { kind: BoundExprKind.SUBQUERY; plan: BoundQuery; subqueryType: string; }
 
-export interface BoundExistsNode { kind: BoundExprKind.EXISTS; plan: unknown; negated: boolean; resultType: string; }
+export interface BoundExistsNode { kind: BoundExprKind.EXISTS; plan: BoundQuery; negated: boolean; resultType: string; }
 
 export interface BoundExtractNode { kind: BoundExprKind.EXTRACT; field: string; source: BoundExpr; resultType: string; }
 
-export interface BoundIntervalNode { kind: BoundExprKind.INTERVAL; value: unknown; unit: string; resultType: string; }
+export interface BoundIntervalNode { kind: BoundExprKind.INTERVAL; value: number; unit: string; resultType: string; }
 
 export interface BoundWindowNode {
   kind: BoundExprKind.WINDOW;
@@ -100,7 +103,7 @@ export function BoundColumnRef(tableAlias: string, columnName: string, columnInd
   };
 }
 
-export function BoundLiteral(value: unknown, dataType: string | null): BoundLiteralNode {
+export function BoundLiteral(value: LiteralValue, dataType: string | null): BoundLiteralNode {
   return { kind: BoundExprKind.LITERAL, value, dataType };
 }
 
@@ -144,11 +147,11 @@ export function BoundIsNull(expr: BoundExpr, negated: boolean): BoundIsNullNode 
   return { kind: BoundExprKind.IS_NULL, expr, negated, resultType: DataType.BOOLEAN };
 }
 
-export function BoundSubquery(plan: unknown, subqueryType: string): BoundSubqueryNode {
+export function BoundSubquery(plan: BoundQuery, subqueryType: string): BoundSubqueryNode {
   return { kind: BoundExprKind.SUBQUERY, plan, subqueryType };
 }
 
-export function BoundExists(plan: unknown, negated: boolean): BoundExistsNode {
+export function BoundExists(plan: BoundQuery, negated: boolean): BoundExistsNode {
   return { kind: BoundExprKind.EXISTS, plan, negated, resultType: DataType.BOOLEAN };
 }
 
@@ -156,7 +159,7 @@ export function BoundExtract(field: string, source: BoundExpr): BoundExtractNode
   return { kind: BoundExprKind.EXTRACT, field, source, resultType: DataType.INT32 };
 }
 
-export function BoundInterval(value: unknown, unit: string): BoundIntervalNode {
+export function BoundInterval(value: number, unit: string): BoundIntervalNode {
   return { kind: BoundExprKind.INTERVAL, value, unit, resultType: DataType.INT32 };
 }
 
@@ -164,7 +167,7 @@ export function BoundWindow(name: string, args: BoundExpr[], partitionBy: BoundE
   return { kind: BoundExprKind.WINDOW, name, args, partitionBy, orderBy, resultType };
 }
 
-export function getExprType(expr: { kind?: unknown; resultType?: string | null; dataType?: string | null } | null | undefined): string | null {
+export function getExprType(expr: { kind?: BoundExprKind; resultType?: string | null; dataType?: string | null } | null | undefined): string | null {
   if (!expr) return null;
   return expr.resultType || expr.dataType || null;
 }
