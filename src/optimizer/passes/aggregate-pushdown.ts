@@ -1,9 +1,9 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanNodeType, JoinType, LogicalAggregate } from '../../planner/logical-plan.js';
+import { PlanNodeType, JoinType, LogicalAggregate, type LogicalPlanNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 
-const DECOMPOSABLE_FUNCTIONS = new Map([
+const DECOMPOSABLE_FUNCTIONS = new Map<string, { partial: string; final: string }>([
   ['SUM', { partial: 'SUM', final: 'SUM' }],
   ['COUNT', { partial: 'COUNT', final: 'SUM' }],
   ['MIN', { partial: 'MIN', final: 'MIN' }],
@@ -13,15 +13,15 @@ const DECOMPOSABLE_FUNCTIONS = new Map([
 export class AggregatePushdown extends OptimizationPass {
   get name() { return 'AggregatePushdown'; }
 
-  apply(plan) {
+  apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new AggregatePushdownRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class AggregatePushdownRewriter extends PlanRewriter {
-  rewriteAggregate(node) {
-    const rewritten = this.rewriteChildren(node);
+  rewriteAggregate(node: any): any {
+    const rewritten: any = this.rewriteChildren(node);
     const child = rewritten.children[0];
 
     if (child.type !== PlanNodeType.JOIN || child.joinType !== JoinType.INNER) return rewritten;
@@ -58,7 +58,7 @@ class AggregatePushdownRewriter extends PlanRewriter {
     return LogicalAggregate(rewritten.groupBy, finalAggregates, newJoin);
   }
 
-  allAggregatesDecomposable(aggregates) {
+  allAggregatesDecomposable(aggregates: any[]): boolean {
     return aggregates.every(agg => {
       if (agg.distinct) return false;
       const funcName = (agg.func || agg.functionName || '').toUpperCase();
@@ -66,10 +66,10 @@ class AggregatePushdownRewriter extends PlanRewriter {
     });
   }
 
-  buildPartialAggregates(aggregates) {
+  buildPartialAggregates(aggregates: any[]): any[] {
     return aggregates.map((agg, idx) => {
       const funcName = (agg.func || agg.functionName || '').toUpperCase();
-      const rule = DECOMPOSABLE_FUNCTIONS.get(funcName);
+      const rule = DECOMPOSABLE_FUNCTIONS.get(funcName)!;
       return {
         ...agg,
         func: rule.partial,
@@ -80,10 +80,10 @@ class AggregatePushdownRewriter extends PlanRewriter {
     });
   }
 
-  buildFinalAggregates(originalAggs, partialAggs) {
+  buildFinalAggregates(originalAggs: any[], partialAggs: any[]): any[] {
     return originalAggs.map((agg, idx) => {
       const funcName = (agg.func || agg.functionName || '').toUpperCase();
-      const rule = DECOMPOSABLE_FUNCTIONS.get(funcName);
+      const rule = DECOMPOSABLE_FUNCTIONS.get(funcName)!;
       const partialRef = {
         kind: BoundExprKind.COLUMN_REF,
         columnName: partialAggs[idx].outputName,
@@ -99,7 +99,7 @@ class AggregatePushdownRewriter extends PlanRewriter {
     });
   }
 
-  classifyColumns(columns, leftRefs, rightRefs) {
+  classifyColumns(columns: any[], leftRefs: Set<string>, rightRefs: Set<string>): string {
     let hasLeft = false, hasRight = false;
     for (const col of columns) {
       if (col.kind !== BoundExprKind.COLUMN_REF) return 'both';
@@ -114,13 +114,13 @@ class AggregatePushdownRewriter extends PlanRewriter {
     return 'none';
   }
 
-  classifyAggInputs(aggregates, leftRefs, rightRefs) {
+  classifyAggInputs(aggregates: any[], leftRefs: Set<string>, rightRefs: Set<string>): string {
     let hasLeft = false, hasRight = false;
     for (const agg of aggregates) {
       const funcName = (agg.func || agg.functionName || '').toUpperCase();
       if (funcName === 'COUNT' && (!agg.args || agg.args.length === 0 || this.isCountStar(agg))) continue;
       for (const arg of agg.args || []) {
-        this.walkExprRefs(arg, table => {
+        this.walkExprRefs(arg, (table: string) => {
           if (leftRefs.has(table)) hasLeft = true;
           else if (rightRefs.has(table)) hasRight = true;
         });
@@ -132,12 +132,12 @@ class AggregatePushdownRewriter extends PlanRewriter {
     return 'none';
   }
 
-  isCountStar(agg) {
+  isCountStar(agg: any): boolean {
     if (!agg.args || agg.args.length === 0) return true;
     return agg.args.length === 1 && agg.args[0]?.kind === BoundExprKind.LITERAL;
   }
 
-  walkExprRefs(expr, callback) {
+  walkExprRefs(expr: any, callback: (table: string) => void): void {
     if (!expr || typeof expr !== 'object') return;
     if (expr.kind === BoundExprKind.COLUMN_REF && expr.tableAlias) {
       callback(expr.tableAlias.toUpperCase());
@@ -148,13 +148,13 @@ class AggregatePushdownRewriter extends PlanRewriter {
     if (expr.args) for (const a of expr.args) this.walkExprRefs(a, callback);
   }
 
-  collectPlanTableRefs(node) {
-    const refs = new Set();
+  collectPlanTableRefs(node: any): Set<string> {
+    const refs = new Set<string>();
     this._collectRefs(node, refs);
     return refs;
   }
 
-  _collectRefs(node, refs) {
+  _collectRefs(node: any, refs: Set<string>): void {
     if (!node) return;
     if (node.type === PlanNodeType.SCAN) {
       refs.add((node.alias || node.table || '').toUpperCase());

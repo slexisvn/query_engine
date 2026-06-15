@@ -1,7 +1,19 @@
-import { BoundExprKind } from '../../binder/expression-binder.js';
+import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
+
+export interface RelationEntry {
+  id: number;
+  name: string;
+  plan: any;
+  cardinality: number;
+  mask: number;
+}
 
 export class HyperEdge {
-  constructor(leftMask, rightMask, predicate) {
+  leftMask: number;
+  rightMask: number;
+  predicate: BoundExpr;
+
+  constructor(leftMask: number, rightMask: number, predicate: BoundExpr) {
     this.leftMask = leftMask;
     this.rightMask = rightMask;
     this.predicate = predicate;
@@ -9,6 +21,11 @@ export class HyperEdge {
 }
 
 export class HyperGraph {
+  relations: RelationEntry[];
+  relationIndex: Map<string, number>;
+  edges: HyperEdge[];
+  adjacency: number[];
+
   constructor() {
     this.relations = [];
     this.relationIndex = new Map();
@@ -16,7 +33,7 @@ export class HyperGraph {
     this.adjacency = [];
   }
 
-  addRelation(name, plan, cardinality) {
+  addRelation(name: string, plan: any, cardinality: number): number {
     const id = this.relations.length;
     if (id >= 30) return -1;
     const mask = 1 << id;
@@ -26,7 +43,7 @@ export class HyperGraph {
     return id;
   }
 
-  addEdge(leftNames, rightNames, predicate) {
+  addEdge(leftNames: string[], rightNames: string[], predicate: BoundExpr): void {
     let leftMask = 0;
     for (const name of leftNames) {
       const id = this.relationIndex.get(name.toUpperCase());
@@ -50,7 +67,7 @@ export class HyperGraph {
     }
   }
 
-  getNeighborhood(subset) {
+  getNeighborhood(subset: number): number {
     let neighbors = 0;
     for (let i = 0; i < this.relations.length; i++) {
       if (subset & (1 << i)) {
@@ -60,7 +77,7 @@ export class HyperGraph {
     return neighbors & ~subset;
   }
 
-  isConnected(subset) {
+  isConnected(subset: number): boolean {
     if (subset === 0) return false;
     const startBit = lowestBit(subset);
     let reached = startBit;
@@ -80,9 +97,9 @@ export class HyperGraph {
     return reached === subset;
   }
 
-  findJoinPredicates(leftMask, rightMask) {
-    const preds = [];
-    const seen = new Set();
+  findJoinPredicates(leftMask: number, rightMask: number): BoundExpr[] {
+    const preds: BoundExpr[] = [];
+    const seen = new Set<HyperEdge>();
     for (const edge of this.edges) {
       const edgeFull = edge.leftMask | edge.rightMask;
       const combined = leftMask | rightMask;
@@ -99,16 +116,16 @@ export class HyperGraph {
     return preds;
   }
 
-  get size() {
+  get size(): number {
     return this.relations.length;
   }
 
-  get fullMask() {
+  get fullMask(): number {
     return (1 << this.relations.length) - 1;
   }
 }
 
-export function buildHyperGraph(relations, joinPredicates, cardinalityEstimator) {
+export function buildHyperGraph(relations: any[], joinPredicates: BoundExpr[], cardinalityEstimator: any): HyperGraph {
   const graph = new HyperGraph();
 
   for (const rel of relations) {
@@ -134,9 +151,9 @@ export function buildHyperGraph(relations, joinPredicates, cardinalityEstimator)
   return graph;
 }
 
-function collectColumnTableRefs(expr) {
-  const refs = new Set();
-  _walkExpr(expr, e => {
+function collectColumnTableRefs(expr: BoundExpr): Set<string> {
+  const refs = new Set<string>();
+  _walkExpr(expr, (e: any) => {
     if (e.kind === BoundExprKind.COLUMN_REF && e.tableAlias) {
       refs.add(e.tableAlias.toUpperCase());
     }
@@ -144,7 +161,7 @@ function collectColumnTableRefs(expr) {
   return refs;
 }
 
-function _walkExpr(expr, fn) {
+function _walkExpr(expr: any, fn: (e: any) => void): void {
   if (!expr || typeof expr !== 'object') return;
   fn(expr);
   if (expr.left) _walkExpr(expr.left, fn);
@@ -153,11 +170,11 @@ function _walkExpr(expr, fn) {
   if (expr.args) for (const a of expr.args) _walkExpr(a, fn);
 }
 
-function lowestBit(mask) {
+function lowestBit(mask: number): number {
   return mask & (-mask);
 }
 
-export function popcount(mask) {
+export function popcount(mask: number): number {
   let count = 0;
   while (mask) {
     count += mask & 1;
@@ -166,8 +183,8 @@ export function popcount(mask) {
   return count;
 }
 
-export function subsets(mask) {
-  const result = [];
+export function subsets(mask: number): number[] {
+  const result: number[] = [];
   let s = mask;
   while (s > 0) {
     result.push(s);

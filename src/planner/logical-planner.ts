@@ -1,38 +1,41 @@
 import * as LP from './logical-plan.js';
-import { BoundExprKind, BoundColumnRef, collectCorrelatedColumns } from '../binder/expression-binder.js';
+import { BoundExprKind, BoundColumnRef, collectCorrelatedColumns, type BoundExpr } from '../binder/expression-binder.js';
+import type { BoundQuery, BoundSelect, BoundSetOp, BoundFrom } from '../binder/binder.js';
 
 let _cteIdCounter = 0;
 
-function projectionExpr(item) {
+function projectionExpr(item: { expr: any; alias?: string | null; inferredName?: string | null }): any {
   const name = item.alias || item.inferredName;
   if (!name) return item.expr;
   return { ...item.expr, outputName: name };
 }
 
 export class LogicalPlanner {
+  cteMap: Map<string, LP.LogicalPlanNode>;
+
   constructor() {
     this.cteMap = new Map();
   }
 
-  plan(boundQuery) {
+  plan(boundQuery: BoundQuery): LP.LogicalPlanNode {
     return this.planQuery(boundQuery);
   }
 
-  planQuery(bound) {
+  planQuery(bound: BoundQuery): LP.LogicalPlanNode {
     if (bound.type === 'SetOp') {
       return this.planSetOp(bound);
     }
     return this.planSelect(bound);
   }
 
-  planSetOp(bound) {
+  planSetOp(bound: BoundSetOp): LP.LogicalPlanNode {
     const left = this.planQuery(bound.left);
     const right = this.planQuery(bound.right);
     return LP.LogicalUnion(left, right, bound.all);
   }
 
-  planSelect(bound) {
-    let node = null;
+  planSelect(bound: BoundSelect): LP.LogicalPlanNode {
+    let node: LP.LogicalPlanNode | null = null;
 
     if (bound.plan) {
       node = this.planFrom(bound.plan);
@@ -76,7 +79,7 @@ export class LogicalPlanner {
       bound.selectItems[i] = { ...bound.selectItems[i], expr };
     }
 
-    const windowExprs = [];
+    const windowExprs: any[] = [];
     for (const item of bound.selectItems) {
       this._collectWindows(item.expr, windowExprs);
     }
@@ -100,22 +103,22 @@ export class LogicalPlanner {
     }
 
     if (bound.limit) {
-      const limitVal = bound.limit.value;
-      const offsetVal = bound.offset ? bound.offset.value : 0;
+      const limitVal = (bound.limit as any).value;
+      const offsetVal = bound.offset ? (bound.offset as any).value : 0;
       node = LP.LogicalLimit(limitVal, offsetVal, node);
     }
 
     return node;
   }
 
-  planFrom(bound) {
+  planFrom(bound: BoundFrom): LP.LogicalPlanNode {
     switch (bound.type) {
       case 'TableRef':
         return LP.LogicalScan(bound.tableName, bound.columns, bound.alias);
 
       case 'CTERef': {
         const cteId = _cteIdCounter++;
-        const ctePlan = bound.query.prebuiltPlan ?? this.planQuery(bound.query);
+        const ctePlan = (bound.query as any).prebuiltPlan ?? this.planQuery(bound.query);
         this.cteMap.set(bound.cteName.toUpperCase(), ctePlan);
         return LP.LogicalCTEScan(bound.cteName, cteId);
       }
@@ -123,7 +126,7 @@ export class LogicalPlanner {
       case 'JoinRef': {
         const left = this.planFrom(bound.left);
         const right = this.planFrom(bound.right);
-        const joinType = bound.joinType === 'CROSS' ? LP.JoinType.CROSS : LP.JoinType[bound.joinType];
+        const joinType = bound.joinType === 'CROSS' ? LP.JoinType.CROSS : LP.JoinType[bound.joinType as keyof typeof LP.JoinType];
         return LP.LogicalJoin(joinType, bound.condition, left, right);
       }
 
@@ -133,14 +136,14 @@ export class LogicalPlanner {
       }
 
       default:
-        throw new Error(`Unknown from type: ${bound.type}`);
+        throw new Error(`Unknown from type: ${(bound as any).type}`);
     }
   }
 
-  extractSubqueries(expr, currentPlan) {
-    const subqueryJoins = [];
+  extractSubqueries(expr: BoundExpr | null, currentPlan: LP.LogicalPlanNode): { expr: any; subqueryJoins: Array<(child: LP.LogicalPlanNode) => LP.LogicalPlanNode> } {
+    const subqueryJoins: Array<(child: LP.LogicalPlanNode) => LP.LogicalPlanNode> = [];
 
-    const transformed = this.walkAndReplace(expr, (node) => {
+    const transformed = this.walkAndReplace(expr, (node: any) => {
       if (node.kind === BoundExprKind.UNARY && node.op === 'NOT'
           && node.operand?.kind === BoundExprKind.EXISTS) {
         const subPlan = this.planQuery(node.operand.plan);
@@ -197,7 +200,7 @@ export class LogicalPlanner {
     return { expr: transformed, subqueryJoins };
   }
 
-  walkAndReplace(expr, fn) {
+  walkAndReplace(expr: any, fn: (node: any) => any): any {
     if (!expr) return null;
     const result = fn(expr);
     if (result !== expr) return result;
@@ -215,7 +218,7 @@ export class LogicalPlanner {
         return {
           ...expr,
           operand: expr.operand ? this.walkAndReplace(expr.operand, fn) : null,
-          whenClauses: expr.whenClauses.map(wc => ({
+          whenClauses: expr.whenClauses.map((wc: any) => ({
             condition: this.walkAndReplace(wc.condition, fn),
             result: this.walkAndReplace(wc.result, fn),
           })),
@@ -233,7 +236,7 @@ export class LogicalPlanner {
     }
   }
 
-  _collectWindows(expr, out) {
+  _collectWindows(expr: any, out: any[]): void {
     if (!expr) return;
     if (expr.kind === BoundExprKind.WINDOW) {
       out.push(expr);
@@ -250,13 +253,13 @@ export class LogicalPlanner {
     if (expr.elseExpr) this._collectWindows(expr.elseExpr, out);
   }
 
-  findCorrelatedRefs(boundQuery) {
-    const refs = [];
+  findCorrelatedRefs(boundQuery: any): any[] {
+    const refs: any[] = [];
     this._scanForCorrelated(boundQuery, refs);
     return refs;
   }
 
-  _scanForCorrelated(obj, refs) {
+  _scanForCorrelated(obj: any, refs: any[]): void {
     if (!obj || typeof obj !== 'object') return;
     if (obj.kind === BoundExprKind.COLUMN_REF && obj.isCorrelated) {
       refs.push(obj);
@@ -272,7 +275,7 @@ export class LogicalPlanner {
   }
 }
 
-export function createLogicalPlan(boundQuery) {
+export function createLogicalPlan(boundQuery: BoundQuery): LP.LogicalPlanNode {
   const planner = new LogicalPlanner();
   const plan = planner.plan(boundQuery);
   plan._cteMap = planner.cteMap;

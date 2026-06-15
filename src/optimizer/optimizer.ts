@@ -1,19 +1,24 @@
+import type { LogicalPlanNode } from '../planner/logical-plan.js';
+import type { OptimizationPass } from './pass.js';
+
 export class Optimizer {
+  passes: OptimizationPass[];
+
   constructor() {
     this.passes = [];
   }
 
-  registerPass(pass) {
+  registerPass(pass: OptimizationPass): this {
     this.passes.push(pass);
     return this;
   }
 
-  removePass(name) {
+  removePass(name: string): this {
     this.passes = this.passes.filter(p => p.name !== name);
     return this;
   }
 
-  insertPassBefore(name, pass) {
+  insertPassBefore(name: string, pass: OptimizationPass): this {
     const idx = this.passes.findIndex(p => p.name === name);
     if (idx === -1) {
       this.passes.push(pass);
@@ -23,7 +28,7 @@ export class Optimizer {
     return this;
   }
 
-  insertPassAfter(name, pass) {
+  insertPassAfter(name: string, pass: OptimizationPass): this {
     const idx = this.passes.findIndex(p => p.name === name);
     if (idx === -1) {
       this.passes.push(pass);
@@ -33,7 +38,7 @@ export class Optimizer {
     return this;
   }
 
-  optimize(plan, context = {}) {
+  optimize(plan: LogicalPlanNode, context: Record<string, unknown> = {}): LogicalPlanNode {
     let current = plan;
     for (const pass of this.passes) {
       current = pass.apply(current, context);
@@ -41,7 +46,7 @@ export class Optimizer {
     return current;
   }
 
-  listPasses() {
+  listPasses(): string[] {
     return this.passes.map(p => p.name);
   }
 }

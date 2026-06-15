@@ -1,19 +1,19 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { PlanNodeType } from '../../planner/logical-plan.js';
+import { PlanNodeType, type LogicalPlanNode } from '../../planner/logical-plan.js';
 
 export class TopNFusion extends OptimizationPass {
   get name() { return 'TopNFusion'; }
 
-  apply(plan) {
+  apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new TopNFusionRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class TopNFusionRewriter extends PlanRewriter {
-  rewriteLimit(node) {
-    const child = this.rewrite(node.children[0]);
+  rewriteLimit(node: any): any {
+    const child: any = this.rewrite(node.children[0]);
 
     if (child.type === PlanNodeType.SORT) {
       return {

@@ -1,5 +1,5 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanNodeType, JoinType, LogicalFilter, getChildren, setChildren } from '../../planner/logical-plan.js';
+import { PlanNodeType, JoinType, LogicalFilter, getChildren, setChildren, type LogicalPlanNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { BoundExprKind, BoundBinary, BoundLiteral, BoundInList } from '../../binder/expression-binder.js';
 import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
@@ -7,15 +7,15 @@ import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
 export class PredicateInference extends OptimizationPass {
   get name() { return 'PredicateInference'; }
 
-  apply(plan) {
+  apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new InferenceRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class InferenceRewriter extends PlanRewriter {
-  rewriteFilter(node) {
-    const child = this.rewrite(node.children[0]);
+  rewriteFilter(node: any): any {
+    const child: any = this.rewrite(node.children[0]);
     const preds = splitConjuncts(node.condition);
     const inferred = inferNewPredicates(preds);
     if (inferred.length === 0) {
@@ -28,8 +28,8 @@ class InferenceRewriter extends PlanRewriter {
     return LogicalFilter(combineConjuncts(allPreds), child);
   }
 
-  rewriteJoin(node) {
-    const newNode = this.rewriteChildren(node);
+  rewriteJoin(node: any): any {
+    const newNode: any = this.rewriteChildren(node);
     if (newNode.joinType !== JoinType.INNER || !newNode.condition) return newNode;
 
     const preds = splitConjuncts(newNode.condition);
@@ -44,20 +44,20 @@ class InferenceRewriter extends PlanRewriter {
     const inferred = inferNewPredicates(allPreds);
     if (inferred.length === 0) return newNode;
 
-    const leftPush = [];
-    const rightPush = [];
+    const leftPush: any[] = [];
+    const rightPush: any[] = [];
 
     for (const pred of inferred) {
       const refs = collectTableRefs(pred);
       if (refs.length === 0) continue;
-      const leftOnly = refs.every(r => leftTables.has(r));
-      const rightOnly = refs.every(r => rightTables.has(r));
+      const leftOnly = refs.every((r: any) => leftTables.has(r));
+      const rightOnly = refs.every((r: any) => rightTables.has(r));
       if (leftOnly) leftPush.push(pred);
       else if (rightOnly) rightPush.push(pred);
     }
 
-    let left = newNode.children[0];
-    let right = newNode.children[1];
+    let left: any = newNode.children[0];
+    let right: any = newNode.children[1];
 
     if (leftPush.length > 0) {
       left = LogicalFilter(combineConjuncts(leftPush), left);
@@ -73,11 +73,11 @@ class InferenceRewriter extends PlanRewriter {
   }
 }
 
-function inferNewPredicates(predicates) {
-  const equalities = new Map();
-  const constants = new Map();
+function inferNewPredicates(predicates: any[]): any[] {
+  const equalities = new Map<string, Set<string>>();
+  const constants = new Map<string, any>();
   const existingKeys = new Set(predicates.map(predKey));
-  const inferred = [];
+  const inferred: any[] = [];
 
   for (const pred of predicates) {
     for (const inList of inferInListsFromOr(pred, existingKeys)) {
@@ -107,8 +107,8 @@ function inferNewPredicates(predicates) {
       const rk = colKey(pred.right);
       if (!equalities.has(lk)) equalities.set(lk, new Set());
       if (!equalities.has(rk)) equalities.set(rk, new Set());
-      equalities.get(lk).add(rk);
-      equalities.get(rk).add(lk);
+      equalities.get(lk)!.add(rk);
+      equalities.get(rk)!.add(lk);
     }
   }
 
@@ -190,20 +190,20 @@ function inferNewPredicates(predicates) {
   return inferred;
 }
 
-function inferInListsFromOr(expr, existingKeys) {
+function inferInListsFromOr(expr: any, existingKeys: Set<string>): any[] {
   if (!expr || expr.kind !== BoundExprKind.BINARY || expr.op !== 'OR') return [];
   const branches = splitOr(expr);
   if (branches.length < 2) return [];
 
   const branchMaps = branches.map(branch => collectBranchConstraints(branch));
 
-  const inferred = [];
+  const inferred: any[] = [];
   const first = branchMaps[0];
   for (const [key, entry] of first) {
     if (!branchMaps.every(map => map.has(key))) continue;
-    const literals = new Map(entry.literals || []);
+    const literals: Map<string, any> = new Map(entry.literals || []);
     for (let i = 1; i < branchMaps.length; i++) {
-      const branchEntry = branchMaps[i].get(key);
+      const branchEntry = branchMaps[i].get(key)!;
       if (!branchEntry.literals || branchEntry.literals.size === 0) {
         literals.clear();
         break;
@@ -220,17 +220,17 @@ function inferInListsFromOr(expr, existingKeys) {
   return inferred;
 }
 
-function inferRangePredicatesFromOr(expr, existingKeys) {
+function inferRangePredicatesFromOr(expr: any, existingKeys: Set<string>): any[] {
   if (!expr || expr.kind !== BoundExprKind.BINARY || expr.op !== 'OR') return [];
   const branches = splitOr(expr);
   if (branches.length < 2) return [];
 
   const branchMaps = branches.map(branch => collectBranchConstraints(branch));
-  const inferred = [];
+  const inferred: any[] = [];
   const first = branchMaps[0];
   for (const [key, entry] of first) {
     if (!branchMaps.every(map => map.has(key))) continue;
-    const entries = branchMaps.map(map => map.get(key));
+    const entries: any[] = branchMaps.map(map => map.get(key));
     if (!entries.every(e => e.lower && e.upper)) continue;
     const lower = entries.reduce((best, e) => compareLiteral(e.lower.literal, best.literal) < 0 ? e.lower : best, entries[0].lower);
     const upper = entries.reduce((best, e) => compareLiteral(e.upper.literal, best.literal) > 0 ? e.upper : best, entries[0].upper);
@@ -244,8 +244,8 @@ function inferRangePredicatesFromOr(expr, existingKeys) {
   return inferred;
 }
 
-function collectBranchConstraints(branch) {
-  const map = new Map();
+function collectBranchConstraints(branch: any): Map<string, any> {
+  const map = new Map<string, any>();
   for (const pred of splitConjuncts(branch)) {
     addEqualityConstraint(map, pred);
     addInListConstraint(map, pred);
@@ -254,20 +254,20 @@ function collectBranchConstraints(branch) {
   return map;
 }
 
-function ensureConstraint(map, col) {
+function ensureConstraint(map: Map<string, any>, col: any): any {
   const key = colKey(col);
   if (!map.has(key)) map.set(key, { col, literals: new Map(), lower: null, upper: null });
   return map.get(key);
 }
 
-function addEqualityConstraint(map, pred) {
+function addEqualityConstraint(map: Map<string, any>, pred: any): void {
   if (pred.kind !== BoundExprKind.BINARY || pred.op !== '=') return;
   const leftIsCol = pred.left?.kind === BoundExprKind.COLUMN_REF;
   const rightIsCol = pred.right?.kind === BoundExprKind.COLUMN_REF;
   const leftIsLit = pred.left?.kind === BoundExprKind.LITERAL;
   const rightIsLit = pred.right?.kind === BoundExprKind.LITERAL;
-  let col = null;
-  let lit = null;
+  let col: any = null;
+  let lit: any = null;
   if (leftIsCol && rightIsLit) {
     col = pred.left;
     lit = pred.right;
@@ -279,15 +279,15 @@ function addEqualityConstraint(map, pred) {
   ensureConstraint(map, col).literals.set(literalKey(lit), lit);
 }
 
-function addInListConstraint(map, pred) {
+function addInListConstraint(map: Map<string, any>, pred: any): void {
   if (pred.kind !== BoundExprKind.IN_LIST || pred.negated || !Array.isArray(pred.list)) return;
   if (pred.expr?.kind !== BoundExprKind.COLUMN_REF) return;
-  if (!pred.list.every(item => item.kind === BoundExprKind.LITERAL)) return;
+  if (!pred.list.every((item: any) => item.kind === BoundExprKind.LITERAL)) return;
   const entry = ensureConstraint(map, pred.expr);
   for (const lit of pred.list) entry.literals.set(literalKey(lit), lit);
 }
 
-function addRangeConstraint(map, pred) {
+function addRangeConstraint(map: Map<string, any>, pred: any): void {
   if (pred.kind === BoundExprKind.BETWEEN && !pred.negated && pred.expr?.kind === BoundExprKind.COLUMN_REF) {
     if (pred.low?.kind === BoundExprKind.LITERAL) setLower(ensureConstraint(map, pred.expr), '>=', pred.low);
     if (pred.high?.kind === BoundExprKind.LITERAL) setUpper(ensureConstraint(map, pred.expr), '<=', pred.high);
@@ -309,15 +309,15 @@ function addRangeConstraint(map, pred) {
   }
 }
 
-function setLower(entry, op, literal) {
+function setLower(entry: any, op: any, literal: any): void {
   if (!entry.lower || compareLiteral(literal, entry.lower.literal) > 0) entry.lower = { op, literal };
 }
 
-function setUpper(entry, op, literal) {
+function setUpper(entry: any, op: any, literal: any): void {
   if (!entry.upper || compareLiteral(literal, entry.upper.literal) < 0) entry.upper = { op, literal };
 }
 
-function flipRangeOp(op) {
+function flipRangeOp(op: any): any {
   if (op === '<=') return '>=';
   if (op === '<') return '>';
   if (op === '>=') return '<=';
@@ -325,12 +325,12 @@ function flipRangeOp(op) {
   return op;
 }
 
-function compareLiteral(a, b) {
+function compareLiteral(a: any, b: any): number {
   if (typeof a.value === 'number' && typeof b.value === 'number') return a.value - b.value;
   return String(a.value).localeCompare(String(b.value));
 }
 
-function splitOr(expr) {
+function splitOr(expr: any): any[] {
   if (!expr) return [];
   if (expr.kind === BoundExprKind.BINARY && expr.op === 'OR') {
     return [...splitOr(expr.left), ...splitOr(expr.right)];
@@ -338,11 +338,11 @@ function splitOr(expr) {
   return [expr];
 }
 
-function colKey(expr) {
+function colKey(expr: any): string {
   return `${(expr.tableAlias || '').toUpperCase()}.${(expr.columnName || '').toUpperCase()}`;
 }
 
-function predKey(pred) {
+function predKey(pred: any): string {
   if (pred.kind === BoundExprKind.BINARY) {
     return `${pred.op}:${exprKey(pred.left)}:${exprKey(pred.right)}`;
   }
@@ -352,18 +352,18 @@ function predKey(pred) {
   return JSON.stringify(pred).slice(0, 80);
 }
 
-function exprKey(expr) {
+function exprKey(expr: any): string {
   if (!expr) return 'null';
   if (expr.kind === BoundExprKind.COLUMN_REF) return colKey(expr);
   if (expr.kind === BoundExprKind.LITERAL) return `LIT:${expr.value}`;
   return JSON.stringify(expr).slice(0, 40);
 }
 
-function literalKey(expr) {
+function literalKey(expr: any): string {
   return `${expr.dataType || ''}:${String(expr.value)}`;
 }
 
-function findColExpr(predicates, colK) {
+function findColExpr(predicates: any[], colK: string): any {
   for (const pred of predicates) {
     if (pred.kind !== BoundExprKind.BINARY) continue;
     if (pred.left?.kind === BoundExprKind.COLUMN_REF && colKey(pred.left) === colK) return pred.left;
@@ -372,9 +372,9 @@ function findColExpr(predicates, colK) {
   return null;
 }
 
-function collectTables(node) {
-  const tables = new Set();
-  function walk(n) {
+function collectTables(node: any): Set<string> {
+  const tables = new Set<string>();
+  function walk(n: any): void {
     if (!n) return;
     if (n.type === PlanNodeType.SCAN) {
       tables.add((n.alias || n.table).toUpperCase());
@@ -385,9 +385,9 @@ function collectTables(node) {
   return tables;
 }
 
-function collectTableRefs(expr) {
-  const refs = [];
-  walkExpr(expr, e => {
+function collectTableRefs(expr: any): any[] {
+  const refs: any[] = [];
+  walkExpr(expr, (e: any) => {
     if (e.kind === BoundExprKind.COLUMN_REF && e.tableAlias) {
       refs.push(e.tableAlias.toUpperCase());
     }
@@ -395,14 +395,14 @@ function collectTableRefs(expr) {
   return refs;
 }
 
-function collectFiltersAbove(node, preds) {
+function collectFiltersAbove(node: any, preds: any[]): void {
   if (!node) return;
   if (node.type === PlanNodeType.FILTER) {
     preds.push(...splitConjuncts(node.condition));
   }
 }
 
-function walkExpr(expr, fn) {
+function walkExpr(expr: any, fn: (expr: any) => void): void {
   if (!expr || typeof expr !== 'object') return;
   fn(expr);
   if (expr.left) walkExpr(expr.left, fn);

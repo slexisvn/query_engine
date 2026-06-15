@@ -1,20 +1,20 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { PlanNodeType } from '../../planner/logical-plan.js';
+import { PlanNodeType, type LogicalPlanNode } from '../../planner/logical-plan.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 
 export class NodeMerge extends OptimizationPass {
   get name() { return 'NodeMerge'; }
 
-  apply(plan) {
+  apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new NodeMergeRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class NodeMergeRewriter extends PlanRewriter {
-  rewriteFilter(node) {
-    let child = this.rewrite(node.children[0]);
+  rewriteFilter(node: any): any {
+    let child: any = this.rewrite(node.children[0]);
 
     if (child.type === PlanNodeType.FILTER) {
       const mergedCond = {
@@ -35,8 +35,8 @@ class NodeMergeRewriter extends PlanRewriter {
     return node;
   }
 
-  rewriteProject(node) {
-    const child = this.rewrite(node.children[0]);
+  rewriteProject(node: any): any {
+    const child: any = this.rewrite(node.children[0]);
 
     if (child.type === PlanNodeType.PROJECT && sameProjectExpressions(node.expressions, child.expressions)) {
       return { ...node, children: [child.children[0]] };
@@ -48,8 +48,8 @@ class NodeMergeRewriter extends PlanRewriter {
     return node;
   }
 
-  rewriteLimit(node) {
-    const child = this.rewrite(node.children[0]);
+  rewriteLimit(node: any): any {
+    const child: any = this.rewrite(node.children[0]);
 
     if (child.type === PlanNodeType.LIMIT) {
       const mergedCount = Math.min(node.count, child.count);
@@ -63,13 +63,13 @@ class NodeMergeRewriter extends PlanRewriter {
   }
 }
 
-function sameProjectExpressions(left, right) {
+function sameProjectExpressions(left: any, right: any): boolean {
   if (!Array.isArray(left) || !Array.isArray(right)) return false;
   if (left.length !== right.length) return false;
   return left.every((expr, i) => exprEqualsIgnoringOutput(expr, right[i]));
 }
 
-function exprEqualsIgnoringOutput(left, right) {
+function exprEqualsIgnoringOutput(left: any, right: any): boolean {
   if (left === right) return true;
   if (!left || !right) return false;
   if (typeof left !== 'object' || typeof right !== 'object') return left === right;
@@ -88,6 +88,6 @@ function exprEqualsIgnoringOutput(left, right) {
   return true;
 }
 
-function isSemanticKey(key) {
+function isSemanticKey(key: string): boolean {
   return key !== 'outputName' && key !== 'alias';
 }

@@ -1,19 +1,20 @@
-import { getChildren, setChildren } from './logical-plan.js';
+import { getChildren, setChildren, type LogicalPlanNode } from './logical-plan.js';
 
 export class PlanVisitor {
-  visit(node) {
+  visit(node: LogicalPlanNode): unknown {
     const method = `visit${node.type}`;
-    if (typeof this[method] === 'function') {
-      return this[method](node);
+    const fn = (this as any)[method];
+    if (typeof fn === 'function') {
+      return fn.call(this, node);
     }
     return this.visitDefault(node);
   }
 
-  visitDefault(node) {
+  visitDefault(node: LogicalPlanNode): void {
     this.visitChildren(node);
   }
 
-  visitChildren(node) {
+  visitChildren(node: LogicalPlanNode): void {
     for (const child of getChildren(node)) {
       this.visit(child);
     }
@@ -21,19 +22,20 @@ export class PlanVisitor {
 }
 
 export class PlanRewriter {
-  rewrite(node) {
+  rewrite(node: LogicalPlanNode): LogicalPlanNode {
     const method = `rewrite${node.type}`;
-    if (typeof this[method] === 'function') {
-      return this[method](node);
+    const fn = (this as any)[method];
+    if (typeof fn === 'function') {
+      return fn.call(this, node);
     }
     return this.rewriteDefault(node);
   }
 
-  rewriteDefault(node) {
+  rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
     return this.rewriteChildren(node);
   }
 
-  rewriteChildren(node) {
+  rewriteChildren(node: LogicalPlanNode): LogicalPlanNode {
     const children = getChildren(node);
     if (children.length === 0) return node;
 

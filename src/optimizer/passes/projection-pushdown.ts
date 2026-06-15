@@ -1,16 +1,16 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanNodeType, getChildren, setChildren } from '../../planner/logical-plan.js';
+import { PlanNodeType, getChildren, setChildren, type LogicalPlanNode } from '../../planner/logical-plan.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 
 export class ProjectionPushdown extends OptimizationPass {
   get name() { return 'ProjectionPushdown'; }
 
-  apply(plan) {
+  apply(plan: LogicalPlanNode): LogicalPlanNode {
     return pruneColumns(plan, null);
   }
 }
 
-function pruneColumns(node, required) {
+function pruneColumns(node: any, required: Set<string> | null): any {
   if (!node) return node;
 
   switch (node.type) {
@@ -41,18 +41,18 @@ function pruneColumns(node, required) {
   }
 }
 
-function pruneScan(node, required) {
+function pruneScan(node: any, required: Set<string> | null): any {
   if (!required || required.size === 0) return node;
   const refs = collectPlanRefs(node);
-  const neededCols = node.columns.filter(col => refSetNeedsColumn(required, refs.aliases, col.name));
+  const neededCols = node.columns.filter((col: any) => refSetNeedsColumn(required, refs.aliases, col.name));
   if (neededCols.length > 0 && neededCols.length < node.columns.length) {
     return { ...node, columns: neededCols };
   }
   return node;
 }
 
-function pruneProject(node, required) {
-  const childRequired = new Set();
+function pruneProject(node: any, required: Set<string> | null): any {
+  const childRequired = new Set<string>();
   for (const [index, expr] of (node.expressions || []).entries()) {
     if (!required || outputNeeded(expr, required, index)) {
       collectExprColumns(expr, childRequired);
@@ -62,8 +62,8 @@ function pruneProject(node, required) {
   return child !== node.children[0] ? setChildren(node, [child]) : node;
 }
 
-function pruneAggregate(node) {
-  const childRequired = new Set();
+function pruneAggregate(node: any): any {
+  const childRequired = new Set<string>();
   for (const expr of node.groupBy || []) collectExprColumns(expr, childRequired);
   for (const agg of node.aggregates || []) {
     for (const arg of agg.args || []) collectExprColumns(arg, childRequired);
@@ -72,14 +72,14 @@ function pruneAggregate(node) {
   return child !== node.children[0] ? setChildren(node, [child]) : node;
 }
 
-function pruneSort(node, required) {
+function pruneSort(node: any, required: Set<string> | null): any {
   if (!required) return pruneUnary(node, null);
   let childRequired = copyRefs(required);
   for (const key of node.orderKeys || []) childRequired = addExprRefs(childRequired, key.expr);
   return pruneUnary(node, childRequired);
 }
 
-function pruneJoin(node, required) {
+function pruneJoin(node: any, required: Set<string> | null): any {
   const left = node.children[0];
   const right = node.children[1];
 
@@ -104,7 +104,7 @@ function pruneJoin(node, required) {
   return node;
 }
 
-function pruneDependentJoin(node, required) {
+function pruneDependentJoin(node: any, required: Set<string> | null): any {
   const refs = copyRefs(required);
   if (node.condition) collectExprColumns(node.condition, refs);
   for (const expr of node.correlatedColumns || []) collectExprColumns(expr, refs);
@@ -116,29 +116,29 @@ function pruneDependentJoin(node, required) {
   return node;
 }
 
-function pruneUnary(node, required) {
+function pruneUnary(node: any, required: Set<string> | null): any {
   const child = pruneColumns(node.children?.[0], required);
   return child !== node.children?.[0] ? setChildren(node, [child]) : node;
 }
 
-function pruneChildren(node, required) {
+function pruneChildren(node: any, required: Set<string> | null): any {
   const children = getChildren(node);
   const newChildren = children.map(child => pruneColumns(child, required));
   const changed = newChildren.some((child, i) => child !== children[i]);
   return changed ? setChildren(node, newChildren) : node;
 }
 
-function addExprRefs(required, expr) {
+function addExprRefs(required: Set<string>, expr: any): Set<string> {
   const refs = copyRefs(required);
   collectExprColumns(expr, refs);
   return refs;
 }
 
-function copyRefs(required) {
-  return required ? new Set(required) : new Set();
+function copyRefs(required: Set<string> | null): Set<string> {
+  return required ? new Set(required) : new Set<string>();
 }
 
-function collectExprColumns(expr, required) {
+function collectExprColumns(expr: any, required: Set<string>): void {
   if (!expr || typeof expr !== 'object') return;
   if (expr.kind === BoundExprKind.COLUMN_REF) {
     required.add(refKey(expr.tableAlias, expr.columnName));
@@ -156,15 +156,15 @@ function collectExprColumns(expr, required) {
   }
 }
 
-function collectPlanRefs(node) {
-  const refs = { aliases: new Set(), columns: new Set() };
+function collectPlanRefs(node: any): { aliases: Set<string>; columns: Set<string> } {
+  const refs = { aliases: new Set<string>(), columns: new Set<string>() };
   addOutputRefs(node, refs);
   refs.aliases.delete('');
   refs.columns.delete('');
   return refs;
 }
 
-function addOutputRefs(node, refs) {
+function addOutputRefs(node: any, refs: { aliases: Set<string>; columns: Set<string> }): void {
   if (!node) return;
   if (node.type === PlanNodeType.SCAN) {
     refs.aliases.add((node.alias || node.table || '').toUpperCase());
@@ -192,11 +192,11 @@ function addOutputRefs(node, refs) {
   if (node.children?.[0]) addOutputRefs(node.children[0], refs);
 }
 
-function outputName(expr) {
+function outputName(expr: any): string {
   return (expr?.outputName || expr?.alias || expr?.name || expr?.columnName || '').toUpperCase();
 }
 
-function outputNeeded(expr, required, index) {
+function outputNeeded(expr: any, required: Set<string>, index?: number): boolean {
   const name = outputName(expr);
   if (!name && index === undefined) return true;
   for (const ref of required) {
@@ -207,8 +207,8 @@ function outputNeeded(expr, required, index) {
   return false;
 }
 
-function filterRefsForPlan(required, planRefs) {
-  const result = new Set();
+function filterRefsForPlan(required: Set<string> | null, planRefs: { aliases: Set<string>; columns: Set<string> }): Set<string> {
+  const result = new Set<string>();
   for (const ref of required || []) {
     const parsed = parseRef(ref);
     if (refBelongsToPlan(parsed, planRefs)) result.add(ref);
@@ -216,7 +216,7 @@ function filterRefsForPlan(required, planRefs) {
   return result;
 }
 
-function refSetNeedsColumn(required, aliases, columnName) {
+function refSetNeedsColumn(required: Set<string>, aliases: Set<string>, columnName: any): boolean {
   const col = (columnName || '').toUpperCase();
   for (const ref of required) {
     const parsed = parseRef(ref);
@@ -226,16 +226,16 @@ function refSetNeedsColumn(required, aliases, columnName) {
   return false;
 }
 
-function refBelongsToPlan(ref, planRefs) {
+function refBelongsToPlan(ref: { tableAlias: string; columnName: string }, planRefs: { aliases: Set<string>; columns: Set<string> }): boolean {
   if (ref.tableAlias && ref.tableAlias !== '.') return planRefs.aliases.has(ref.tableAlias);
   return planRefs.columns.has(ref.columnName);
 }
 
-function refKey(tableAlias, columnName) {
+function refKey(tableAlias: any, columnName: any): string {
   return `${(tableAlias || '').toUpperCase()}.${(columnName || '').toUpperCase()}`;
 }
 
-function parseRef(ref) {
+function parseRef(ref: string): { tableAlias: string; columnName: string } {
   const dot = ref.indexOf('.');
   if (dot < 0) return { tableAlias: '', columnName: ref.toUpperCase() };
   return {

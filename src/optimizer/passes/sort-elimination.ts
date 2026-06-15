@@ -1,20 +1,20 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { PlanNodeType } from '../../planner/logical-plan.js';
+import { PlanNodeType, type LogicalPlanNode } from '../../planner/logical-plan.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 
 export class SortElimination extends OptimizationPass {
   get name() { return 'SortElimination'; }
 
-  apply(plan) {
+  apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new SortEliminationRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class SortEliminationRewriter extends PlanRewriter {
-  rewriteSort(node) {
-    const child = this.rewrite(node.children[0]);
+  rewriteSort(node: any): any {
+    const child: any = this.rewrite(node.children[0]);
 
     if (!child._sortedBy || child._sortedBy.length === 0) {
       if (child !== node.children[0]) {
@@ -23,12 +23,12 @@ class SortEliminationRewriter extends PlanRewriter {
       return node;
     }
 
-    const requiredKeys = node.orderKeys.map(ok => ({
+    const requiredKeys = node.orderKeys.map((ok: any) => ({
       key: getColumnKey(ok.expr),
       direction: ok.direction || 'ASC',
     }));
 
-    if (requiredKeys.some(k => !k.key)) {
+    if (requiredKeys.some((k: any) => !k.key)) {
       if (child !== node.children[0]) {
         return { ...node, children: [child] };
       }
@@ -57,7 +57,7 @@ class SortEliminationRewriter extends PlanRewriter {
   }
 }
 
-function getColumnKey(expr) {
+function getColumnKey(expr: any): string | null {
   if (!expr) return null;
   if (expr.kind === BoundExprKind.COLUMN_REF) {
     return `${expr.tableAlias || ''}.${expr.columnName}`.toUpperCase();
@@ -65,7 +65,7 @@ function getColumnKey(expr) {
   return null;
 }
 
-function columnMatches(sortedKey, reqKey) {
+function columnMatches(sortedKey: any, reqKey: any): boolean {
   if (!sortedKey || !reqKey) return false;
   if (sortedKey === reqKey) return true;
   const sortedCol = sortedKey.split('.').pop();

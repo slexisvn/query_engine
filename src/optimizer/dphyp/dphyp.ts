@@ -1,15 +1,36 @@
-import { popcount, subsets } from './hypergraph.js';
-import { BoundExprKind } from '../../binder/expression-binder.js';
+import { popcount, subsets, type HyperGraph } from './hypergraph.js';
+import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
+
+export interface DPhypPlan {
+  type: 'HashJoin';
+  buildSide: any;
+  probeSide: any;
+  condition: BoundExpr | null;
+  buildCard: number;
+  probeCard: number;
+}
+
+export interface DPEntry {
+  plan: any;
+  cardinality: number;
+  totalCost: number;
+  mask: number;
+}
 
 export class DPhypEnumerator {
-  constructor(hyperGraph, costModel, cardinalityEstimator) {
+  graph: HyperGraph;
+  costModel: any;
+  cardEstimator: any;
+  dp: Map<number, DPEntry>;
+
+  constructor(hyperGraph: HyperGraph, costModel: any, cardinalityEstimator: any) {
     this.graph = hyperGraph;
     this.costModel = costModel;
     this.cardEstimator = cardinalityEstimator;
     this.dp = new Map();
   }
 
-  solve() {
+  solve(): DPEntry | null {
     for (const rel of this.graph.relations) {
       const cost = this.costModel.scanCost(rel.cardinality);
       this.dp.set(rel.mask, {
@@ -28,7 +49,7 @@ export class DPhypEnumerator {
     return this.dp.get(this.graph.fullMask) || null;
   }
 
-  enumerateSize(size) {
+  enumerateSize(size: number): void {
     const fullMask = this.graph.fullMask;
 
     for (let mask = 1; mask <= fullMask; mask++) {
@@ -40,7 +61,7 @@ export class DPhypEnumerator {
     }
   }
 
-  enumerateCsgCmpPairs(combined) {
+  enumerateCsgCmpPairs(combined: number): void {
     for (let s1 = (combined - 1) & combined; s1 > 0; s1 = (s1 - 1) & combined) {
       const s2 = combined & ~s1;
       if (s2 === 0) continue;
@@ -56,16 +77,16 @@ export class DPhypEnumerator {
     }
   }
 
-  emitPair(s1Mask, s2Mask, combinedMask, predicates) {
-    const s1 = this.dp.get(s1Mask);
-    const s2 = this.dp.get(s2Mask);
+  emitPair(s1Mask: number, s2Mask: number, combinedMask: number, predicates: BoundExpr[]): void {
+    const s1 = this.dp.get(s1Mask)!;
+    const s2 = this.dp.get(s2Mask)!;
     const joinCondition = combinePredicates(predicates);
 
     this.tryJoinOrder(s1, s2, combinedMask, joinCondition);
     this.tryJoinOrder(s2, s1, combinedMask, joinCondition);
   }
 
-  tryJoinOrder(build, probe, combinedMask, joinCondition) {
+  tryJoinOrder(build: DPEntry, probe: DPEntry, combinedMask: number, joinCondition: BoundExpr | null): void {
     const joinCard = this.cardEstimator.estimateJoin(
       build.cardinality, probe.cardinality, joinCondition
     );
@@ -94,12 +115,12 @@ export class DPhypEnumerator {
   }
 }
 
-function combinePredicates(preds) {
+function combinePredicates(preds: BoundExpr[]): BoundExpr | null {
   if (preds.length === 0) return null;
   if (preds.length === 1) return preds[0];
 
-  const unique = [];
-  const seen = new Set();
+  const unique: BoundExpr[] = [];
+  const seen = new Set<string>();
   for (const p of preds) {
     const key = predicateKey(p);
     if (!seen.has(key)) {
@@ -118,7 +139,7 @@ function combinePredicates(preds) {
   }));
 }
 
-function predicateKey(pred) {
+function predicateKey(pred: BoundExpr | null): string {
   if (!pred) return '';
   if (pred.kind === BoundExprKind.COLUMN_REF) {
     return `${pred.tableAlias}.${pred.columnName}`;
@@ -132,7 +153,7 @@ function predicateKey(pred) {
   return JSON.stringify(pred).slice(0, 50);
 }
 
-export function runDPhyp(hyperGraph, costModel, cardinalityEstimator) {
+export function runDPhyp(hyperGraph: HyperGraph, costModel: any, cardinalityEstimator: any): DPEntry | null {
   const enumerator = new DPhypEnumerator(hyperGraph, costModel, cardinalityEstimator);
   return enumerator.solve();
 }

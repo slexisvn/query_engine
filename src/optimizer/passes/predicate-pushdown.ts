@@ -1,44 +1,44 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanNodeType, JoinType, LogicalFilter, LogicalJoin, getChildren, setChildren } from '../../planner/logical-plan.js';
+import { PlanNodeType, JoinType, LogicalFilter, LogicalJoin, getChildren, setChildren, type LogicalPlanNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 
 export class PredicatePushdown extends OptimizationPass {
   get name() { return 'PredicatePushdown'; }
 
-  apply(plan) {
+  apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new PushdownRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class PushdownRewriter extends PlanRewriter {
-  rewriteJoin(node) {
-    const rewritten = this.rewriteChildren(node);
+  rewriteJoin(node: any): any {
+    const rewritten: any = this.rewriteChildren(node);
     return pushJoinConditionPredicates(rewritten);
   }
 
-  rewriteFilter(node) {
-    const child = this.rewrite(node.children[0]);
+  rewriteFilter(node: any): any {
+    const child: any = this.rewrite(node.children[0]);
     const predicates = splitConjuncts(node.condition);
     return pushPredicates(predicates, child);
   }
 
-  rewriteDefault(node) {
+  rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
     return this.rewriteChildren(node);
   }
 }
 
-function pushJoinConditionPredicates(joinNode) {
+function pushJoinConditionPredicates(joinNode: any): any {
   if (!joinNode.condition) return joinNode;
 
   const rightRefs = collectPlanRefs(joinNode.children[1]);
-  const rightPreds = [];
-  const joinPreds = [];
+  const rightPreds: any[] = [];
+  const joinPreds: any[] = [];
 
   for (const pred of splitConjuncts(joinNode.condition)) {
     const refs = collectTableRefs(pred);
-    const rightOnly = refs.length > 0 && refs.every(r => refBelongsToPlan(r, rightRefs));
+    const rightOnly = refs.length > 0 && refs.every((r: any) => refBelongsToPlan(r, rightRefs));
 
     if (joinNode.joinType === JoinType.LEFT) {
       if (rightOnly) rightPreds.push(pred);
@@ -65,8 +65,8 @@ function pushJoinConditionPredicates(joinNode) {
   return result;
 }
 
-function copyJoinProperties(joinNode) {
-  const props = {};
+function copyJoinProperties(joinNode: any): any {
+  const props: any = {};
   if (joinNode.markColumn) props.markColumn = joinNode.markColumn;
   for (const key of Object.keys(joinNode)) {
     if (key.startsWith('_')) props[key] = joinNode[key];
@@ -74,7 +74,7 @@ function copyJoinProperties(joinNode) {
   return props;
 }
 
-function pushPredicates(predicates, target) {
+function pushPredicates(predicates: any[], target: any): any {
   if (target.type === PlanNodeType.JOIN) {
     return pushIntoJoin(predicates, target);
   }
@@ -87,17 +87,17 @@ function pushPredicates(predicates, target) {
   }
 
   if (target.type === PlanNodeType.AGGREGATE && target.groupBy && target.groupBy.length > 0) {
-    const groupByRefs = new Set();
+    const groupByRefs = new Set<string>();
     for (const gb of target.groupBy) {
       if (gb.kind === BoundExprKind.COLUMN_REF) {
         groupByRefs.add(`${(gb.tableAlias || '').toUpperCase()}.${(gb.columnName || '').toUpperCase()}`);
       }
     }
-    const pushable = [];
-    const remaining = [];
+    const pushable: any[] = [];
+    const remaining: any[] = [];
     for (const pred of predicates) {
       const refs = collectTableRefs(pred);
-      if (refs.length > 0 && !containsAggregate(pred) && refs.every(r => groupByRefs.has(`${r.tableAlias}.${r.columnName}`))) {
+      if (refs.length > 0 && !containsAggregate(pred) && refs.every((r: any) => groupByRefs.has(`${r.tableAlias}.${r.columnName}`))) {
         pushable.push(pred);
       } else {
         remaining.push(pred);
@@ -112,8 +112,8 @@ function pushPredicates(predicates, target) {
   }
 
   if (target.type === PlanNodeType.PROJECT) {
-    const pushable = [];
-    const remaining = [];
+    const pushable: any[] = [];
+    const remaining: any[] = [];
     for (const pred of predicates) {
       if (canPushThroughProject(pred, target)) {
         pushable.push(pred);
@@ -133,9 +133,9 @@ function pushPredicates(predicates, target) {
   return LogicalFilter(combineConjuncts(predicates), target);
 }
 
-function canPushThroughProject(pred, projectNode) {
-  const predRefs = new Set();
-  _walkExpr(pred, e => {
+function canPushThroughProject(pred: any, projectNode: any): boolean {
+  const predRefs = new Set<any>();
+  _walkExpr(pred, (e: any) => {
     if (e.kind === BoundExprKind.COLUMN_REF) {
       predRefs.add({
         tableAlias: (e.tableAlias || '').toUpperCase(),
@@ -151,19 +151,19 @@ function canPushThroughProject(pred, projectNode) {
   return true;
 }
 
-function pushIntoJoin(predicates, joinNode) {
+function pushIntoJoin(predicates: any[], joinNode: any): any {
   const leftRefs = collectPlanRefs(joinNode.children[0]);
   const rightRefs = collectPlanRefs(joinNode.children[1]);
 
-  const leftPreds = [];
-  const rightPreds = [];
-  const joinPreds = [];
-  const remaining = [];
+  const leftPreds: any[] = [];
+  const rightPreds: any[] = [];
+  const joinPreds: any[] = [];
+  const remaining: any[] = [];
 
   for (const pred of predicates) {
     const refs = collectTableRefs(pred);
-    const leftOnly = refs.every(r => refBelongsToPlan(r, leftRefs));
-    const rightOnly = refs.every(r => refBelongsToPlan(r, rightRefs));
+    const leftOnly = refs.every((r: any) => refBelongsToPlan(r, leftRefs));
+    const rightOnly = refs.every((r: any) => refBelongsToPlan(r, rightRefs));
 
     if (joinNode.joinType === JoinType.INNER || joinNode.joinType === JoinType.CROSS) {
       if (leftOnly) leftPreds.push(pred);
@@ -198,7 +198,7 @@ function pushIntoJoin(predicates, joinNode) {
     joinCondition = combineConjuncts(allJoinPreds);
   }
 
-  let result = LogicalJoin(
+  let result: any = LogicalJoin(
     joinNode.joinType === JoinType.CROSS && joinCondition ? JoinType.INNER : joinNode.joinType,
     joinCondition,
     left,
@@ -213,7 +213,7 @@ function pushIntoJoin(predicates, joinNode) {
   return result;
 }
 
-function rejectsNulls(pred) {
+function rejectsNulls(pred: any): boolean {
   if (pred.kind === BoundExprKind.BINARY) {
     return ['=', '<>', '<', '>', '<=', '>='].includes(pred.op);
   }
@@ -223,7 +223,7 @@ function rejectsNulls(pred) {
   return true;
 }
 
-export function splitConjuncts(expr) {
+export function splitConjuncts(expr: any): any[] {
   if (!expr) return [];
   if (expr.kind === BoundExprKind.BINARY && expr.op === 'AND') {
     return [...splitConjuncts(expr.left), ...splitConjuncts(expr.right)];
@@ -231,7 +231,7 @@ export function splitConjuncts(expr) {
   return [expr];
 }
 
-export function combineConjuncts(preds) {
+export function combineConjuncts(preds: any[]): any {
   if (preds.length === 0) return null;
   if (preds.length === 1) return preds[0];
   return preds.reduce((acc, p) => ({
@@ -243,15 +243,15 @@ export function combineConjuncts(preds) {
   }));
 }
 
-function collectPlanRefs(node) {
-  const refs = { aliases: new Set(), columns: new Set() };
+function collectPlanRefs(node: any): { aliases: Set<string>; columns: Set<string> } {
+  const refs = { aliases: new Set<string>(), columns: new Set<string>() };
   addOutputRefs(node, refs);
   refs.aliases.delete('');
   refs.columns.delete('');
   return refs;
 }
 
-function addOutputRefs(node, refs) {
+function addOutputRefs(node: any, refs: { aliases: Set<string>; columns: Set<string> }): void {
   if (!node) return;
   if (node.type === PlanNodeType.SCAN) {
     refs.aliases.add(node.alias?.toUpperCase() || node.table?.toUpperCase());
@@ -286,20 +286,20 @@ function addOutputRefs(node, refs) {
   if (node.children?.[0]) addOutputRefs(node.children[0], refs);
 }
 
-function refBelongsToPlan(ref, planRefs) {
+function refBelongsToPlan(ref: any, planRefs: { aliases: Set<string>; columns: Set<string> }): boolean {
   if (ref.tableAlias) return planRefs.aliases.has(ref.tableAlias);
   return planRefs.columns.has(ref.columnName);
 }
 
-function containsAggregate(expr) {
+function containsAggregate(expr: any): boolean {
   let found = false;
-  _walkExpr(expr, e => { if (e.kind === BoundExprKind.AGGREGATE) found = true; });
+  _walkExpr(expr, (e: any) => { if (e.kind === BoundExprKind.AGGREGATE) found = true; });
   return found;
 }
 
-function collectTableRefs(expr) {
-  const keys = new Set();
-  _walkExpr(expr, e => {
+function collectTableRefs(expr: any): any[] {
+  const keys = new Set<string>();
+  _walkExpr(expr, (e: any) => {
     if (e.kind === BoundExprKind.COLUMN_REF) {
       keys.add(`${(e.tableAlias || '').toUpperCase()}.${(e.columnName || '').toUpperCase()}`);
     }
@@ -310,7 +310,7 @@ function collectTableRefs(expr) {
   });
 }
 
-function _walkExpr(expr, fn) {
+function _walkExpr(expr: any, fn: (e: any) => void): void {
   if (!expr || typeof expr !== 'object') return;
   fn(expr);
   if (expr.left) _walkExpr(expr.left, fn);

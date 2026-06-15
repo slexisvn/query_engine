@@ -1,20 +1,20 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { PlanNodeType, JoinType, getChildren } from '../../planner/logical-plan.js';
+import { PlanNodeType, JoinType, getChildren, type LogicalPlanNode } from '../../planner/logical-plan.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 
 export class OuterToInnerJoin extends OptimizationPass {
   get name() { return 'OuterToInnerJoin'; }
 
-  apply(plan) {
+  apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new OuterToInnerRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class OuterToInnerRewriter extends PlanRewriter {
-  rewriteFilter(node) {
-    let child = this.rewrite(node.children[0]);
+  rewriteFilter(node: any): any {
+    let child: any = this.rewrite(node.children[0]);
 
         if (child.type === PlanNodeType.JOIN && (child.joinType === JoinType.LEFT || child.joinType === JoinType.FULL || child.joinType === JoinType.RIGHT || child.joinType === JoinType.SINGLE)) {
       const leftRefs = getPlanRefs(child.children[0]);
@@ -60,15 +60,15 @@ class OuterToInnerRewriter extends PlanRewriter {
   }
 }
 
-function getPlanRefs(planNode) {
-  const refs = { aliases: new Set(), columns: new Set() };
+function getPlanRefs(planNode: any): any {
+  const refs = { aliases: new Set<string>(), columns: new Set<string>() };
   addOutputRefs(planNode, refs);
   refs.aliases.delete('');
   refs.columns.delete('');
   return refs;
 }
 
-function addOutputRefs(node, refs) {
+function addOutputRefs(node: any, refs: any): void {
   if (!node) return;
   if (node.type === PlanNodeType.SCAN) {
     refs.aliases.add((node.alias || node.table || '').toUpperCase());
@@ -103,7 +103,7 @@ function addOutputRefs(node, refs) {
   if (node.children?.[0]) addOutputRefs(node.children[0], refs);
 }
 
-function splitConjuncts(expr) {
+function splitConjuncts(expr: any): any[] {
   if (!expr) return [];
   if (expr.kind === BoundExprKind.BINARY && expr.op.toUpperCase() === 'AND') {
     return [...splitConjuncts(expr.left), ...splitConjuncts(expr.right)];
@@ -111,12 +111,12 @@ function splitConjuncts(expr) {
   return [expr];
 }
 
-function isNullRejecting(expr, nullSupplyingRefs) {
+function isNullRejecting(expr: any, nullSupplyingRefs: any): boolean {
   const result = evaluateWithNulls(expr, nullSupplyingRefs);
   return result === false || result === null;
 }
 
-function evaluateWithNulls(expr, nullRefs) {
+function evaluateWithNulls(expr: any, nullRefs: any): any {
   if (!expr) return undefined;
 
     switch (expr.kind) {

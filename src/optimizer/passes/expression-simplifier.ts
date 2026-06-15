@@ -1,19 +1,19 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { PlanNodeType, setChildren } from '../../planner/logical-plan.js';
+import { PlanNodeType, setChildren, type LogicalPlanNode } from '../../planner/logical-plan.js';
 import { BoundExprKind, BoundLiteral } from '../../binder/expression-binder.js';
 
 export class ExpressionSimplifier extends OptimizationPass {
   get name() { return 'ExpressionSimplifier'; }
 
-  apply(plan) {
+  apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new SimplifierRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class SimplifierRewriter extends PlanRewriter {
-  rewriteFilter(node) {
+  rewriteFilter(node: any): any {
     const child = this.rewrite(node.children[0]);
     const simplifiedCond = simplifyExpression(node.condition);
 
@@ -31,10 +31,10 @@ class SimplifierRewriter extends PlanRewriter {
     return node;
   }
 
-  rewriteProject(node) {
+  rewriteProject(node: any): any {
     const child = this.rewrite(node.children[0]);
     let changed = false;
-    const newExprs = node.expressions.map(expr => {
+    const newExprs = node.expressions.map((expr: any) => {
       const s = simplifyExpression(expr);
       if (s !== expr) changed = true;
       return s;
@@ -46,9 +46,9 @@ class SimplifierRewriter extends PlanRewriter {
     return node;
   }
 
-  rewriteJoin(node) {
-    const newChildren = node.children.map(c => this.rewrite(c));
-    let changed = newChildren.some((c, i) => c !== node.children[i]);
+  rewriteJoin(node: any): any {
+    const newChildren = node.children.map((c: any) => this.rewrite(c));
+    let changed = newChildren.some((c: any, i: number) => c !== node.children[i]);
 
         let newCond = node.condition;
     if (node.condition) {
@@ -63,7 +63,7 @@ class SimplifierRewriter extends PlanRewriter {
   }
 }
 
-export function simplifyExpression(expr) {
+export function simplifyExpression(expr: any): any {
   if (!expr) return expr;
 
     switch (expr.kind) {
@@ -131,7 +131,7 @@ export function simplifyExpression(expr) {
         if (isLiteral(operand, true)) return BoundLiteral(false, 'BOOLEAN');
         if (isLiteral(operand, false)) return BoundLiteral(true, 'BOOLEAN');
         if (operand.kind === BoundExprKind.UNARY && operand.op.toUpperCase() === 'NOT') {
-          return operand.operand; 
+          return operand.operand;
         }
       }
 
@@ -142,7 +142,7 @@ export function simplifyExpression(expr) {
     }
     case BoundExprKind.FUNCTION: {
       const args = expr.args.map(simplifyExpression);
-      const changed = args.some((a, i) => a !== expr.args[i]);
+      const changed = args.some((a: any, i: number) => a !== expr.args[i]);
       if (changed) {
         return { ...expr, args };
       }
@@ -193,11 +193,11 @@ export function simplifyExpression(expr) {
   return expr;
 }
 
-function isLiteral(expr, val) {
+function isLiteral(expr: any, val: any): boolean {
   return expr && expr.kind === BoundExprKind.LITERAL && expr.value === val;
 }
 
-function exprEquals(e1, e2) {
+function exprEquals(e1: any, e2: any): boolean {
   if (e1 === e2) return true;
   if (!e1 || !e2) return false;
   if (e1.kind !== e2.kind) return false;
@@ -211,13 +211,13 @@ function exprEquals(e1, e2) {
   return exprKey(e1) === exprKey(e2);
 }
 
-function factorCommonConjuncts(left, right) {
+function factorCommonConjuncts(left: any, right: any): any {
   const leftConjuncts = splitConjuncts(left);
   const rightConjuncts = splitConjuncts(right);
   const rightByKey = new Map(rightConjuncts.map(expr => [exprKey(expr), expr]));
   const common = [];
   const leftRest = [];
-  const commonKeys = new Set();
+  const commonKeys = new Set<string>();
 
   for (const expr of leftConjuncts) {
     const key = exprKey(expr);
@@ -245,7 +245,7 @@ function factorCommonConjuncts(left, right) {
   return combineConjuncts([...common, residualOr]);
 }
 
-function splitConjuncts(expr) {
+function splitConjuncts(expr: any): any[] {
   if (!expr) return [];
   if (expr.kind === BoundExprKind.BINARY && expr.op.toUpperCase() === 'AND') {
     return [...splitConjuncts(expr.left), ...splitConjuncts(expr.right)];
@@ -253,9 +253,9 @@ function splitConjuncts(expr) {
   return [expr];
 }
 
-function combineConjuncts(exprs) {
+function combineConjuncts(exprs: any[]): any {
   if (exprs.length === 0) return null;
-  return exprs.reduce((acc, expr) => acc ? ({
+  return exprs.reduce((acc: any, expr: any) => acc ? ({
     kind: BoundExprKind.BINARY,
     op: 'AND',
     left: acc,
@@ -264,7 +264,7 @@ function combineConjuncts(exprs) {
   }) : expr, null);
 }
 
-function foldCast(value, targetType) {
+function foldCast(value: any, targetType: any): any {
   const type = (targetType || '').toUpperCase();
   try {
     if (type.includes('INT')) return Math.trunc(Number(value));
@@ -275,7 +275,7 @@ function foldCast(value, targetType) {
   return undefined;
 }
 
-function extractFromDate(date, field) {
+function extractFromDate(date: any, field: any): number | null {
   const f = (field || '').toUpperCase();
   if (f === 'YEAR') return date.getFullYear();
   if (f === 'MONTH') return date.getMonth() + 1;
@@ -286,7 +286,7 @@ function extractFromDate(date, field) {
   return null;
 }
 
-function exprKey(expr) {
+function exprKey(expr: any): string {
   if (!expr || typeof expr !== 'object') return String(expr);
   switch (expr.kind) {
     case BoundExprKind.COLUMN_REF:

@@ -1,32 +1,36 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { PlanNodeType, LogicalIndexScan, LogicalFilter } from '../../planner/logical-plan.js';
+import { PlanNodeType, LogicalIndexScan, LogicalFilter, type LogicalPlanNode } from '../../planner/logical-plan.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
 import { Config } from '../../config.js';
 
 export class IndexSelection extends OptimizationPass {
-  constructor(catalog, statistics) {
+  catalog: any;
+  statistics: any;
+  constructor(catalog: any, statistics: any) {
     super();
     this.catalog = catalog;
     this.statistics = statistics;
   }
   get name() { return 'IndexSelection'; }
-  apply(plan) {
+  apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new IndexSelectionRewriter(this.catalog, this.statistics);
     return rewriter.rewrite(plan);
   }
 }
 
 class IndexSelectionRewriter extends PlanRewriter {
-  constructor(catalog, statistics) {
+  catalog: any;
+  statistics: any;
+  constructor(catalog: any, statistics: any) {
     super();
     this.catalog = catalog;
     this.statistics = statistics;
   }
 
-  rewriteFilter(node) {
-    const child = this.rewrite(node.children[0]);
+  rewriteFilter(node: any): any {
+    const child: any = this.rewrite(node.children[0]);
     if (child.type !== PlanNodeType.SCAN) {
       const newNode = { ...node, children: [child] };
       return newNode;
@@ -36,8 +40,8 @@ class IndexSelectionRewriter extends PlanRewriter {
     const alias = child.alias || tableName;
     const conjuncts = splitConjuncts(node.condition);
 
-    const columnBounds = new Map();
-    const conjunctMapping = [];
+    const columnBounds = new Map<string, any>();
+    const conjunctMapping: any[] = [];
 
     for (let i = 0; i < conjuncts.length; i++) {
       const info = this._analyzeConjunct(conjuncts[i], alias);
@@ -49,7 +53,7 @@ class IndexSelectionRewriter extends PlanRewriter {
       if (!columnBounds.has(info.column)) {
         columnBounds.set(info.column, { point: null, low: null, high: null, lowInc: false, highInc: false, conjunctIndices: [] });
       }
-      const bounds = columnBounds.get(info.column);
+      const bounds = columnBounds.get(info.column)!;
       bounds.conjunctIndices.push(i);
       if (info.type === 'eq') {
         bounds.point = info.value;
@@ -62,8 +66,8 @@ class IndexSelectionRewriter extends PlanRewriter {
       }
     }
 
-    let bestColumn = null;
-    let bestBounds = null;
+    let bestColumn: any = null;
+    let bestBounds: any = null;
 
     for (const [col, bounds] of columnBounds) {
       const btree = this.catalog.getIndexForColumn(tableName, col);
@@ -74,7 +78,7 @@ class IndexSelectionRewriter extends PlanRewriter {
         if (tableStats) {
           const colStats = tableStats.getColumnStats(col);
           if (colStats && colStats.ndv > 0) {
-            let selectivity;
+            let selectivity: any;
             if (bounds.point !== null) {
               selectivity = 1 / colStats.ndv;
             } else {
@@ -95,9 +99,9 @@ class IndexSelectionRewriter extends PlanRewriter {
     }
 
     const indexedIndices = new Set(bestBounds.conjunctIndices);
-    const residualConjuncts = conjuncts.filter((_, i) => !indexedIndices.has(i));
+    const residualConjuncts = conjuncts.filter((_: any, i: number) => !indexedIndices.has(i));
 
-    let scanType, scanKey, scanLow, scanHigh, lowInc, highInc;
+    let scanType: any, scanKey: any, scanLow: any, scanHigh: any, lowInc: any, highInc: any;
     const indexName = `idx_${tableName}_${bestColumn}`.toUpperCase();
 
     if (bestBounds.point !== null) {
@@ -128,7 +132,7 @@ class IndexSelectionRewriter extends PlanRewriter {
     return indexScan;
   }
 
-  _estimateRangeSelectivity(colStats, bounds) {
+  _estimateRangeSelectivity(colStats: any, bounds: any): number {
     const min = toNumber(colStats.min);
     const max = toNumber(colStats.max);
     if (min === null || max === null || max <= min) return 0.33;
@@ -142,14 +146,14 @@ class IndexSelectionRewriter extends PlanRewriter {
     return Math.max(0.0001, covered / (max - min));
   }
 
-  _analyzeConjunct(expr, alias) {
+  _analyzeConjunct(expr: any, alias: any): any {
     if (expr.kind !== BoundExprKind.BINARY) return null;
 
     const op = expr.op;
     if (op !== '=' && op !== '>' && op !== '>=' && op !== '<' && op !== '<=') return null;
 
-    let colExpr = null;
-    let litExpr = null;
+    let colExpr: any = null;
+    let litExpr: any = null;
     let flipped = false;
 
     if (expr.left.kind === BoundExprKind.COLUMN_REF && expr.right.kind === BoundExprKind.LITERAL) {
@@ -168,7 +172,7 @@ class IndexSelectionRewriter extends PlanRewriter {
     const column = colExpr.columnName.toUpperCase();
     const value = litExpr.value;
 
-    let type;
+    let type: any;
     if (op === '=') {
       type = 'eq';
     } else if (op === '>') {
@@ -185,7 +189,7 @@ class IndexSelectionRewriter extends PlanRewriter {
   }
 }
 
-function toNumber(value) {
+function toNumber(value: any): any {
   if (value === null || value === undefined) return null;
   if (typeof value === 'bigint') return Number(value);
   if (typeof value === 'number') return value;

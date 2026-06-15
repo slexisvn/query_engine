@@ -1,19 +1,19 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { PlanNodeType } from '../../planner/logical-plan.js';
+import { PlanNodeType, type LogicalPlanNode } from '../../planner/logical-plan.js';
 
 export class LimitPushdown extends OptimizationPass {
   get name() { return 'LimitPushdown'; }
 
-  apply(plan) {
+  apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new LimitPushdownRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class LimitPushdownRewriter extends PlanRewriter {
-  rewriteLimit(node) {
-    const child = this.rewrite(node.children[0]);
+  rewriteLimit(node: any): any {
+    const child: any = this.rewrite(node.children[0]);
 
     if (child.type === PlanNodeType.PROJECT) {
       const newLimit = { ...node, children: [child.children[0]] };
@@ -26,12 +26,12 @@ class LimitPushdownRewriter extends PlanRewriter {
       const leftLimit = { ...node, children: [child.children[0]] };
       const rightLimit = { ...node, children: [child.children[1]] };
 
-      const newUnion = { 
-        ...child, 
+      const newUnion = {
+        ...child,
         children: [
-          this.rewrite(leftLimit), 
+          this.rewrite(leftLimit),
           this.rewrite(rightLimit)
-        ] 
+        ]
       };
 
       return { ...node, children: [newUnion] };

@@ -1,12 +1,12 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { PlanNodeType, JoinType, getChildren } from '../../planner/logical-plan.js';
+import { PlanNodeType, JoinType, getChildren, type LogicalPlanNode } from '../../planner/logical-plan.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 
 export class JoinElimination extends OptimizationPass {
   get name() { return 'JoinElimination'; }
 
-  apply(plan) {
+  apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new JoinEliminationRewriter();
     return rewriter.rewrite(plan);
   }
@@ -15,8 +15,8 @@ export class JoinElimination extends OptimizationPass {
 const COLUMN_RESTRICTING_PARENTS = new Set([PlanNodeType.PROJECT, PlanNodeType.AGGREGATE]);
 
 class JoinEliminationRewriter extends PlanRewriter {
-  rewriteDefault(node) {
-    const newNode = this.rewriteChildren(node);
+  rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
+    const newNode: any = this.rewriteChildren(node);
 
     if (COLUMN_RESTRICTING_PARENTS.has(newNode.type) && hasLeftJoinChild(newNode)) {
       return tryEliminateLeftJoin(newNode);
@@ -26,19 +26,19 @@ class JoinEliminationRewriter extends PlanRewriter {
   }
 }
 
-function hasLeftJoinChild(node) {
+function hasLeftJoinChild(node: any): boolean {
   if (!node.children) return false;
-  return node.children.some(c => c.type === PlanNodeType.JOIN && c.joinType === JoinType.LEFT);
+  return node.children.some((c: any) => c.type === PlanNodeType.JOIN && c.joinType === JoinType.LEFT);
 }
 
-function tryEliminateLeftJoin(parent) {
-  const newChildren = parent.children.map(child => {
+function tryEliminateLeftJoin(parent: any): any {
+  const newChildren = parent.children.map((child: any) => {
     if (child.type !== PlanNodeType.JOIN || child.joinType !== JoinType.LEFT) return child;
 
     const rightTables = collectTableAliases(child.children[1]);
     const rightOutputs = collectOutputNames(child.children[1]);
 
-    const usedAbove = new Set();
+    const usedAbove = new Set<string>();
     collectNodeExprColumns(parent, usedAbove);
 
     const rightUsed = hasAnyColumnUsed(rightTables, usedAbove)
@@ -50,12 +50,12 @@ function tryEliminateLeftJoin(parent) {
     return child;
   });
 
-  const changed = newChildren.some((c, i) => c !== parent.children[i]);
+  const changed = newChildren.some((c: any, i: number) => c !== parent.children[i]);
   return changed ? { ...parent, children: newChildren } : parent;
 }
 
-function collectNodeExprColumns(node, used) {
-  const collectExpr = (expr) => {
+function collectNodeExprColumns(node: any, used: Set<string>): void {
+  const collectExpr = (expr: any) => {
     if (!expr || typeof expr !== 'object') return;
     if (expr.kind === BoundExprKind.COLUMN_REF) {
       used.add(`${(expr.tableAlias || '').toUpperCase()}.${(expr.columnName || '').toUpperCase()}`);
@@ -91,9 +91,9 @@ function collectNodeExprColumns(node, used) {
   }
 }
 
-function collectTableAliases(node) {
-  const aliases = new Set();
-  function walk(n) {
+function collectTableAliases(node: any): Set<string> {
+  const aliases = new Set<string>();
+  function walk(n: any): void {
     if (!n) return;
     if (n.type === PlanNodeType.SCAN) {
       aliases.add((n.alias || n.table).toUpperCase());
@@ -104,7 +104,7 @@ function collectTableAliases(node) {
   return aliases;
 }
 
-function hasAnyColumnUsed(tableAliases, usedColumns) {
+function hasAnyColumnUsed(tableAliases: Set<string>, usedColumns: Set<string>): boolean {
   for (const col of usedColumns) {
     const table = col.split('.')[0];
     if (tableAliases.has(table)) return true;
@@ -112,7 +112,7 @@ function hasAnyColumnUsed(tableAliases, usedColumns) {
   return false;
 }
 
-function hasAnyNameUsed(columnNames, usedColumns) {
+function hasAnyNameUsed(columnNames: Set<string>, usedColumns: Set<string>): boolean {
   for (const col of usedColumns) {
     const name = col.split('.')[1];
     if (name && columnNames.has(name)) return true;
@@ -120,16 +120,16 @@ function hasAnyNameUsed(columnNames, usedColumns) {
   return false;
 }
 
-function collectOutputNames(node) {
-  const names = new Set();
-  const add = (value) => {
+function collectOutputNames(node: any): Set<string> {
+  const names = new Set<string>();
+  const add = (value: any) => {
     const name = (value || '').toUpperCase();
     if (name) names.add(name);
   };
-  const outputName = (expr) =>
+  const outputName = (expr: any) =>
     add(expr?.outputName || expr?.alias || expr?.name || expr?.columnName);
 
-  function walk(n) {
+  function walk(n: any): void {
     if (!n) return;
     switch (n.type) {
       case PlanNodeType.SCAN:

@@ -1,24 +1,24 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { PlanNodeType, JoinType } from '../../planner/logical-plan.js';
+import { PlanNodeType, JoinType, type LogicalPlanNode } from '../../planner/logical-plan.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 
 export class EmptyPropagation extends OptimizationPass {
   get name() { return 'EmptyPropagation'; }
 
-  apply(plan) {
+  apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new EmptyPropagationRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class EmptyPropagationRewriter extends PlanRewriter {
-  rewriteDefault(node) {
-    const newNode = this.rewriteChildren(node);
+  rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
+    const newNode: any = this.rewriteChildren(node);
 
     if (newNode.children && newNode.children.length === 1 && newNode.children[0].type === PlanNodeType.EMPTY) {
       if (newNode.type === PlanNodeType.AGGREGATE && (!newNode.groupBy || newNode.groupBy.length === 0)) {
-        return newNode; 
+        return newNode;
       }
       return newNode.children[0];
     }
@@ -26,8 +26,8 @@ class EmptyPropagationRewriter extends PlanRewriter {
         return newNode;
   }
 
-  rewriteFilter(node) {
-    const newNode = this.rewriteChildren(node);
+  rewriteFilter(node: any): any {
+    const newNode: any = this.rewriteChildren(node);
     if (newNode.children[0].type === PlanNodeType.EMPTY) {
       return newNode.children[0];
     }
@@ -39,8 +39,8 @@ class EmptyPropagationRewriter extends PlanRewriter {
         return newNode;
   }
 
-    rewriteLimit(node) {
-    const newNode = this.rewriteChildren(node);
+    rewriteLimit(node: any): any {
+    const newNode: any = this.rewriteChildren(node);
     if (newNode.children[0].type === PlanNodeType.EMPTY) {
       return newNode.children[0];
     }
@@ -52,8 +52,8 @@ class EmptyPropagationRewriter extends PlanRewriter {
         return newNode;
   }
 
-  rewriteJoin(node) {
-    const newNode = this.rewriteChildren(node);
+  rewriteJoin(node: any): any {
+    const newNode: any = this.rewriteChildren(node);
     const left = newNode.children[0];
     const right = newNode.children[1];
 
@@ -80,8 +80,8 @@ class EmptyPropagationRewriter extends PlanRewriter {
         return newNode;
   }
 
-  rewriteUnion(node) {
-    const newNode = this.rewriteChildren(node);
+  rewriteUnion(node: any): any {
+    const newNode: any = this.rewriteChildren(node);
     const left = newNode.children[0];
     const right = newNode.children[1];
 

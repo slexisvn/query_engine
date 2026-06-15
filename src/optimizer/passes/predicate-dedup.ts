@@ -1,21 +1,21 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { PlanNodeType, LogicalFilter } from '../../planner/logical-plan.js';
+import { PlanNodeType, LogicalFilter, type LogicalPlanNode } from '../../planner/logical-plan.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
 
 export class PredicateDedup extends OptimizationPass {
   get name() { return 'PredicateDedup'; }
 
-  apply(plan) {
+  apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new DedupRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class DedupRewriter extends PlanRewriter {
-  rewriteFilter(node) {
-    const child = this.rewrite(node.children[0]);
+  rewriteFilter(node: any): any {
+    const child: any = this.rewrite(node.children[0]);
     const preds = splitConjuncts(node.condition);
     const unique = dedup(preds);
 
@@ -24,8 +24,8 @@ class DedupRewriter extends PlanRewriter {
     return LogicalFilter(combineConjuncts(unique), child);
   }
 
-  rewriteJoin(node) {
-    const newNode = this.rewriteChildren(node);
+  rewriteJoin(node: any): any {
+    const newNode: any = this.rewriteChildren(node);
     if (!newNode.condition) return newNode;
 
     const preds = splitConjuncts(newNode.condition);
@@ -37,9 +37,9 @@ class DedupRewriter extends PlanRewriter {
   }
 }
 
-function dedup(predicates) {
-  const seen = new Set();
-  const result = [];
+function dedup(predicates: any[]): any[] {
+  const seen = new Set<string>();
+  const result: any[] = [];
   for (const pred of predicates) {
     const key = exprKey(pred);
     if (!seen.has(key)) {
@@ -50,7 +50,7 @@ function dedup(predicates) {
   return result;
 }
 
-function exprKey(expr) {
+function exprKey(expr: any): string {
   if (!expr || typeof expr !== 'object') return String(expr);
   switch (expr.kind) {
     case BoundExprKind.COLUMN_REF:
@@ -83,7 +83,7 @@ function exprKey(expr) {
     case BoundExprKind.EXTRACT:
       return `EXT:${expr.field}:${exprKey(expr.source)}`;
     case BoundExprKind.CASE:
-      return `CASE:${expr.whenClauses.map(wc => `${exprKey(wc.condition)}:${exprKey(wc.result)}`).join(';')}:${exprKey(expr.elseExpr)}`;
+      return `CASE:${expr.whenClauses.map((wc: any) => `${exprKey(wc.condition)}:${exprKey(wc.result)}`).join(';')}:${exprKey(expr.elseExpr)}`;
     default:
       return JSON.stringify(expr).slice(0, 100);
   }

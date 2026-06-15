@@ -1,5 +1,5 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanNodeType, JoinType, PhysicalStrategy, getChildren, setChildren } from '../../planner/logical-plan.js';
+import { PlanNodeType, JoinType, PhysicalStrategy, getChildren, setChildren, type LogicalPlanNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { DefaultCostModel } from '../dphyp/cost-model.js';
 import { DefaultCardinalityEstimator } from '../dphyp/cardinality.js';
@@ -8,7 +8,11 @@ import { BoundExprKind } from '../../binder/expression-binder.js';
 const DEFAULT_CARDINALITY = 1000;
 
 export class PhysicalDesign extends OptimizationPass {
-  constructor(statisticsMap = new Map(), costModel = null, cardEstimator = null) {
+  statisticsMap: Map<string, any>;
+  costModel: DefaultCostModel;
+  cardEstimator: DefaultCardinalityEstimator;
+
+  constructor(statisticsMap: Map<string, any> = new Map(), costModel: DefaultCostModel | null = null, cardEstimator: DefaultCardinalityEstimator | null = null) {
     super();
     this.statisticsMap = statisticsMap;
     this.costModel = costModel || new DefaultCostModel();
@@ -17,36 +21,40 @@ export class PhysicalDesign extends OptimizationPass {
 
   get name() { return 'PhysicalDesign'; }
 
-  apply(plan) {
+  apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new PhysicalDesignRewriter(this.costModel, this.cardEstimator);
     return rewriter.rewrite(plan);
   }
 }
 
 class PhysicalDesignRewriter extends PlanRewriter {
-  constructor(costModel, cardEstimator) {
+  costModel: DefaultCostModel;
+  cardEstimator: DefaultCardinalityEstimator;
+  parentMap: Map<any, any> | null;
+
+  constructor(costModel: DefaultCostModel, cardEstimator: DefaultCardinalityEstimator) {
     super();
     this.costModel = costModel;
     this.cardEstimator = cardEstimator;
     this.parentMap = null;
   }
 
-  rewrite(plan) {
+  rewrite(plan: LogicalPlanNode): LogicalPlanNode {
     this.parentMap = buildParentMap(plan);
     return super.rewrite(plan);
   }
 
-  rewriteDefault(node) {
-    const newNode = this.rewriteChildren(node);
+  rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
+    const newNode: any = this.rewriteChildren(node);
     newNode._cardinality = this.estimateNodeCardinality(newNode);
     newNode._sortedBy = this.inferSortOrder(newNode);
 
     return newNode;
   }
 
-  rewriteJoin(node) {
+  rewriteJoin(node: any): any {
     const originalNode = node;
-    const newNode = this.rewriteChildren(node);
+    const newNode: any = this.rewriteChildren(node);
     newNode._cardinality = this.estimateNodeCardinality(newNode);
 
     const left = newNode.children[0];
@@ -99,7 +107,7 @@ class PhysicalDesignRewriter extends PlanRewriter {
     return newNode;
   }
 
-  assignBuildSide(node, leftCard, rightCard) {
+  assignBuildSide(node: any, leftCard: number, rightCard: number): void {
     switch (node.joinType) {
       case JoinType.LEFT:
       case JoinType.SEMI:
@@ -116,20 +124,20 @@ class PhysicalDesignRewriter extends PlanRewriter {
     }
   }
 
-  isSpecialJoinType(joinType) {
+  isSpecialJoinType(joinType: any): boolean {
     return joinType === JoinType.SEMI
       || joinType === JoinType.ANTI
       || joinType === JoinType.MARK;
   }
 
-  rewriteAggregate(node) {
-    const newNode = this.rewriteChildren(node);
+  rewriteAggregate(node: any): any {
+    const newNode: any = this.rewriteChildren(node);
     newNode._cardinality = this.estimateNodeCardinality(newNode);
 
         const child = newNode.children[0];
 
         if (newNode.groupBy && newNode.groupBy.length > 0) {
-      const groupKeys = newNode.groupBy.map(g => this.getColumnKey(g));
+      const groupKeys = newNode.groupBy.map((g: any) => this.getColumnKey(g));
       const isSorted = this.isSortedByPrefix(child._sortedBy, groupKeys);
 
       if (isSorted) {
@@ -161,8 +169,8 @@ class PhysicalDesignRewriter extends PlanRewriter {
     return newNode;
   }
 
-  rewriteSort(node) {
-    const newNode = this.rewriteChildren(node);
+  rewriteSort(node: any): any {
+    const newNode: any = this.rewriteChildren(node);
     const childCard = newNode.children[0]._cardinality || DEFAULT_CARDINALITY;
 
     if (newNode.limit) {
@@ -174,16 +182,16 @@ class PhysicalDesignRewriter extends PlanRewriter {
     }
 
     newNode._sortedBy = newNode.orderKeys
-      .map(o => ({ key: this.getColumnKey(o.expr), direction: (o.direction || 'ASC').toUpperCase() }))
-      .filter(e => e.key);
+      .map((o: any) => ({ key: this.getColumnKey(o.expr), direction: (o.direction || 'ASC').toUpperCase() }))
+      .filter((e: any) => e.key);
     return newNode;
   }
 
-  inferSortOrder(node) {
+  inferSortOrder(node: any): any {
     if (node.type === PlanNodeType.SORT) {
       return node.orderKeys
-        .map(o => ({ key: this.getColumnKey(o.expr), direction: (o.direction || 'ASC').toUpperCase() }))
-        .filter(e => e.key);
+        .map((o: any) => ({ key: this.getColumnKey(o.expr), direction: (o.direction || 'ASC').toUpperCase() }))
+        .filter((e: any) => e.key);
     }
 
     if (node.type === PlanNodeType.INDEX_SCAN) {
@@ -200,7 +208,7 @@ class PhysicalDesignRewriter extends PlanRewriter {
         return [];
   }
 
-  getColumnKey(expr) {
+  getColumnKey(expr: any): string | null {
     if (!expr) return null;
     if (expr.kind === BoundExprKind.COLUMN_REF) {
       return `${expr.tableAlias || ''}.${expr.columnName}`.toUpperCase();
@@ -208,7 +216,7 @@ class PhysicalDesignRewriter extends PlanRewriter {
     return null;
   }
 
-  columnMatches(sortedKey, reqKey) {
+  columnMatches(sortedKey: any, reqKey: any): boolean {
     const s = (sortedKey && typeof sortedKey === 'object') ? sortedKey.key : sortedKey;
     const r = (reqKey && typeof reqKey === 'object') ? reqKey.key : reqKey;
     if (!s || !r) return false;
@@ -216,7 +224,7 @@ class PhysicalDesignRewriter extends PlanRewriter {
     return s.split('.').pop() === r.split('.').pop();
   }
 
-  isSortedBy(actualSortedKeys, requiredKeys) {
+  isSortedBy(actualSortedKeys: any, requiredKeys: any[]): boolean {
     if (!actualSortedKeys || actualSortedKeys.length === 0) return false;
     if (requiredKeys.length === 0) return false;
 
@@ -228,18 +236,18 @@ class PhysicalDesignRewriter extends PlanRewriter {
     return true;
   }
 
-  isSortedByPrefix(actualSortedKeys, requiredSet) {
+  isSortedByPrefix(actualSortedKeys: any, requiredSet: any[]): boolean {
     if (!actualSortedKeys || actualSortedKeys.length < requiredSet.length) return false;
     if (requiredSet.length === 0) return false;
 
     const prefix = actualSortedKeys.slice(0, requiredSet.length);
     for (const req of requiredSet) {
-      if (!prefix.some(s => this.columnMatches(s, req))) return false;
+      if (!prefix.some((s: any) => this.columnMatches(s, req))) return false;
     }
     return true;
   }
 
-  estimateNodeCardinality(node) {
+  estimateNodeCardinality(node: any): number {
     if (node.type === PlanNodeType.SCAN || node.type === PlanNodeType.INDEX_SCAN) {
       return this.cardEstimator.estimateScan(node.table);
     }
@@ -279,9 +287,9 @@ class PhysicalDesignRewriter extends PlanRewriter {
     return 1000;
   }
 
-  extractEquiJoinKeys(condition) {
-    const leftKeys = [];
-    const rightKeys = [];
+  extractEquiJoinKeys(condition: any): { leftKeys: any[]; rightKeys: any[] } {
+    const leftKeys: any[] = [];
+    const rightKeys: any[] = [];
 
         const preds = this.splitAnd(condition);
     for (const pred of preds) {
@@ -297,7 +305,7 @@ class PhysicalDesignRewriter extends PlanRewriter {
         return { leftKeys, rightKeys };
   }
 
-  splitAnd(expr) {
+  splitAnd(expr: any): any[] {
     if (!expr) return [];
     if (expr.kind === BoundExprKind.BINARY && expr.op === 'AND') {
       return [...this.splitAnd(expr.left), ...this.splitAnd(expr.right)];
@@ -305,10 +313,10 @@ class PhysicalDesignRewriter extends PlanRewriter {
     return [expr];
   }
 
-  canUsePerfectHashAggregate(node, child) {
+  canUsePerfectHashAggregate(node: any, child: any): boolean {
     if (!node.groupBy || node.groupBy.length === 0) return false;
-    if (!node.groupBy.every(expr => expr.kind === BoundExprKind.COLUMN_REF)) return false;
-    const keyStats = node.groupBy.map(expr => this.cardEstimator.getColumnStats?.(expr) || null);
+    if (!node.groupBy.every((expr: any) => expr.kind === BoundExprKind.COLUMN_REF)) return false;
+    const keyStats = node.groupBy.map((expr: any) => this.cardEstimator.getColumnStats?.(expr) || null);
     if (!keyStats.every(Boolean)) return false;
     let totalGroups = 1;
     for (const s of keyStats) {
@@ -316,10 +324,10 @@ class PhysicalDesignRewriter extends PlanRewriter {
       totalGroups *= s.ndv;
     }
     if (totalGroups > 256) return false;
-    return keyStats.every(s => this.hasCompactDomain(s));
+    return keyStats.every((s: any) => this.hasCompactDomain(s));
   }
 
-  hasCompactDomain(stats) {
+  hasCompactDomain(stats: any): boolean {
     const ndv = stats.ndv || 0;
     if (ndv <= 0 || ndv > 256) return false;
     const min = toNumber(stats.min);
@@ -331,14 +339,14 @@ class PhysicalDesignRewriter extends PlanRewriter {
     return ndv <= 4;
   }
 
-  estimateDownstreamSortSaving(originalNode, leftKeys, rightKeys, cardinality) {
+  estimateDownstreamSortSaving(originalNode: any, leftKeys: any[], rightKeys: any[], cardinality: number): number {
     const parent = this.parentMap?.get(originalNode);
     if (!parent) return 0;
 
     const sortNode = this.findDownstreamSort(parent, originalNode);
     if (!sortNode || !sortNode.orderKeys) return 0;
 
-    const sortKeys = sortNode.orderKeys.map(o => this.getColumnKey(o.expr)).filter(Boolean);
+    const sortKeys = sortNode.orderKeys.map((o: any) => this.getColumnKey(o.expr)).filter(Boolean);
     if (sortKeys.length === 0) return 0;
 
     const mergeOutputKeys = [...leftKeys, ...rightKeys];
@@ -350,7 +358,7 @@ class PhysicalDesignRewriter extends PlanRewriter {
       : this.costModel.sortCost(card);
   }
 
-  findDownstreamSort(node, from) {
+  findDownstreamSort(node: any, from: any): any {
     if (!node) return null;
     if (node.type === PlanNodeType.SORT) return node;
     if (node.type === PlanNodeType.PROJECT || node.type === PlanNodeType.FILTER
@@ -361,7 +369,7 @@ class PhysicalDesignRewriter extends PlanRewriter {
     return null;
   }
 
-  isPureEquiJoin(condition) {
+  isPureEquiJoin(condition: any): boolean {
     if (!condition) return false;
     const preds = this.splitAnd(condition);
     return preds.length > 0 && preds.every(pred =>
@@ -373,9 +381,9 @@ class PhysicalDesignRewriter extends PlanRewriter {
   }
 }
 
-function buildParentMap(root) {
-  const map = new Map();
-  const queue = [root];
+function buildParentMap(root: any): Map<any, any> {
+  const map = new Map<any, any>();
+  const queue: any[] = [root];
   while (queue.length > 0) {
     const node = queue.shift();
     if (node.children) {
@@ -388,7 +396,7 @@ function buildParentMap(root) {
   return map;
 }
 
-function toNumber(value) {
+function toNumber(value: any): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === 'bigint') return Number(value);
   if (typeof value === 'number') return value;

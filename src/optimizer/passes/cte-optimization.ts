@@ -1,20 +1,20 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanNodeType, LogicalMaterialize, LogicalCTEScan, getChildren, setChildren } from '../../planner/logical-plan.js';
+import { PlanNodeType, LogicalMaterialize, LogicalCTEScan, getChildren, setChildren, type LogicalPlanNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 
 export class CTEOptimization extends OptimizationPass {
   get name() { return 'CTEOptimization'; }
 
-  apply(plan) {
+  apply(plan: LogicalPlanNode): LogicalPlanNode {
     const refCounts = countCTERefs(plan);
     const rewriter = new CTERewriter(refCounts);
     return rewriter.rewrite(plan);
   }
 }
 
-function countCTERefs(node) {
-  const counts = new Map();
-  _walkPlan(node, n => {
+function countCTERefs(node: any): Map<string, number> {
+  const counts = new Map<string, number>();
+  _walkPlan(node, (n: any) => {
     if (n.type === PlanNodeType.CTE_SCAN) {
       const key = n.cteName.toUpperCase();
       counts.set(key, (counts.get(key) || 0) + 1);
@@ -24,13 +24,15 @@ function countCTERefs(node) {
 }
 
 class CTERewriter extends PlanRewriter {
-  constructor(refCounts) {
+  refCounts: Map<string, number>;
+  ctePlans: Map<string, any>;
+  constructor(refCounts: Map<string, number>) {
     super();
     this.refCounts = refCounts;
     this.ctePlans = new Map();
   }
 
-  rewriteCTEAnchor(node) {
+  rewriteCTEAnchor(node: any): any {
     const producer = this.rewrite(node.children[0]);
     const consumer = this.rewrite(node.children[1]);
     const key = node.cteName.toUpperCase();
@@ -45,7 +47,7 @@ class CTERewriter extends PlanRewriter {
     return consumer;
   }
 
-  rewriteCTEScan(node) {
+  rewriteCTEScan(node: any): any {
     const key = node.cteName.toUpperCase();
     const plan = this.ctePlans.get(key);
     if (plan) {
@@ -55,7 +57,7 @@ class CTERewriter extends PlanRewriter {
   }
 }
 
-function _walkPlan(node, fn) {
+function _walkPlan(node: any, fn: (node: any) => void): void {
   if (!node) return;
   fn(node);
   for (const child of getChildren(node)) _walkPlan(child, fn);
