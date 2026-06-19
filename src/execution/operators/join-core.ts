@@ -1,14 +1,57 @@
 import { Column } from '../../storage/column.js';
+import type { DataType, ColumnValue } from '../../storage/data-type.js';
 import { DataChunk } from '../../storage/chunk.js';
 import { JoinType } from '../../planner/logical-plan.js';
 import { hashValue } from '../../utils/hash.js';
 import { heapAllocator } from '../../storage/sab-arena.js';
+import type { Allocator } from '../../storage/sab-arena.js';
+import type { CompiledExpr, EvalValue } from '../execution-types.js';
 
-export function joinKeyOf(extractors: any, chunk: any, rowIdx: any): any {
+type JoinKey = ColumnValue;
+type JoinRow = ColumnValue[];
+
+interface RowAdapterColumn {
+  get(): ColumnValue;
+}
+
+interface RowAdapter {
+  row: JoinRow | null;
+  columns: RowAdapterColumn[];
+  setRow(r: JoinRow): void;
+}
+
+type ConditionEvaluator = (adapter: RowAdapter, rowIdx: number) => EvalValue;
+
+interface BuildItem {
+  row: JoinRow;
+}
+
+interface ProbeItem {
+  row: JoinRow;
+  key: JoinKey;
+}
+
+interface ProbeOpts {
+  joinType: JoinType;
+  buildColCount: number;
+  probeColCount: number;
+  conditionEvaluator: ConditionEvaluator | null;
+  hasNullKey: boolean;
+  onMatched: ((item: BuildItem) => void) | null;
+}
+
+interface BuildChunkOpts {
+  joinType: JoinType;
+  buildColCount: number;
+  buildSchema?: (DataType | string)[];
+  probeSchema?: (DataType | string)[];
+}
+
+export function joinKeyOf(extractors: CompiledExpr[], chunk: DataChunk, rowIdx: number): JoinKey {
   if (extractors.length === 1) {
     const val = extractors[0](chunk, rowIdx);
     if (val === null || val === undefined) return null;
-    return typeof val === 'bigint' ? Number(val) : val;
+    return typeof val === 'bigint' ? Number(val) : (val as ColumnValue);
   }
   const parts = new Array(extractors.length);
   for (let i = 0; i < extractors.length; i++) {
@@ -19,27 +62,27 @@ export function joinKeyOf(extractors: any, chunk: any, rowIdx: any): any {
   return parts.join('|');
 }
 
-export function joinKeyHash(key: any): any {
+export function joinKeyHash(key: JoinKey): number {
   return hashValue(key);
 }
 
-export function createCombinedRowAdapter(totalCols: any): any {
-  const columns = new Array(totalCols);
-  const adapter = {
-    row: null as any,
+export function createCombinedRowAdapter(totalCols: number): RowAdapter {
+  const columns: RowAdapterColumn[] = new Array(totalCols);
+  const adapter: RowAdapter = {
+    row: null,
     columns,
-    setRow(r: any) { this.row = r; },
+    setRow(r: JoinRow) { this.row = r; },
   };
   for (let c = 0; c < totalCols; c++) {
-    columns[c] = { get: () => adapter.row[c] };
+    columns[c] = { get: () => adapter.row![c] };
   }
   return adapter;
 }
 
-export function probeJoinRows(items: any, lookup: any, opts: any): any {
+export function probeJoinRows(items: Iterable<ProbeItem>, lookup: (key: JoinKey) => BuildItem[] | null, opts: ProbeOpts): JoinRow[] {
   const { joinType, buildColCount, probeColCount, conditionEvaluator, hasNullKey, onMatched } = opts;
   const adapter = conditionEvaluator ? createCombinedRowAdapter(buildColCount + probeColCount) : null;
-  const resultRows: any[] = [];
+  const resultRows: JoinRow[] = [];
 
   for (const item of items) {
     const { row: pRow, key } = item;
@@ -60,7 +103,7 @@ export function probeJoinRows(items: any, lookup: any, opts: any): any {
         if (adapter) {
           const combined = bRow.concat(pRow);
           adapter.setRow(combined);
-          if (!conditionEvaluator(adapter, 0)) continue;
+          if (!conditionEvaluator!(adapter, 0)) continue;
         }
 
         matched = true;
@@ -101,7 +144,7 @@ export function probeJoinRows(items: any, lookup: any, opts: any): any {
   return resultRows;
 }
 
-export function emitsOnUnmatchedProbe(joinType: any): boolean {
+export function emitsOnUnmatchedProbe(joinType: JoinType): boolean {
   return joinType === JoinType.LEFT
     || joinType === JoinType.FULL
     || joinType === JoinType.SINGLE
@@ -109,11 +152,11 @@ export function emitsOnUnmatchedProbe(joinType: any): boolean {
     || joinType === JoinType.MARK;
 }
 
-export function emitsUnmatchedBuild(joinType: any): boolean {
+export function emitsUnmatchedBuild(joinType: JoinType): boolean {
   return joinType === JoinType.LEFT || joinType === JoinType.FULL;
 }
 
-export function buildJoinOutputChunk(rows: any, { joinType, buildColCount, buildSchema, probeSchema }: any, allocator: any = heapAllocator): any {
+export function buildJoinOutputChunk(rows: JoinRow[], { joinType, buildColCount, buildSchema, probeSchema }: BuildChunkOpts, allocator: Allocator = heapAllocator): DataChunk {
   if (rows.length === 0) {
     return new DataChunk([], 0);
   }
@@ -122,10 +165,10 @@ export function buildJoinOutputChunk(rows: any, { joinType, buildColCount, build
   const isMark = joinType === JoinType.MARK;
 
   const colCount = rows[0].length;
-  const cols = [];
+  const cols: Column[] = [];
   for (let c = 0; c < colCount; c++) {
-    const firstVal = rows.find((r: any) => r[c] !== null)?.[c];
-    let dt = 'VARCHAR';
+    const firstVal = rows.find((r) => r[c] !== null)?.[c];
+    let dt: DataType | string = 'VARCHAR';
     if (firstVal !== undefined) {
       dt = typeof firstVal === 'bigint' ? 'DECIMAL'
         : typeof firstVal === 'number' ? (Number.isInteger(firstVal) ? 'INT32' : 'FLOAT64')
@@ -133,7 +176,7 @@ export function buildJoinOutputChunk(rows: any, { joinType, buildColCount, build
         : 'VARCHAR';
     }
 
-    let finalDt = dt;
+    let finalDt: DataType | string = dt;
     if (isSemiAnti) {
       finalDt = probeSchema?.[c] || dt;
     } else if (isMark && c === colCount - 1) {
@@ -146,7 +189,7 @@ export function buildJoinOutputChunk(rows: any, { joinType, buildColCount, build
       }
     }
 
-    const col = new Column(finalDt, rows.length, allocator);
+    const col = new Column(finalDt as DataType, rows.length, allocator);
     for (let r = 0; r < rows.length; r++) {
       col.set(r, rows[r][c]);
     }
@@ -157,7 +200,7 @@ export function buildJoinOutputChunk(rows: any, { joinType, buildColCount, build
   return new DataChunk(cols, rows.length);
 }
 
-export function materializeRow(chunk: any, rowIdx: any): any {
+export function materializeRow(chunk: DataChunk, rowIdx: number): JoinRow {
   const row = new Array(chunk.columns.length);
   for (let c = 0; c < chunk.columns.length; c++) {
     row[c] = chunk.columns[c].get(rowIdx);

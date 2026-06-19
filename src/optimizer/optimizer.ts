@@ -38,7 +38,7 @@ export class Optimizer {
     return this;
   }
 
-  optimize(plan: LogicalPlanNode, context: Record<string, unknown> = {}): LogicalPlanNode {
+  optimize(plan: LogicalPlanNode, context: Record<string, never> = {}): LogicalPlanNode {
     let current = plan;
     for (const pass of this.passes) {
       current = pass.apply(current, context);

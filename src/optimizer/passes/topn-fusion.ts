@@ -1,6 +1,6 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { PlanNodeType, type LogicalPlanNode } from '../../planner/logical-plan.js';
+import { PlanNodeType, type LogicalPlanNode, type LogicalLimitNode, type LogicalTopNNode, type LogicalSortNode } from '../../planner/logical-plan.js';
 
 export class TopNFusion extends OptimizationPass {
   get name() { return 'TopNFusion'; }
@@ -12,11 +12,11 @@ export class TopNFusion extends OptimizationPass {
 }
 
 class TopNFusionRewriter extends PlanRewriter {
-  rewriteLimit(node: any): any {
-    const child: any = this.rewrite(node.children[0]);
+  rewriteLimit(node: LogicalLimitNode): LogicalPlanNode {
+    const child: LogicalPlanNode = this.rewrite(node.children[0]);
 
     if (child.type === PlanNodeType.SORT) {
-      return {
+      const topN: LogicalTopNNode = {
         type: PlanNodeType.TOP_N,
         orderKeys: child.orderKeys,
         count: node.count,
@@ -25,11 +25,12 @@ class TopNFusionRewriter extends PlanRewriter {
         _sortedBy: child._sortedBy,
         _cardinality: Math.min(node.count, child._cardinality || Infinity),
       };
+      return topN;
     }
 
     if (child.type === PlanNodeType.PROJECT && child.children[0]?.type === PlanNodeType.SORT) {
-      const sort = child.children[0];
-      const topN = {
+      const sort = child.children[0] as LogicalSortNode;
+      const topN: LogicalTopNNode = {
         type: PlanNodeType.TOP_N,
         orderKeys: sort.orderKeys,
         count: node.count,

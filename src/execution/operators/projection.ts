@@ -1,34 +1,44 @@
 import { Column } from '../../storage/column.js';
-import { DataChunk } from '../../storage/chunk.js';
+import { DataType } from '../../storage/data-type.js';
+import type { ColumnValue } from '../../storage/data-type.js';
+import { DataChunk, AnyColumn } from '../../storage/chunk.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
+import type { BoundExpr, BoundColumnRefNode } from '../../binder/expression-binder.js';
 import { isVectorizableExpr, evalVectorized } from '../wasm-expr-eval.js';
 import { Config } from '../../config.js';
 import { setBit, clearBit } from '../../utils/bitmap.js';
+import type { CompiledExpr, ColumnMapping } from '../execution-types.js';
 
-function resolveColumnIndex(expr: any, columnMapping: any): any {
+interface ParallelDispatchLike {
+  canParallelize(op: string, dt: DataType, n: number): boolean;
+}
+
+function resolveColumnIndex(expr: BoundColumnRefNode, columnMapping: ColumnMapping | null): number {
   if (columnMapping) {
     const key = `${expr.tableAlias}.${expr.columnName}`.toUpperCase();
-    if (columnMapping.has(key)) return columnMapping.get(key);
+    if (columnMapping.has(key)) return columnMapping.get(key)!;
     const byName = `${expr.columnName}`.toUpperCase();
-    if (columnMapping.has(byName)) return columnMapping.get(byName);
+    if (columnMapping.has(byName)) return columnMapping.get(byName)!;
   }
   return expr.columnIndex;
 }
 
-function collectNullableColumns(expr: any, chunk: any, columnMapping: any, acc: any[]): void {
+function collectNullableColumns(expr: BoundExpr | null, chunk: DataChunk, columnMapping: ColumnMapping | null, acc: AnyColumn[]): void {
   if (!expr || typeof expr !== 'object') return;
   if (expr.kind === BoundExprKind.COLUMN_REF) {
     const col = chunk.columns[resolveColumnIndex(expr, columnMapping)];
     if (col && col.hasNulls) acc.push(col);
     return;
   }
-  for (const key of ['left', 'right', 'operand', 'expr']) {
-    if (expr[key]) collectNullableColumns(expr[key], chunk, columnMapping, acc);
+  const node = expr as { left?: BoundExpr; right?: BoundExpr; operand?: BoundExpr; expr?: BoundExpr };
+  for (const key of ['left', 'right', 'operand', 'expr'] as const) {
+    const child = node[key];
+    if (child) collectNullableColumns(child, chunk, columnMapping, acc);
   }
 }
 
-function applyNullMask(col: any, expr: any, chunk: any, columnMapping: any): void {
-  const nullable: any[] = [];
+function applyNullMask(col: Column, expr: BoundExpr, chunk: DataChunk, columnMapping: ColumnMapping | null): void {
+  const nullable: AnyColumn[] = [];
   collectNullableColumns(expr, chunk, columnMapping, nullable);
   if (nullable.length === 0) return;
   const size = chunk.size;
@@ -45,36 +55,36 @@ function applyNullMask(col: any, expr: any, chunk: any, columnMapping: any): voi
   col.hasNulls = hasNull;
 }
 
-async function tryWasmProject(expr: any, chunk: any, columnMapping: any): Promise<any> {
+async function tryWasmProject(expr: BoundExpr, chunk: DataChunk, columnMapping: ColumnMapping | null): Promise<Column | null> {
   if (!isVectorizableExpr(expr)) return null;
   if (chunk.size < Config.wasmMinChunkSize) return null;
 
   const result = await evalVectorized(expr, chunk, columnMapping, chunk.size);
   if (result === null || typeof result === 'number') return null;
 
-  const col = new Column('FLOAT64', chunk.size);
-  col.data.set(result);
+  const col = new Column(DataType.FLOAT64, chunk.size);
+  (col.data! as Float64Array).set(result);
   col.length = chunk.size;
   applyNullMask(col, expr, chunk, columnMapping);
   return col;
 }
 
 export class ProjectionOperator {
-  expressions: any;
-  evaluators: any;
-  resultTypes: any;
-  columnMapping: any;
-  parallelDispatch: any;
-  colRefIndices: any;
+  expressions: BoundExpr[];
+  evaluators: CompiledExpr[];
+  resultTypes: DataType[] | null;
+  columnMapping: ColumnMapping | null;
+  parallelDispatch: ParallelDispatchLike | null;
+  colRefIndices: number[];
 
-  constructor(expressions: any, evaluators: any, resultTypes: any = null, columnMapping: any = null, parallelDispatch: any) {
+  constructor(expressions: BoundExpr[], evaluators: CompiledExpr[], resultTypes: DataType[] | null = null, columnMapping: ColumnMapping | null = null, parallelDispatch: ParallelDispatchLike | null) {
     this.expressions = expressions;
     this.evaluators = evaluators;
     this.resultTypes = resultTypes;
     this.columnMapping = columnMapping;
     this.parallelDispatch = parallelDispatch || null;
 
-    this.colRefIndices = expressions.map((expr: any) => {
+    this.colRefIndices = expressions.map((expr) => {
       if (expr?.kind === BoundExprKind.COLUMN_REF) {
         return this._resolveColIdx(expr);
       }
@@ -84,15 +94,16 @@ export class ProjectionOperator {
 
   async init(): Promise<void> {}
 
-  async process(chunk: any): Promise<any> {
+  async process(chunk: DataChunk): Promise<DataChunk> {
     if (chunk.size === 0) return new DataChunk([], 0);
 
-    const outputCols: any[] = [];
+    const outputCols: AnyColumn[] = [];
     const needsFlatten = !!chunk.selectionVector;
 
     for (let e = 0; e < this.evaluators.length; e++) {
       const colRefIdx = this.colRefIndices[e];
-      const dataType = this.resultTypes ? this.resultTypes[e] : (this.expressions[e]?.dataType || this.expressions[e]?.resultType || 'VARCHAR');
+      const expr = this.expressions[e] as (BoundExpr & { dataType?: string; resultType?: string }) | undefined;
+      const dataType = (this.resultTypes ? this.resultTypes[e] : (expr?.dataType || expr?.resultType || 'VARCHAR')) as DataType;
 
       if (colRefIdx >= 0 && !needsFlatten) {
         const srcCol = chunk.columns[colRefIdx];
@@ -116,7 +127,7 @@ export class ProjectionOperator {
       for (let i = 0; i < chunk.size; i++) {
         const rowIdx = chunk.activeRowIndex(i);
         const val = evalFn(chunk, rowIdx);
-        col.set(i, typeof val === 'bigint' && dataType !== 'INT64' ? Number(val) : val);
+        col.set(i, typeof val === 'bigint' && dataType !== DataType.INT64 ? Number(val) : (val as ColumnValue));
       }
       col.length = chunk.size;
       outputCols.push(col);
@@ -125,12 +136,12 @@ export class ProjectionOperator {
     return new DataChunk(outputCols, chunk.size);
   }
 
-  _resolveColIdx(expr: any): any {
+  _resolveColIdx(expr: BoundColumnRefNode): number {
     if (this.columnMapping) {
       const key = `${expr.tableAlias}.${expr.columnName}`.toUpperCase();
-      if (this.columnMapping.has(key)) return this.columnMapping.get(key);
+      if (this.columnMapping.has(key)) return this.columnMapping.get(key)!;
       const byName = expr.columnName.toUpperCase();
-      if (this.columnMapping.has(byName)) return this.columnMapping.get(byName);
+      if (this.columnMapping.has(byName)) return this.columnMapping.get(byName)!;
     }
     return expr.columnIndex >= 0 ? expr.columnIndex : -1;
   }

@@ -1,10 +1,11 @@
 import { Column } from '../../storage/column.js';
 import { DataChunk } from '../../storage/chunk.js';
+import type { DataType } from '../../storage/data-type.js';
 
 export class DistinctOperator {
-  seen: Set<any>;
-  schema: any;
-  _legacyChunks!: any[];
+  seen: Set<string>;
+  schema: DataType[] | null;
+  _legacyChunks!: DataChunk[];
 
   constructor() {
     this.seen = new Set();
@@ -13,9 +14,9 @@ export class DistinctOperator {
 
   async init(): Promise<void> {}
 
-  async process(chunk: any): Promise<any> {
+  async process(chunk: DataChunk): Promise<DataChunk> {
     if (!this.schema) {
-      this.schema = chunk.columns.map((c: any) => c.dataType);
+      this.schema = chunk.columns.map((c) => c.dataType);
     }
 
     const sv = new Uint32Array(chunk.size);
@@ -43,7 +44,7 @@ export class DistinctOperator {
     return result;
   }
 
-  async consume(chunk: any): Promise<void> {
+  async consume(chunk: DataChunk): Promise<void> {
     if (!this._legacyChunks) this._legacyChunks = [];
     const result = await this.process(chunk);
     if (result.size > 0) {
@@ -51,7 +52,7 @@ export class DistinctOperator {
     }
   }
 
-  async finalize(): Promise<any> {
+  async finalize(): Promise<DataChunk[]> {
     return this._legacyChunks || [];
   }
 }

@@ -1,19 +1,25 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanNodeType, JoinType, LogicalJoin, LogicalFilter, getChildren, setChildren, type LogicalPlanNode } from '../../planner/logical-plan.js';
+import { PlanNodeType, JoinType, LogicalJoin, LogicalFilter, getChildren, setChildren, type LogicalPlanNode, type LogicalScanNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { buildHyperGraph } from '../dphyp/hypergraph.js';
-import { runDPhyp } from '../dphyp/dphyp.js';
+import { runDPhyp, type DPhypPlan } from '../dphyp/dphyp.js';
 import { DefaultCostModel } from '../dphyp/cost-model.js';
-import { DefaultCardinalityEstimator } from '../dphyp/cardinality.js';
-import { BoundExprKind } from '../../binder/expression-binder.js';
+import { DefaultCardinalityEstimator, type TableStats } from '../dphyp/cardinality.js';
+import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
 import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
 
+interface Relation {
+  name: string;
+  alias: string;
+  plan: LogicalPlanNode;
+}
+
 export class JoinReorder extends OptimizationPass {
-  statisticsMap: Map<string, any>;
+  statisticsMap: Map<string, TableStats>;
   costModel: DefaultCostModel;
   cardEstimator: DefaultCardinalityEstimator;
 
-  constructor(statisticsMap: Map<string, any> = new Map(), costModel: DefaultCostModel | null = null, cardEstimator: DefaultCardinalityEstimator | null = null) {
+  constructor(statisticsMap: Map<string, TableStats> = new Map(), costModel: DefaultCostModel | null = null, cardEstimator: DefaultCardinalityEstimator | null = null) {
     super();
     this.statisticsMap = statisticsMap;
     this.costModel = costModel || new DefaultCostModel();
@@ -38,8 +44,8 @@ class JoinReorderRewriter extends PlanRewriter {
     this.cardEstimator = cardEstimator;
   }
 
-  rewriteJoin(node: any): any {
-    const rewritten: any = this.rewriteChildren(node);
+  rewriteJoin(node: LogicalPlanNode): LogicalPlanNode {
+    const rewritten = this.rewriteChildren(node);
     if (this.isInnerJoinTree(rewritten)) {
       return this.reorderJoinTree(rewritten);
     }
@@ -50,20 +56,20 @@ class JoinReorderRewriter extends PlanRewriter {
   }
 
   rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
-    const rewritten: any = this.rewriteChildren(node);
+    const rewritten = this.rewriteChildren(node);
     if (this.isInnerJoinTree(rewritten)) {
       return this.reorderJoinTree(rewritten);
     }
     return rewritten;
   }
 
-  isInnerJoinTree(node: any): boolean {
+  isInnerJoinTree(node: LogicalPlanNode): boolean {
     if (node.type !== PlanNodeType.JOIN) return false;
     if (node.joinType !== JoinType.INNER && node.joinType !== JoinType.CROSS) return false;
     return true;
   }
 
-  isNonInnerJoin(node: any): boolean {
+  isNonInnerJoin(node: LogicalPlanNode): boolean {
     if (node.type !== PlanNodeType.JOIN) return false;
     return node.joinType === JoinType.SEMI
       || node.joinType === JoinType.ANTI
@@ -71,9 +77,9 @@ class JoinReorderRewriter extends PlanRewriter {
       || node.joinType === JoinType.MARK;
   }
 
-  reorderNonInnerJoin(node: any): any {
-    let left = node.children[0];
-    let right = node.children[1];
+  reorderNonInnerJoin(node: LogicalPlanNode): LogicalPlanNode {
+    let left = node.children![0];
+    let right = node.children![1];
 
     if (this.isInnerJoinTree(left)) left = this.reorderJoinTree(left);
     if (this.isInnerJoinTree(right)) right = this.reorderJoinTree(right);
@@ -81,10 +87,10 @@ class JoinReorderRewriter extends PlanRewriter {
     return { ...node, children: [left, right] };
   }
 
-  reorderJoinTree(root: any): any {
-    const relations: any[] = [];
-    const joinPredicates: any[] = [];
-    const nonJoinFilters: any[] = [];
+  reorderJoinTree(root: LogicalPlanNode): LogicalPlanNode {
+    const relations: Relation[] = [];
+    const joinPredicates: BoundExpr[] = [];
+    const nonJoinFilters: BoundExpr[] = [];
 
     this.flattenJoinTree(root, relations, joinPredicates, nonJoinFilters);
 
@@ -106,7 +112,7 @@ class JoinReorderRewriter extends PlanRewriter {
     return plan;
   }
 
-  flattenJoinTree(node: any, relations: any[], joinPredicates: any[], nonJoinFilters: any[]): void {
+  flattenJoinTree(node: LogicalPlanNode, relations: Relation[], joinPredicates: BoundExpr[], nonJoinFilters: BoundExpr[]): void {
     if (node.type === PlanNodeType.JOIN
         && (node.joinType === JoinType.INNER || node.joinType === JoinType.CROSS)) {
       this.flattenJoinTree(node.children[0], relations, joinPredicates, nonJoinFilters);
@@ -174,9 +180,9 @@ class JoinReorderRewriter extends PlanRewriter {
     });
   }
 
-  collectTableRefs(expr: any): Set<string> {
+  collectTableRefs(expr: BoundExpr): Set<string> {
     const refs = new Set<string>();
-    this._walkExpr(expr, (e: any) => {
+    this._walkExpr(expr, (e: BoundExpr) => {
       if (e.kind === BoundExprKind.COLUMN_REF && e.tableAlias) {
         refs.add(e.tableAlias.toUpperCase());
       }
@@ -184,16 +190,25 @@ class JoinReorderRewriter extends PlanRewriter {
     return refs;
   }
 
-  _walkExpr(expr: any, fn: (e: any) => void): void {
-    if (!expr || typeof expr !== 'object') return;
+  _walkExpr(expr: BoundExpr | null | undefined, fn: (e: BoundExpr) => void): void {
+    if (!expr) return;
     fn(expr);
-    if (expr.left) this._walkExpr(expr.left, fn);
-    if (expr.right) this._walkExpr(expr.right, fn);
-    if (expr.operand) this._walkExpr(expr.operand, fn);
-    if (expr.args) for (const a of expr.args) this._walkExpr(a, fn);
+    switch (expr.kind) {
+      case BoundExprKind.BINARY:
+        this._walkExpr(expr.left, fn);
+        this._walkExpr(expr.right, fn);
+        return;
+      case BoundExprKind.UNARY:
+        this._walkExpr(expr.operand, fn);
+        return;
+      case BoundExprKind.FUNCTION:
+      case BoundExprKind.AGGREGATE:
+        for (const a of expr.args) this._walkExpr(a, fn);
+        return;
+    }
   }
 
-  reconstructPlan(dpPlan: any): any {
+  reconstructPlan(dpPlan: DPhypPlan | LogicalPlanNode): LogicalPlanNode {
     if (!dpPlan) return dpPlan;
     if (dpPlan.type === 'HashJoin') {
       const left = this.reconstructPlan(dpPlan.buildSide);
@@ -203,14 +218,16 @@ class JoinReorderRewriter extends PlanRewriter {
     return dpPlan;
   }
 
-  inferAlias(node: any): string {
-    if (node.alias) return node.alias;
-    if (node.table) return node.table;
+  inferAlias(node: LogicalPlanNode): string {
+    if (node.type === PlanNodeType.SCAN || node.type === PlanNodeType.INDEX_SCAN) {
+      if (node.alias) return node.alias;
+      if (node.table) return node.table;
+    }
     const scan = this.findFirstScan(node);
     return scan?.alias || scan?.table || `_rel_${Math.random().toString(36).slice(2, 6)}`;
   }
 
-  findFirstScan(node: any): any {
+  findFirstScan(node: LogicalPlanNode | null): LogicalScanNode | null {
     if (!node) return null;
     if (node.type === PlanNodeType.SCAN) return node;
     for (const child of getChildren(node)) {

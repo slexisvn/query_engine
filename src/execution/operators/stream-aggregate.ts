@@ -1,25 +1,54 @@
 import { Column } from '../../storage/column.js';
 import { DataChunk } from '../../storage/chunk.js';
-import { DataType } from '../../storage/data-type.js';
+import { DataType, type ColumnValue } from '../../storage/data-type.js';
 import { globalDispatch } from '../../wasm/dispatch.js';
 import { isVectorizableExpr, evalVectorized } from '../wasm-expr-eval.js';
+import type { BoundExpr } from '../../binder/expression-binder.js';
+import type { CompiledExpr, ColumnMapping, EvalValue } from '../execution-types.js';
+
+interface Accumulator {
+  add(val: EvalValue): void;
+  result(): ColumnValue;
+}
+
+interface NumericAccumulator extends Accumulator {
+  sum: number;
+  count: number;
+}
+
+interface AggregateDef {
+  name: string;
+  valueKey: string | null;
+  resultType: DataType;
+  createAccumulator: () => Accumulator;
+  extractValue: CompiledExpr;
+  _wasmColIndex?: number;
+  _sourceExpr: BoundExpr | null;
+  _columnMapping: ColumnMapping;
+}
+
+interface ResolvedKernel {
+  kernelKey: string | null;
+  dataType: string | null;
+  kind: string;
+}
 
 export class StreamAggregateOperator {
-  groupByExtractors: any;
-  groupByTypes: any;
-  aggregateDefs: any;
+  groupByExtractors: CompiledExpr[];
+  groupByTypes: DataType[];
+  aggregateDefs: AggregateDef[];
   hasCachedValues: boolean;
 
-  constructor(groupByExtractors: any, groupByTypes: any, aggregateDefs: any) {
+  constructor(groupByExtractors: CompiledExpr[], groupByTypes: DataType[], aggregateDefs: AggregateDef[]) {
     this.groupByExtractors = groupByExtractors;
     this.groupByTypes = groupByTypes;
     this.aggregateDefs = aggregateDefs;
-    this.hasCachedValues = aggregateDefs.some((def: any) => def.valueKey);
+    this.hasCachedValues = aggregateDefs.some((def) => def.valueKey);
   }
 
   async init(): Promise<void> {}
 
-  _resolveWasmAggKernel(def: any): any {
+  _resolveWasmAggKernel(def: AggregateDef): ResolvedKernel | null {
     const name = def.name?.toUpperCase();
     if (!name) return null;
 
@@ -47,11 +76,11 @@ export class StreamAggregateOperator {
     return null;
   }
 
-  async _tryWasmUngrouped(chunks: any): Promise<any> {
+  async _tryWasmUngrouped(chunks: DataChunk[]): Promise<DataChunk[] | null> {
     if (this.groupByExtractors.length !== 0) return null;
     if (!globalDispatch || globalDispatch.kernels.size === 0) return null;
 
-    const accumulators = this.aggregateDefs.map((def: any) => def.createAccumulator());
+    const accumulators = this.aggregateDefs.map((def) => def.createAccumulator());
 
     for (const chunk of chunks) {
       if (chunk.selectionVector || chunk.size === 0) return null;
@@ -61,7 +90,7 @@ export class StreamAggregateOperator {
         const resolved = this._resolveWasmAggKernel(def);
         if (!resolved) return null;
 
-        const acc = accumulators[a];
+        const acc = accumulators[a] as NumericAccumulator;
 
         if (resolved.kind === 'COUNT_STAR') {
           acc.count += chunk.size;
@@ -70,7 +99,7 @@ export class StreamAggregateOperator {
 
         if (resolved.kind === 'COUNT') {
           if (!def._wasmColIndex && def._wasmColIndex !== 0) return null;
-          const column = chunk.columns[def._wasmColIndex];
+          const column = chunk.columns[def._wasmColIndex] as Column;
           if (!column) return null;
           if (!column.hasNulls) {
             acc.count += chunk.size;
@@ -85,16 +114,16 @@ export class StreamAggregateOperator {
 
         if (resolved.kind === 'AVG') {
           if (!def._wasmColIndex && def._wasmColIndex !== 0) return null;
-          const column = chunk.columns[def._wasmColIndex];
+          const column = chunk.columns[def._wasmColIndex] as Column;
           if (!column || !column.data) return null;
           if (column.dataType !== 'FLOAT64') return null;
 
-          const rawData = column.data.subarray(0, chunk.size);
+          const rawData = (column.data as Float64Array).subarray(0, chunk.size);
           const kernel = globalDispatch.lookup(resolved.kernelKey, resolved.dataType);
           if (!kernel) return null;
           const sum = await kernel(rawData);
 
-          let nonNullCount: any;
+          let nonNullCount: number;
           if (!column.hasNulls) {
             nonNullCount = chunk.size;
           } else {
@@ -108,16 +137,16 @@ export class StreamAggregateOperator {
           continue;
         }
 
-        let rawData: any = null;
+        let rawData: Float64Array | null = null;
 
         if (def._wasmColIndex !== undefined && def._wasmColIndex !== null) {
-          const column = chunk.columns[def._wasmColIndex];
+          const column = chunk.columns[def._wasmColIndex] as Column;
           if (column && column.data) {
             const colType = column.dataType;
             if (resolved.dataType === 'FLOAT64' && colType === 'FLOAT64') {
-              rawData = column.data.subarray(0, chunk.size);
+              rawData = (column.data as Float64Array).subarray(0, chunk.size);
             } else if (resolved.dataType === 'INT32' && (colType === 'INT32' || colType === 'DATE')) {
-              rawData = column.data.subarray(0, chunk.size);
+              rawData = (column.data as Float64Array).subarray(0, chunk.size);
             }
           }
         }
@@ -135,8 +164,8 @@ export class StreamAggregateOperator {
       }
     }
 
-    const row = accumulators.map((a: any) => a.result());
-    const columns = [];
+    const row = accumulators.map((a) => a.result());
+    const columns: Column[] = [];
     for (let a = 0; a < this.aggregateDefs.length; a++) {
       const col = new Column(this.aggregateDefs[a].resultType, 1);
       col.set(0, typeof row[a] === 'bigint' ? Number(row[a]) : row[a]);
@@ -147,15 +176,15 @@ export class StreamAggregateOperator {
     return [new DataChunk(columns, 1)];
   }
 
-  async execute(chunks: any): Promise<any> {
+  async execute(chunks: DataChunk[]): Promise<DataChunk[]> {
     const wasmResult = await this._tryWasmUngrouped(chunks);
     if (wasmResult !== null) return wasmResult;
 
-    const outputRows = [];
+    const outputRows: ColumnValue[][] = [];
 
-    let currentKey: any = null;
-    let groupValues: any = null;
-    let accumulators: any = null;
+    let currentKey: string | null = null;
+    let groupValues: ColumnValue[] | null = null;
+    let accumulators: Accumulator[] | null = null;
 
     for (const chunk of chunks) {
       for (let i = 0; i < chunk.size; i++) {
@@ -164,22 +193,22 @@ export class StreamAggregateOperator {
 
         if (currentKey !== key) {
           if (accumulators !== null) {
-            const row = [...groupValues];
+            const row = [...groupValues!];
             for (let a = 0; a < accumulators.length; a++) {
               row.push(accumulators[a].result());
             }
             outputRows.push(row);
           }
           currentKey = key;
-          groupValues = this.groupByExtractors.map((fn: any) => fn(chunk, rowIdx));
-          accumulators = this.aggregateDefs.map((def: any) => def.createAccumulator());
+          groupValues = this.groupByExtractors.map((fn) => fn(chunk, rowIdx) as ColumnValue);
+          accumulators = this.aggregateDefs.map((def) => def.createAccumulator());
         }
 
         if (accumulators !== null) {
-          const valueCache = this.hasCachedValues ? Object.create(null) : null;
+          const valueCache: Record<string, EvalValue> | null = this.hasCachedValues ? Object.create(null) : null;
           for (let a = 0; a < this.aggregateDefs.length; a++) {
             const def = this.aggregateDefs[a];
-            let val: any;
+            let val: EvalValue;
             if (valueCache && def.valueKey) {
               if (Object.prototype.hasOwnProperty.call(valueCache, def.valueKey)) {
                 val = valueCache[def.valueKey];
@@ -197,20 +226,20 @@ export class StreamAggregateOperator {
     }
 
     if (accumulators !== null) {
-      const row = [...groupValues];
+      const row = [...groupValues!];
       for (let a = 0; a < accumulators.length; a++) {
         row.push(accumulators[a].result());
       }
       outputRows.push(row);
     } else if (this.groupByExtractors.length === 0) {
-      const acc = this.aggregateDefs.map((def: any) => def.createAccumulator());
-      outputRows.push(acc.map((a: any) => a.result()));
+      const acc = this.aggregateDefs.map((def) => def.createAccumulator());
+      outputRows.push(acc.map((a) => a.result()));
     }
 
     if (outputRows.length === 0) return [];
 
     const totalCols = this.groupByExtractors.length + this.aggregateDefs.length;
-    const columns = [];
+    const columns: Column[] = [];
 
     for (let g = 0; g < this.groupByExtractors.length; g++) {
       columns.push(new Column(this.groupByTypes[g] || DataType.VARCHAR, outputRows.length));
@@ -231,9 +260,9 @@ export class StreamAggregateOperator {
     return [new DataChunk(columns, outputRows.length)];
   }
 
-  extractGroupKey(chunk: any, rowIdx: any): any {
+  extractGroupKey(chunk: DataChunk, rowIdx: number): string {
     if (this.groupByExtractors.length === 0) return '__ALL__';
-    return this.groupByExtractors.map((fn: any) => {
+    return this.groupByExtractors.map((fn) => {
       const v = fn(chunk, rowIdx);
       return typeof v === 'bigint' ? v.toString() : String(v);
     }).join('|');

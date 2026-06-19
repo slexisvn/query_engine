@@ -56,11 +56,11 @@ interface JoinSide { type?: string; columns?: ColumnInfo[]; alias?: string; tabl
 
 export class Binder {
   catalog: CatalogLike;
-  functionRegistry: unknown;
+  functionRegistry: object;
   cteScopes: Map<string, CteInfo>;
   aggregatesFound: BE.BoundExpr[];
 
-  constructor(catalog: CatalogLike, functionRegistry: unknown) {
+  constructor(catalog: CatalogLike, functionRegistry: object) {
     this.catalog = catalog;
     this.functionRegistry = functionRegistry;
     this.cteScopes = new Map();
@@ -368,7 +368,7 @@ export class Binder {
   }
 
   bindExpression(node: AST.Expr | AST.QuantifiedSubqueryNode, scope: BinderScope): BE.BoundExpr {
-    if (!node) return null as unknown as BE.BoundExpr;
+    if (!node) return null!;
 
     switch (node.kind) {
       case NodeKind.COLUMN_REF:

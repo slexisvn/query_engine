@@ -124,7 +124,7 @@ export class PlanRewriter {
     return this.rewriteChildren(node);
   }
 
-  rewriteChildren(node: LogicalPlanNode): LogicalPlanNode {
+  rewriteChildren<T extends LogicalPlanNode>(node: T): T {
     const children = getChildren(node);
     if (children.length === 0) return node;
 

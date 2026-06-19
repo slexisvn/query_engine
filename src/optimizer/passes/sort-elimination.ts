@@ -1,7 +1,9 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { PlanNodeType, type LogicalPlanNode } from '../../planner/logical-plan.js';
-import { BoundExprKind } from '../../binder/expression-binder.js';
+import { PlanNodeType, type LogicalPlanNode, type LogicalSortNode } from '../../planner/logical-plan.js';
+import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
+
+interface RequiredKey { key: string | null; direction: string; }
 
 export class SortElimination extends OptimizationPass {
   get name() { return 'SortElimination'; }
@@ -13,8 +15,8 @@ export class SortElimination extends OptimizationPass {
 }
 
 class SortEliminationRewriter extends PlanRewriter {
-  rewriteSort(node: any): any {
-    const child: any = this.rewrite(node.children[0]);
+  rewriteSort(node: LogicalSortNode): LogicalPlanNode {
+    const child: LogicalPlanNode = this.rewrite(node.children[0]);
 
     if (!child._sortedBy || child._sortedBy.length === 0) {
       if (child !== node.children[0]) {
@@ -23,12 +25,12 @@ class SortEliminationRewriter extends PlanRewriter {
       return node;
     }
 
-    const requiredKeys = node.orderKeys.map((ok: any) => ({
+    const requiredKeys: RequiredKey[] = node.orderKeys.map((ok) => ({
       key: getColumnKey(ok.expr),
       direction: ok.direction || 'ASC',
     }));
 
-    if (requiredKeys.some((k: any) => !k.key)) {
+    if (requiredKeys.some((k) => !k.key)) {
       if (child !== node.children[0]) {
         return { ...node, children: [child] };
       }
@@ -57,7 +59,7 @@ class SortEliminationRewriter extends PlanRewriter {
   }
 }
 
-function getColumnKey(expr: any): string | null {
+function getColumnKey(expr: BoundExpr): string | null {
   if (!expr) return null;
   if (expr.kind === BoundExprKind.COLUMN_REF) {
     return `${expr.tableAlias || ''}.${expr.columnName}`.toUpperCase();
@@ -65,7 +67,7 @@ function getColumnKey(expr: any): string | null {
   return null;
 }
 
-function columnMatches(sortedKey: any, reqKey: any): boolean {
+function columnMatches(sortedKey: string | null, reqKey: string | null): boolean {
   if (!sortedKey || !reqKey) return false;
   if (sortedKey === reqKey) return true;
   const sortedCol = sortedKey.split('.').pop();

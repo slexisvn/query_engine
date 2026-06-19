@@ -1,15 +1,25 @@
-export class ScanOperator {
-  table: any;
-  projectedColumns: any;
+import type { DataChunk } from '../../storage/chunk.js';
+import type { ExecSchema } from '../execution-types.js';
 
-  constructor(table: any, projectedColumns: any) {
+interface TableStorageLike {
+  getSchema(): ExecSchema;
+  scan(): AsyncGenerator<DataChunk>;
+  scanAll(): Promise<DataChunk[]>;
+  rowCount(): number;
+}
+
+export class ScanOperator {
+  table: TableStorageLike;
+  projectedColumns: number[] | null;
+
+  constructor(table: TableStorageLike, projectedColumns: number[] | null) {
     this.table = table;
     this.projectedColumns = projectedColumns || null;
   }
 
   async init(): Promise<void> {}
 
-  async *scan(): AsyncGenerator<any> {
+  async *scan(): AsyncGenerator<DataChunk> {
     for await (const chunk of this.table.scan()) {
       if (this.projectedColumns) {
         yield chunk.project(this.projectedColumns);
@@ -19,7 +29,7 @@ export class ScanOperator {
     }
   }
 
-  estimatedRows(): any {
+  estimatedRows(): number {
     return this.table.rowCount();
   }
 }

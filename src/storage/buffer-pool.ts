@@ -1,26 +1,37 @@
 import { LRUCache } from '../utils/lru-cache.js';
+import type { DataChunk } from './chunk.js';
+
+export interface PageStore {
+  write(pageId: string, chunk: DataChunk): Promise<void>;
+  read(pageId: string): Promise<DataChunk | null>;
+  clear(): void;
+}
 
 export class BufferPoolManager {
-  constructor(maxPages, pageStore) {
+  maxPages: number;
+  cache: LRUCache;
+  pageStore: PageStore;
+
+  constructor(maxPages: number, pageStore: PageStore) {
     this.maxPages = maxPages;
     this.cache = new LRUCache(maxPages);
     this.pageStore = pageStore;
   }
 
-  clear() {
+  clear(): void {
     this.cache.clear();
     this.pageStore.clear();
   }
 
-  async writePage(pageId, chunk) {
+  async writePage(pageId: string, chunk: DataChunk): Promise<void> {
     await this.pageStore.write(pageId, chunk);
   }
 
-  async readPage(pageId) {
+  async readPage(pageId: string): Promise<DataChunk | null> {
     return this.pageStore.read(pageId);
   }
 
-  async fetchPage(pageId, bypassCache = false) {
+  async fetchPage(pageId: string, bypassCache = false): Promise<DataChunk | null> {
     const cached = this.cache.get(pageId);
     if (cached !== undefined) {
       return cached;

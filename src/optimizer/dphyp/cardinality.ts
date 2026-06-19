@@ -1,15 +1,56 @@
-import { BoundExprKind } from '../../binder/expression-binder.js';
-import { PlanNodeType, JoinType } from '../../planner/logical-plan.js';
+import { BoundExprKind, type BoundExpr, type BoundColumnRefNode, type BoundLiteralNode, type BoundBinaryNode, type BoundBetweenNode, type BoundLikeNode, type BoundInListNode, type BoundIsNullNode, type LiteralValue } from '../../binder/expression-binder.js';
+import { PlanNodeType, JoinType, type LogicalPlanNode } from '../../planner/logical-plan.js';
 
 const MIN_SELECTIVITY = 0.0001;
 const DEFAULT_CORRELATION = 0.5;
 const DEFAULT_NDV = 100;
 const DEFAULT_SCAN_ROWS = 1000;
 
-export class DefaultCardinalityEstimator {
-  stats: any;
+export interface Mcv {
+  values: (string | number)[];
+  frequencies: number[];
+}
 
-  constructor(statisticsProvider: any) {
+export interface Histogram {
+  numBuckets: number;
+  totalCount: number;
+  boundaries: (number | bigint)[];
+  bucketCounts: number[];
+  bucketDistincts: number[];
+  estimateLessThan(value: LiteralValue): number;
+  estimateRange(low: LiteralValue, high: LiteralValue): number;
+}
+
+export interface ColumnStats {
+  ndv?: number;
+  nullFraction?: number;
+  avgLength?: number;
+  min?: number | bigint | string | null;
+  max?: number | bigint | string | null;
+  mcv?: Mcv;
+  histogram?: Histogram;
+}
+
+export interface TableStats {
+  rowCount: number;
+  columnStats?: Map<string, ColumnStats>;
+  getCorrelation?(a: string, b: string): number | null;
+}
+
+export interface StatsProvider {
+  get(key: string): TableStats | undefined;
+  values(): IterableIterator<TableStats>;
+}
+
+export interface EquiPred {
+  left: BoundExpr;
+  right: BoundExpr;
+}
+
+export class DefaultCardinalityEstimator {
+  stats: StatsProvider;
+
+  constructor(statisticsProvider: StatsProvider) {
     this.stats = statisticsProvider;
   }
 
@@ -18,7 +59,7 @@ export class DefaultCardinalityEstimator {
     return tableStats ? tableStats.rowCount : DEFAULT_SCAN_ROWS;
   }
 
-  estimatePlan(node: any): number {
+  estimatePlan(node: LogicalPlanNode | null | undefined): number {
     if (!node) return DEFAULT_SCAN_ROWS;
 
     switch (node.type) {
@@ -55,13 +96,13 @@ export class DefaultCardinalityEstimator {
   }
 
 
-  estimateFilter(inputCard: number, predicate: any): number {
+  estimateFilter(inputCard: number, predicate: BoundExpr | null): number {
     const sel = this.estimateSelectivity(predicate);
     return Math.max(1, Math.round(inputCard * sel));
   }
 
 
-  estimateJoin(leftCard: number, rightCard: number, condition: any): number {
+  estimateJoin(leftCard: number, rightCard: number, condition: BoundExpr | null): number {
     if (!condition) return leftCard * rightCard;
 
     const equiPreds = this.extractEquiPredicates(condition);
@@ -78,7 +119,7 @@ export class DefaultCardinalityEstimator {
     return Math.max(1, Math.round(leftCard * rightCard * selectivity));
   }
 
-  estimateEquiJoinSelectivity(leftExpr: any, rightExpr: any, leftCard: number, rightCard: number): number {
+  estimateEquiJoinSelectivity(leftExpr: BoundExpr, rightExpr: BoundExpr, leftCard: number, rightCard: number): number {
     const sA = this.getColumnStats(leftExpr);
     const sB = this.getColumnStats(rightExpr);
     const ndA = Math.min(this.getColumnNdv(leftExpr), leftCard);
@@ -94,7 +135,7 @@ export class DefaultCardinalityEstimator {
 
     let matched = 0, sumMcvA = 0, sumMcvB = 0, mcvLenA = 0, mcvLenB = 0;
     if (hasMcv) {
-      const freqB = new Map();
+      const freqB = new Map<string | number, number>();
       for (let i = 0; i < mcvB.values.length; i++) freqB.set(mcvB.values[i], mcvB.frequencies[i]);
       for (let i = 0; i < mcvA.values.length; i++) {
         sumMcvA += mcvA.frequencies[i];
@@ -116,20 +157,20 @@ export class DefaultCardinalityEstimator {
     return Math.max(MIN_SELECTIVITY, Math.min(1, matched + tail));
   }
 
-  _histogramJoinCollision(sA: any, sB: any): number | null {
+  _histogramJoinCollision(sA: ColumnStats | null, sB: ColumnStats | null): number | null {
     const hA = sA?.histogram, hB = sB?.histogram;
     if (!hA?.bucketDistincts || !hB?.bucketDistincts || !hA.totalCount || !hB.totalCount) return null;
-    const minA = toNumber(sA.min), minB = toNumber(sB.min);
+    const minA = toNumber(sA!.min), minB = toNumber(sB!.min);
     if (minA === null || minB === null) return null;
     return histogramJoinCollision(hA, minA, hB, minB);
   }
 
-  estimateLeftJoin(leftCard: number, rightCard: number, condition: any): number {
+  estimateLeftJoin(leftCard: number, rightCard: number, condition: BoundExpr | null): number {
     const innerCard = this.estimateJoin(leftCard, rightCard, condition);
     return Math.max(leftCard, innerCard);
   }
 
-  estimateSemiJoin(leftCard: number, rightCard: number, condition: any): number {
+  estimateSemiJoin(leftCard: number, rightCard: number, condition: BoundExpr | null): number {
     if (!condition) return Math.round(leftCard * 0.5);
     const equiPreds = this.extractEquiPredicates(condition);
     if (equiPreds.length > 0) {
@@ -142,7 +183,7 @@ export class DefaultCardinalityEstimator {
     return Math.max(1, Math.round(leftCard * 0.5));
   }
 
-  estimateSemiJoinSelectivity(leftExpr: any, rightExpr: any): number {
+  estimateSemiJoinSelectivity(leftExpr: BoundExpr, rightExpr: BoundExpr): number {
     const ndvA = this.getColumnNdv(leftExpr);
     const ndvB = this.getColumnNdv(rightExpr);
     const sA = this.getColumnStats(leftExpr);
@@ -166,13 +207,13 @@ export class DefaultCardinalityEstimator {
     return Math.max(MIN_SELECTIVITY, Math.min(1, matchfreq + tailMatch));
   }
 
-  estimateAntiJoin(leftCard: number, rightCard: number, condition: any): number {
+  estimateAntiJoin(leftCard: number, rightCard: number, condition: BoundExpr | null): number {
     const semiCard = this.estimateSemiJoin(leftCard, rightCard, condition);
     return Math.max(1, leftCard - semiCard);
   }
 
 
-  estimateAggregate(inputCard: number, groupByCount: number, groupByExprs: any[] = []): number {
+  estimateAggregate(inputCard: number, groupByCount: number, groupByExprs: BoundExpr[] = []): number {
     if (groupByCount === 0) return 1;
 
     let ndvProduct = 1;
@@ -193,7 +234,7 @@ export class DefaultCardinalityEstimator {
   }
 
 
-  estimateSelectivity(predicate: any): number {
+  estimateSelectivity(predicate: BoundExpr | null): number {
     if (!predicate) return 1.0;
 
     switch (predicate.kind) {
@@ -238,8 +279,8 @@ export class DefaultCardinalityEstimator {
     }
   }
 
-  estimateEqualitySelectivity(predicate: any): number {
-    let column = null, literal = null;
+  estimateEqualitySelectivity(predicate: BoundBinaryNode): number {
+    let column: BoundColumnRefNode | null = null, literal: BoundLiteralNode | null = null;
     if (predicate.left?.kind === BoundExprKind.COLUMN_REF && predicate.right?.kind === BoundExprKind.LITERAL) {
       column = predicate.left; literal = predicate.right;
     } else if (predicate.right?.kind === BoundExprKind.COLUMN_REF && predicate.left?.kind === BoundExprKind.LITERAL) {
@@ -261,7 +302,7 @@ export class DefaultCardinalityEstimator {
       const litStr = String(literal.value);
       const mcvIdx = stats.mcv.values.indexOf(litStr);
       if (mcvIdx >= 0) {
-        return stats.mcv.frequencies[mcvIdx] * (1 - stats.nullFraction);
+        return stats.mcv.frequencies[mcvIdx] * (1 - (stats.nullFraction || 0));
       }
     }
 
@@ -270,7 +311,7 @@ export class DefaultCardinalityEstimator {
     return Math.max(MIN_SELECTIVITY, (1.0 - nullFrac) / ndv);
   }
 
-  estimateRangeSelectivity(predicate: any): number {
+  estimateRangeSelectivity(predicate: BoundBinaryNode): number {
     const column = predicate.left?.kind === BoundExprKind.COLUMN_REF ? predicate.left : predicate.right;
     const literal = predicate.left?.kind === BoundExprKind.LITERAL ? predicate.left : predicate.right;
     if (column?.kind !== BoundExprKind.COLUMN_REF || literal?.kind !== BoundExprKind.LITERAL) {
@@ -302,7 +343,7 @@ export class DefaultCardinalityEstimator {
     return Math.max(MIN_SELECTIVITY, (lessThan ? clamped : 1 - clamped) * (1 - (stats.nullFraction || 0)));
   }
 
-  estimateBetweenSelectivity(predicate: any): number {
+  estimateBetweenSelectivity(predicate: BoundBetweenNode): number {
     const stats = this.getColumnStats(predicate.expr);
     if (!stats) return 0.25;
 
@@ -314,8 +355,8 @@ export class DefaultCardinalityEstimator {
 
     const min = toNumber(stats.min);
     const max = toNumber(stats.max);
-    const low = toNumber(predicate.low?.value);
-    const high = toNumber(predicate.high?.value);
+    const low = toNumber(predicate.low?.kind === BoundExprKind.LITERAL ? predicate.low.value : undefined);
+    const high = toNumber(predicate.high?.kind === BoundExprKind.LITERAL ? predicate.high.value : undefined);
     if (min === null || max === null || low === null || high === null || max <= min) return 0.25;
 
     const covered = Math.max(0, Math.min(max, high) - Math.max(min, low));
@@ -323,7 +364,7 @@ export class DefaultCardinalityEstimator {
     return Math.max(MIN_SELECTIVITY, Math.min(1, predicate.negated ? 1 - sel : sel));
   }
 
-  estimateInListSelectivity(predicate: any): number {
+  estimateInListSelectivity(predicate: BoundInListNode): number {
     if (Array.isArray(predicate.list)) {
       const ndv = this.getColumnNdv(predicate.expr);
       const stats = this.getColumnStats(predicate.expr);
@@ -354,14 +395,14 @@ export class DefaultCardinalityEstimator {
     return predicate.negated ? 0.7 : 0.3;
   }
 
-  estimateIsNullSelectivity(predicate: any): number {
+  estimateIsNullSelectivity(predicate: BoundIsNullNode): number {
     const stats = this.getColumnStats(predicate.expr);
     const nullFrac = stats?.nullFraction ?? 0.05;
     return predicate.negated ? Math.max(MIN_SELECTIVITY, 1 - nullFrac) : Math.max(MIN_SELECTIVITY, nullFrac);
   }
 
-  estimateLikeSelectivity(predicate: any): number {
-    const pattern = predicate.pattern?.value;
+  estimateLikeSelectivity(predicate: BoundLikeNode): number {
+    const pattern = predicate.pattern.kind === BoundExprKind.LITERAL ? predicate.pattern.value : undefined;
     if (typeof pattern !== 'string') return this.likeFallback('unknown');
 
     const ndv = this.getColumnNdv(predicate.expr);
@@ -420,7 +461,7 @@ export class DefaultCardinalityEstimator {
   }
 
 
-  lookupCorrelation(leftPred: any, rightPred: any): number {
+  lookupCorrelation(leftPred: BoundExpr, rightPred: BoundExpr): number {
     const leftCol = this.extractSingleColumn(leftPred);
     const rightCol = this.extractSingleColumn(rightPred);
     if (!leftCol || !rightCol) return DEFAULT_CORRELATION;
@@ -433,7 +474,7 @@ export class DefaultCardinalityEstimator {
     return corr !== null ? Math.abs(corr) : DEFAULT_CORRELATION;
   }
 
-  extractSingleColumn(pred: any): any {
+  extractSingleColumn(pred: BoundExpr): BoundColumnRefNode | null {
     if (pred?.kind === BoundExprKind.COLUMN_REF) return pred;
     if (pred?.kind === BoundExprKind.BINARY && ['=', '<', '>', '<=', '>=', '<>'].includes(pred.op)) {
       if (pred.left?.kind === BoundExprKind.COLUMN_REF) return pred.left;
@@ -445,38 +486,38 @@ export class DefaultCardinalityEstimator {
     return null;
   }
 
-  getColumnNdv(expr: any): number {
+  getColumnNdv(expr: BoundExpr): number {
     if (expr?.kind !== BoundExprKind.COLUMN_REF) return DEFAULT_NDV;
     const colStats = this.getColumnStats(expr);
     return colStats?.ndv || DEFAULT_NDV;
   }
 
-  getColumnStats(expr: any): any {
+  getColumnStats(expr: BoundExpr | null): ColumnStats | null {
     if (!expr) return null;
     if (expr.kind !== BoundExprKind.COLUMN_REF) return null;
 
     const columnName = expr.columnName?.toUpperCase();
     const tableStats = this.stats.get(expr.tableAlias?.toUpperCase());
     if (tableStats?.columnStats?.has(columnName)) {
-      return tableStats.columnStats.get(columnName);
+      return tableStats.columnStats.get(columnName) ?? null;
     }
 
     for (const stats of this.stats.values()) {
       if (stats.columnStats?.has(columnName)) {
-        return stats.columnStats.get(columnName);
+        return stats.columnStats.get(columnName) ?? null;
       }
     }
     return null;
   }
 
 
-  extractEquiPredicates(condition: any): any[] {
-    const result: any[] = [];
+  extractEquiPredicates(condition: BoundExpr | null): EquiPred[] {
+    const result: EquiPred[] = [];
     this._collectEqui(condition, result);
     return result;
   }
 
-  _collectEqui(expr: any, result: any[]): void {
+  _collectEqui(expr: BoundExpr | null, result: EquiPred[]): void {
     if (!expr) return;
     if (expr.kind === BoundExprKind.BINARY && expr.op === 'AND') {
       this._collectEqui(expr.left, result);
@@ -491,16 +532,21 @@ export class DefaultCardinalityEstimator {
   }
 }
 
-function toNumber(value: any): number | null {
+interface BucketRanges {
+  lows: (number | null)[];
+  highs: (number | null)[];
+}
+
+function toNumber(value: number | bigint | string | boolean | null | undefined): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === 'bigint') return Number(value);
   if (typeof value === 'number') return value;
   return null;
 }
 
-function bucketRanges(hist: any, colMin: number): { lows: any[]; highs: any[] } {
-  const lows = new Array(hist.numBuckets);
-  const highs = new Array(hist.numBuckets);
+function bucketRanges(hist: Histogram, colMin: number): BucketRanges {
+  const lows: (number | null)[] = new Array(hist.numBuckets);
+  const highs: (number | null)[] = new Array(hist.numBuckets);
   for (let i = 0; i < hist.numBuckets; i++) {
     lows[i] = i === 0 ? colMin : toNumber(hist.boundaries[i - 1]);
     highs[i] = toNumber(hist.boundaries[i]);
@@ -508,31 +554,31 @@ function bucketRanges(hist: any, colMin: number): { lows: any[]; highs: any[] } 
   return { lows, highs };
 }
 
-function findBucket(ranges: any, value: number): number {
+function findBucket(ranges: BucketRanges, value: number): number {
   const { highs } = ranges;
   let lo = 0, hi = highs.length - 1, ans = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >>> 1;
-    if (highs[mid] >= value) { ans = mid; hi = mid - 1; } else lo = mid + 1;
+    if (highs[mid]! >= value) { ans = mid; hi = mid - 1; } else lo = mid + 1;
   }
-  return ans >= 0 && value >= ranges.lows[ans] ? ans : -1;
+  return ans >= 0 && value >= ranges.lows[ans]! ? ans : -1;
 }
 
-function segFraction(ranges: any, idx: number, segWidth: number): number {
-  const bw = ranges.highs[idx] - ranges.lows[idx];
+function segFraction(ranges: BucketRanges, idx: number, segWidth: number): number {
+  const bw = ranges.highs[idx]! - ranges.lows[idx]!;
   return bw > 0 ? Math.min(1, segWidth / bw) : 1;
 }
 
-function histogramJoinCollision(hA: any, minA: number, hB: any, minB: number): number {
+function histogramJoinCollision(hA: Histogram, minA: number, hB: Histogram, minB: number): number {
   const A = bucketRanges(hA, minA);
   const B = bucketRanges(hB, minB);
-  const lo = Math.max(A.lows[0], B.lows[0]);
-  const hi = Math.min(A.highs[hA.numBuckets - 1], B.highs[hB.numBuckets - 1]);
+  const lo = Math.max(A.lows[0]!, B.lows[0]!);
+  const hi = Math.min(A.highs[hA.numBuckets - 1]!, B.highs[hB.numBuckets - 1]!);
   if (hi <= lo) return 0;
 
-  const points = new Set([lo, hi]);
-  for (let i = 0; i < hA.numBuckets; i++) if (A.highs[i] > lo && A.highs[i] < hi) points.add(A.highs[i]);
-  for (let i = 0; i < hB.numBuckets; i++) if (B.highs[i] > lo && B.highs[i] < hi) points.add(B.highs[i]);
+  const points = new Set<number>([lo, hi]);
+  for (let i = 0; i < hA.numBuckets; i++) if (A.highs[i]! > lo && A.highs[i]! < hi) points.add(A.highs[i]!);
+  for (let i = 0; i < hB.numBuckets; i++) if (B.highs[i]! > lo && B.highs[i]! < hi) points.add(B.highs[i]!);
   const pts = [...points].sort((x, y) => x - y);
 
   const totA = hA.totalCount, totB = hB.totalCount;

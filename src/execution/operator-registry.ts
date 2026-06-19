@@ -1,16 +1,19 @@
+export type OperatorArg = string | number | boolean | object | null;
+export type OperatorFactory = (...args: OperatorArg[]) => object;
+
 export class OperatorRegistry {
-  factories: Map<any, (...args: any[]) => any>;
+  factories: Map<string, OperatorFactory>;
 
   constructor() {
     this.factories = new Map();
   }
 
-  register(logicalType: any, factory: (...args: any[]) => any): this {
+  register(logicalType: string, factory: OperatorFactory): this {
     this.factories.set(logicalType, factory);
     return this;
   }
 
-  create(logicalType: any, ...args: any[]): any {
+  create(logicalType: string, ...args: OperatorArg[]): object {
     const factory = this.factories.get(logicalType);
     if (!factory) {
       throw new Error(`No operator registered for logical type: ${logicalType}`);
@@ -18,7 +21,7 @@ export class OperatorRegistry {
     return factory(...args);
   }
 
-  has(logicalType: any): boolean {
+  has(logicalType: string): boolean {
     return this.factories.has(logicalType);
   }
 }

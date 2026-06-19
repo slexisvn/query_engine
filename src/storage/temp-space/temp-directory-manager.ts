@@ -3,10 +3,10 @@ import os from 'os';
 import path from 'path';
 
 const DIR_PREFIX = 'query_engine';
-const activeManagers = new Set();
+const activeManagers = new Set<TempDirectoryManager>();
 let hooksRegistered = false;
 
-function registerProcessHooks() {
+function registerProcessHooks(): void {
   if (hooksRegistered) return;
   hooksRegistered = true;
 
@@ -26,7 +26,7 @@ function registerProcessHooks() {
   }
 }
 
-function isProcessAlive(pid) {
+function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -35,8 +35,8 @@ function isProcessAlive(pid) {
   }
 }
 
-function reapStaleDirectories(baseDir) {
-  let entries;
+function reapStaleDirectories(baseDir: string): void {
+  let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(baseDir, { withFileTypes: true });
   } catch {
@@ -59,8 +59,18 @@ function reapStaleDirectories(baseDir) {
   }
 }
 
+export interface TempDirectoryOptions {
+  baseDir?: string;
+}
+
 export class TempDirectoryManager {
-  constructor(options = {}) {
+  baseDir: string;
+  rootName: string;
+  rootDir: string;
+  counters: Map<string, number>;
+  initialized: boolean;
+
+  constructor(options: TempDirectoryOptions = {}) {
     this.baseDir = options.baseDir || os.tmpdir();
     const randomPart = Math.random().toString(36).substring(2, 10);
     this.rootName = `${DIR_PREFIX}_${process.pid}_${randomPart}`;
@@ -73,7 +83,7 @@ export class TempDirectoryManager {
     reapStaleDirectories(this.baseDir);
   }
 
-  allocate(category, label) {
+  allocate(category: string, label: string): string {
     if (!this.initialized) {
       fs.mkdirSync(this.rootDir, { recursive: true });
       this.initialized = true;
@@ -88,11 +98,11 @@ export class TempDirectoryManager {
     return dirPath;
   }
 
-  getRootDir() {
+  getRootDir(): string {
     return this.rootDir;
   }
 
-  cleanup() {
+  cleanup(): void {
     activeManagers.delete(this);
     if (this.initialized && fs.existsSync(this.rootDir)) {
       fs.rmSync(this.rootDir, { recursive: true, force: true });

@@ -1,24 +1,34 @@
 import { DataChunk } from '../../storage/chunk.js';
 import { Column } from '../../storage/column.js';
+import type { DataType, ColumnValue } from '../../storage/data-type.js';
+import type { BoundExpr, BoundWindowNode, BoundLiteralNode } from '../../binder/expression-binder.js';
+import type { CompiledExpr, ColumnMapping, ExecSchema, ExecColumn, EvalValue } from '../execution-types.js';
+
+type CompileExpressionFn = (expr: BoundExpr, mapping: ColumnMapping) => CompiledExpr;
+
+interface OrderKey {
+  eval: CompiledExpr;
+  direction: string;
+}
 
 export class WindowOperator {
-  windowExprs: any;
-  childSchema: any;
-  childColumnMapping: any;
-  compileExpression: any;
+  windowExprs: BoundWindowNode[];
+  childSchema: ExecSchema;
+  childColumnMapping: ColumnMapping;
+  compileExpression: CompileExpressionFn;
 
-  constructor(windowExprs: any, childSchema: any, childColumnMapping: any, compileExpressionFn: any) {
+  constructor(windowExprs: BoundWindowNode[], childSchema: ExecSchema, childColumnMapping: ColumnMapping, compileExpressionFn: CompileExpressionFn) {
     this.windowExprs = windowExprs;
     this.childSchema = childSchema;
     this.childColumnMapping = childColumnMapping;
     this.compileExpression = compileExpressionFn;
   }
 
-  async execute(chunks: any): Promise<any> {
-    const allRows: any[] = [];
+  async execute(chunks: DataChunk[]): Promise<DataChunk[]> {
+    const allRows: ColumnValue[][] = [];
     for (const chunk of chunks) {
       for (let r = 0; r < chunk.size; r++) {
-        const row = [];
+        const row: ColumnValue[] = [];
         for (let c = 0; c < chunk.columns.length; c++) {
           row.push(chunk.columns[c].get(chunk.activeRowIndex ? chunk.activeRowIndex(r) : r));
         }
@@ -28,15 +38,14 @@ export class WindowOperator {
 
     if (allRows.length === 0) return [];
 
-    const windowResults: any[] = [];
+    const windowResults: EvalValue[][] = [];
     for (const wExpr of this.windowExprs) {
       windowResults.push(this.computeWindow(wExpr, allRows, chunks));
     }
 
-    const colCount = this.childSchema.length + this.windowExprs.length;
-    const resultCol: any[] = [];
+    const resultCol: Column[] = [];
     for (let c = 0; c < this.childSchema.length; c++) {
-      const col = new Column(this.childSchema[c].dataType, allRows.length);
+      const col = new Column((this.childSchema[c] as ExecColumn).dataType, allRows.length);
       for (let r = 0; r < allRows.length; r++) {
         col.set(r, allRows[r][c]);
       }
@@ -46,9 +55,9 @@ export class WindowOperator {
 
     for (let w = 0; w < windowResults.length; w++) {
       const dt = this.windowExprs[w].resultType || 'INT64';
-      const col = new Column(dt === 'INT64' ? 'FLOAT64' : dt, allRows.length);
+      const col = new Column((dt === 'INT64' ? 'FLOAT64' : dt) as DataType, allRows.length);
       for (let r = 0; r < allRows.length; r++) {
-        col.set(r, windowResults[w][r]);
+        col.set(r, windowResults[w][r] as ColumnValue);
       }
       col.length = allRows.length;
       resultCol.push(col);
@@ -57,15 +66,14 @@ export class WindowOperator {
     return [new DataChunk(resultCol, allRows.length)];
   }
 
-  computeWindow(wExpr: any, allRows: any, chunks: any): any {
-    const partitionBy = wExpr.partitionBy.map((e: any) => this.compileExpression(e, this.childColumnMapping));
-    const orderKeys = wExpr.orderBy.map((ok: any) => ({
+  computeWindow(wExpr: BoundWindowNode, allRows: ColumnValue[][], chunks: DataChunk[]): EvalValue[] {
+    const partitionBy = wExpr.partitionBy.map((e) => this.compileExpression(e, this.childColumnMapping));
+    const orderKeys: OrderKey[] = wExpr.orderBy.map((ok) => ({
       eval: this.compileExpression(ok.expr, this.childColumnMapping),
       direction: ok.direction || 'ASC',
     }));
 
-    const tempChunk = chunks.length > 0 ? chunks[0] : null;
-    const getVal = (rowIdx: any, evalFn: any) => {
+    const getVal = (rowIdx: number, evalFn: CompiledExpr): EvalValue => {
       let offset = 0;
       for (const chunk of chunks) {
         if (rowIdx < offset + chunk.size) {
@@ -80,7 +88,7 @@ export class WindowOperator {
 
     if (orderKeys.length > 0) {
       for (const partition of partitions) {
-        partition.sort((a: any, b: any) => {
+        partition.sort((a, b) => {
           for (const key of orderKeys) {
             const va = getVal(a, key.eval);
             const vb = getVal(b, key.eval);
@@ -97,7 +105,7 @@ export class WindowOperator {
       }
     }
 
-    const result = new Array(allRows.length);
+    const result: EvalValue[] = new Array(allRows.length);
     const name = wExpr.name.toUpperCase();
 
     for (const partition of partitions) {
@@ -134,8 +142,8 @@ export class WindowOperator {
           const valueEval = wExpr.args.length > 0
             ? this.compileExpression(wExpr.args[0], this.childColumnMapping)
             : null;
-          const lagOffset = wExpr.args.length > 1 ? wExpr.args[1].value : 1;
-          const defaultVal = wExpr.args.length > 2 ? wExpr.args[2].value : null;
+          const lagOffset = wExpr.args.length > 1 ? (wExpr.args[1] as BoundLiteralNode).value as number : 1;
+          const defaultVal = wExpr.args.length > 2 ? (wExpr.args[2] as BoundLiteralNode).value : null;
 
           for (let i = 0; i < partition.length; i++) {
             const srcIdx = i - lagOffset;
@@ -152,8 +160,8 @@ export class WindowOperator {
           const valueEval = wExpr.args.length > 0
             ? this.compileExpression(wExpr.args[0], this.childColumnMapping)
             : null;
-          const leadOffset = wExpr.args.length > 1 ? wExpr.args[1].value : 1;
-          const defaultVal = wExpr.args.length > 2 ? wExpr.args[2].value : null;
+          const leadOffset = wExpr.args.length > 1 ? (wExpr.args[1] as BoundLiteralNode).value as number : 1;
+          const defaultVal = wExpr.args.length > 2 ? (wExpr.args[2] as BoundLiteralNode).value : null;
 
           for (let i = 0; i < partition.length; i++) {
             const srcIdx = i + leadOffset;
@@ -173,7 +181,7 @@ export class WindowOperator {
             let count = 0;
             for (let i = 0; i < partition.length; i++) {
               const v = getVal(partition[i], valueEval);
-              if (v !== null && v !== undefined) { total += typeof v === 'bigint' ? Number(v) : v; count++; }
+              if (v !== null && v !== undefined) { total += typeof v === 'bigint' ? Number(v) : v as number; count++; }
             }
             const sum = count === 0 ? null : total;
             for (let i = 0; i < partition.length; i++) result[partition[i]] = sum;
@@ -182,7 +190,7 @@ export class WindowOperator {
             let count = 0;
             for (let i = 0; i < partition.length; i++) {
               const v = getVal(partition[i], valueEval);
-              if (v !== null && v !== undefined) { total += typeof v === 'bigint' ? Number(v) : v; count++; }
+              if (v !== null && v !== undefined) { total += typeof v === 'bigint' ? Number(v) : v as number; count++; }
               result[partition[i]] = count === 0 ? null : total;
             }
           }
@@ -196,7 +204,7 @@ export class WindowOperator {
             let count = 0;
             for (let i = 0; i < partition.length; i++) {
               const v = getVal(partition[i], valueEval);
-              if (v !== null && v !== undefined) { total += typeof v === 'bigint' ? Number(v) : v; count++; }
+              if (v !== null && v !== undefined) { total += typeof v === 'bigint' ? Number(v) : v as number; count++; }
             }
             const avg = count === 0 ? null : total / count;
             for (let i = 0; i < partition.length; i++) result[partition[i]] = avg;
@@ -205,7 +213,7 @@ export class WindowOperator {
             let count = 0;
             for (let i = 0; i < partition.length; i++) {
               const v = getVal(partition[i], valueEval);
-              if (v !== null && v !== undefined) { total += typeof v === 'bigint' ? Number(v) : v; count++; }
+              if (v !== null && v !== undefined) { total += typeof v === 'bigint' ? Number(v) : v as number; count++; }
               result[partition[i]] = count === 0 ? null : total / count;
             }
           }
@@ -245,17 +253,17 @@ export class WindowOperator {
         case 'MIN': {
           const valueEval = this.compileExpression(wExpr.args[0], this.childColumnMapping);
           if (orderKeys.length === 0) {
-            let min = null;
+            let min: EvalValue = null;
             for (let i = 0; i < partition.length; i++) {
               const v = getVal(partition[i], valueEval);
-              if (v !== null && (min === null || v < min)) min = v;
+              if (v !== null && (min === null || (v as number) < (min as number))) min = v;
             }
             for (let i = 0; i < partition.length; i++) result[partition[i]] = min;
           } else {
-            let min = null;
+            let min: EvalValue = null;
             for (let i = 0; i < partition.length; i++) {
               const v = getVal(partition[i], valueEval);
-              if (v !== null && (min === null || v < min)) min = v;
+              if (v !== null && (min === null || (v as number) < (min as number))) min = v;
               result[partition[i]] = min;
             }
           }
@@ -265,17 +273,17 @@ export class WindowOperator {
         case 'MAX': {
           const valueEval = this.compileExpression(wExpr.args[0], this.childColumnMapping);
           if (orderKeys.length === 0) {
-            let max = null;
+            let max: EvalValue = null;
             for (let i = 0; i < partition.length; i++) {
               const v = getVal(partition[i], valueEval);
-              if (v !== null && (max === null || v > max)) max = v;
+              if (v !== null && (max === null || (v as number) > (max as number))) max = v;
             }
             for (let i = 0; i < partition.length; i++) result[partition[i]] = max;
           } else {
-            let max = null;
+            let max: EvalValue = null;
             for (let i = 0; i < partition.length; i++) {
               const v = getVal(partition[i], valueEval);
-              if (v !== null && (max === null || v > max)) max = v;
+              if (v !== null && (max === null || (v as number) > (max as number))) max = v;
               result[partition[i]] = max;
             }
           }
@@ -292,12 +300,12 @@ export class WindowOperator {
     return result;
   }
 
-  partitionRows(allRows: any, partitionEvals: any, chunks: any): any {
+  partitionRows(allRows: ColumnValue[][], partitionEvals: CompiledExpr[], chunks: DataChunk[]): number[][] {
     if (partitionEvals.length === 0) {
-      return [allRows.map((_: any, i: number) => i)];
+      return [allRows.map((_, i) => i)];
     }
 
-    const getVal = (rowIdx: any, evalFn: any) => {
+    const getVal = (rowIdx: number, evalFn: CompiledExpr): EvalValue => {
       let offset = 0;
       for (const chunk of chunks) {
         if (rowIdx < offset + chunk.size) {
@@ -308,20 +316,20 @@ export class WindowOperator {
       return null;
     };
 
-    const groups = new Map<any, any>();
+    const groups = new Map<string, number[]>();
     for (let i = 0; i < allRows.length; i++) {
-      const key = partitionEvals.map((e: any) => {
+      const key = partitionEvals.map((e) => {
         const v = getVal(i, e);
         return typeof v === 'bigint' ? Number(v) : v;
       }).join('|');
       if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(i);
+      groups.get(key)!.push(i);
     }
     return [...groups.values()];
   }
 
-  sameOrderKey(idxA: any, idxB: any, orderKeys: any, chunks: any): boolean {
-    const getVal = (rowIdx: any, evalFn: any) => {
+  sameOrderKey(idxA: number, idxB: number, orderKeys: OrderKey[], chunks: DataChunk[]): boolean {
+    const getVal = (rowIdx: number, evalFn: CompiledExpr): EvalValue => {
       let offset = 0;
       for (const chunk of chunks) {
         if (rowIdx < offset + chunk.size) {
@@ -340,14 +348,14 @@ export class WindowOperator {
     return true;
   }
 
-  compareValues(a: any, b: any): number {
+  compareValues(a: EvalValue, b: EvalValue): number {
     const na = typeof a === 'bigint' ? Number(a) : a;
     const nb = typeof b === 'bigint' ? Number(b) : b;
     if (na === null && nb === null) return 0;
     if (na === null) return 1;
     if (nb === null) return -1;
-    if (na < nb) return -1;
-    if (na > nb) return 1;
+    if ((na as number) < (nb as number)) return -1;
+    if ((na as number) > (nb as number)) return 1;
     return 0;
   }
 }

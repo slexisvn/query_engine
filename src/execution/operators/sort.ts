@@ -2,18 +2,43 @@ import { Column } from '../../storage/column.js';
 import { DataChunk } from '../../storage/chunk.js';
 import { PriorityQueue } from '../../utils/priority-queue.js';
 import { Config } from '../../config.js';
+import type { ColumnValue, DataType } from '../../storage/data-type.js';
+import type { CompiledExpr } from '../execution-types.js';
+
+interface SortKey {
+  eval: CompiledExpr;
+  direction: string;
+}
+
+interface SortRow {
+  row: ColumnValue[];
+  sortKeys: ColumnValue[];
+}
+
+interface MergeState {
+  iter: AsyncGenerator<DataChunk>;
+  chunk: DataChunk;
+  index: number;
+  chunkItems: SortRow[];
+}
+
+interface SpillManagerLike {
+  appendChunk(id: string, chunk: DataChunk | null): Promise<void>;
+  readChunks(id: string): AsyncGenerator<DataChunk>;
+  clearAll(): Promise<void>;
+}
 
 export class SortOperator {
-  keyExtractors: any;
-  limit: any;
+  keyExtractors: SortKey[];
+  limit: number | null;
   offset: number;
-  topN: any;
-  rows: any[];
-  schema: any;
-  spillManager: any;
+  topN: number | null;
+  rows: SortRow[];
+  schema: DataType[] | null;
+  spillManager: SpillManagerLike;
   runCount: number;
 
-  constructor(keyExtractors: any, limit: any, offset: any, spillManager: any) {
+  constructor(keyExtractors: SortKey[], limit: number | null, offset: number, spillManager: SpillManagerLike) {
     this.keyExtractors = keyExtractors;
     this.limit = limit ?? null;
     this.offset = offset || 0;
@@ -27,21 +52,21 @@ export class SortOperator {
 
   async init(): Promise<void> {}
 
-  async consume(chunk: any): Promise<void> {
+  async consume(chunk: DataChunk): Promise<void> {
     if (!this.schema) {
-      this.schema = chunk.columns.map((c: any) => c.dataType);
+      this.schema = chunk.columns.map((c) => c.dataType);
     }
 
-    const chunkRows = new Array(chunk.size);
+    const chunkRows: SortRow[] = new Array(chunk.size);
     for (let i = 0; i < chunk.size; i++) {
       const rowIdx = chunk.activeRowIndex(i);
-      const row = new Array(chunk.columns.length);
+      const row: ColumnValue[] = new Array(chunk.columns.length);
       for (let c = 0; c < chunk.columns.length; c++) {
         row[c] = chunk.columns[c].get(rowIdx);
       }
-      const sortKeys = new Array(this.keyExtractors.length);
+      const sortKeys: ColumnValue[] = new Array(this.keyExtractors.length);
       for (let k = 0; k < this.keyExtractors.length; k++) {
-        sortKeys[k] = this.keyExtractors[k].eval(chunk, rowIdx);
+        sortKeys[k] = this.keyExtractors[k].eval(chunk, rowIdx) as ColumnValue;
       }
       chunkRows[i] = { row, sortKeys };
     }
@@ -49,7 +74,7 @@ export class SortOperator {
     this.rows.push(...chunkRows);
 
     if (this.topN && this.runCount === 0 && this.rows.length > this.topN * 4) {
-      this.rows.sort((a: any, b: any) => this.compareRows(a, b));
+      this.rows.sort((a, b) => this.compareRows(a, b));
       this.rows.length = this.topN;
     }
 
@@ -60,7 +85,7 @@ export class SortOperator {
 
   async spillCurrentRun(): Promise<void> {
     if (this.rows.length === 0) return;
-    this.rows.sort((a: any, b: any) => this.compareRows(a, b));
+    this.rows.sort((a, b) => this.compareRows(a, b));
 
     if (this.topN) {
       this.rows.length = Math.min(this.rows.length, this.topN);
@@ -72,9 +97,9 @@ export class SortOperator {
     this.rows = [];
   }
 
-  async finalize(): Promise<any> {
+  async finalize(): Promise<DataChunk[]> {
     if (this.runCount === 0) {
-      this.rows.sort((a: any, b: any) => this.compareRows(a, b));
+      this.rows.sort((a, b) => this.compareRows(a, b));
       if (this.topN) {
         this.rows.length = Math.min(this.rows.length, this.topN);
       }
@@ -91,13 +116,13 @@ export class SortOperator {
       await this.spillCurrentRun();
     }
 
-    const iterators: any[] = [];
+    const iterators: AsyncGenerator<DataChunk>[] = [];
     for (let i = 0; i < this.runCount; i++) {
       iterators.push(this.spillManager.readChunks(`run_${i}`));
     }
 
-    const pq = new PriorityQueue((a: any, b: any) => this.compareRows(a.item, b.item));
-    const states = new Array(this.runCount);
+    const pq = new PriorityQueue((a: { item: SortRow }, b: { item: SortRow }) => this.compareRows(a.item, b.item));
+    const states: MergeState[] = new Array(this.runCount);
 
     for (let i = 0; i < this.runCount; i++) {
       const iter = iterators[i];
@@ -114,15 +139,15 @@ export class SortOperator {
       }
     }
 
-    const resultChunks: any[] = [];
-    let outRows: any[] = [];
+    const resultChunks: DataChunk[] = [];
+    let outRows: SortRow[] = [];
     let count = 0;
     let skipped = 0;
 
     while (!pq.isEmpty()) {
       if (this.topN && count >= this.topN) break;
 
-      const { item, runIndex } = pq.pop();
+      const { item, runIndex } = pq.pop() as { item: SortRow; runIndex: number };
       count++;
 
       if (skipped < this.offset) {
@@ -160,29 +185,29 @@ export class SortOperator {
     return resultChunks;
   }
 
-  chunkToItems(chunk: any): any {
-    const items = new Array(chunk.size);
+  chunkToItems(chunk: DataChunk): SortRow[] {
+    const items: SortRow[] = new Array(chunk.size);
     for (let i = 0; i < chunk.size; i++) {
       const rowIdx = chunk.activeRowIndex(i);
-      const row = new Array(chunk.columns.length);
+      const row: ColumnValue[] = new Array(chunk.columns.length);
       for (let c = 0; c < chunk.columns.length; c++) {
         row[c] = chunk.columns[c].get(rowIdx);
       }
-      const sortKeys = new Array(this.keyExtractors.length);
+      const sortKeys: ColumnValue[] = new Array(this.keyExtractors.length);
       for (let k = 0; k < this.keyExtractors.length; k++) {
-        sortKeys[k] = this.keyExtractors[k].eval(chunk, rowIdx);
+        sortKeys[k] = this.keyExtractors[k].eval(chunk, rowIdx) as ColumnValue;
       }
       items[i] = { row, sortKeys };
     }
     return items;
   }
 
-  rowsToChunk(items: any): any {
+  rowsToChunk(items: SortRow[]): DataChunk {
     if (items.length === 0) return new DataChunk([], 0);
     const colCount = items[0].row.length;
-    const columns = new Array(colCount);
+    const columns: Column[] = new Array(colCount);
     for (let c = 0; c < colCount; c++) {
-      const col = new Column(this.schema?.[c] || 'VARCHAR', items.length);
+      const col = new Column((this.schema?.[c] || 'VARCHAR') as DataType, items.length);
       for (let r = 0; r < items.length; r++) {
         col.set(r, items[r].row[c]);
       }
@@ -192,7 +217,7 @@ export class SortOperator {
     return new DataChunk(columns, items.length);
   }
 
-  compareRows(a: any, b: any): number {
+  compareRows(a: SortRow, b: SortRow): number {
     for (let i = 0; i < this.keyExtractors.length; i++) {
       let v1 = a.sortKeys[i];
       let v2 = b.sortKeys[i];
@@ -203,23 +228,23 @@ export class SortOperator {
       if (v1 !== null && v2 === null) return -1;
       if (v1 === null && v2 === null) continue;
 
-      if (v1 < v2) return this.keyExtractors[i].direction === 'ASC' ? -1 : 1;
-      if (v1 > v2) return this.keyExtractors[i].direction === 'ASC' ? 1 : -1;
+      if ((v1 as number) < (v2 as number)) return this.keyExtractors[i].direction === 'ASC' ? -1 : 1;
+      if ((v1 as number) > (v2 as number)) return this.keyExtractors[i].direction === 'ASC' ? 1 : -1;
     }
     return 0;
   }
 }
 
 export class LimitOperator {
-  limit: any;
+  limit: number;
   offset: number;
   seen: number;
   emitted: number;
-  chunks: any[];
-  schema: any;
+  chunks: DataChunk[];
+  schema: DataType[] | null;
   done: boolean;
 
-  constructor(limit: any, offset: any = 0) {
+  constructor(limit: number, offset: number = 0) {
     this.limit = limit;
     this.offset = offset;
     this.seen = 0;
@@ -231,10 +256,10 @@ export class LimitOperator {
 
   async init(): Promise<void> {}
 
-  async consume(chunk: any): Promise<void> {
+  async consume(chunk: DataChunk): Promise<void> {
     if (this.done) return;
     if (!this.schema) {
-      this.schema = chunk.columns.map((c: any) => c.dataType);
+      this.schema = chunk.columns.map((c) => c.dataType);
     }
 
     const chunkStart = this.seen;
@@ -268,9 +293,9 @@ export class LimitOperator {
     }
   }
 
-  async finalize(): Promise<any> {
+  async finalize(): Promise<DataChunk[]> {
     if (this.chunks.length === 0) return [];
 
-    return this.chunks.map((c: any) => c.selectionVector ? c.flatten() : c);
+    return this.chunks.map((c) => c.selectionVector ? c.flatten() : c);
   }
 }

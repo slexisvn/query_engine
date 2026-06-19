@@ -1,24 +1,45 @@
 import { DataChunk } from '../../storage/chunk.js';
 import { Column } from '../../storage/column.js';
 import { JoinType } from '../../planner/logical-plan.js';
-import { DataType } from '../../storage/data-type.js';
+import { DataType, type ColumnValue } from '../../storage/data-type.js';
+import type { CompiledExpr, EvalValue } from '../execution-types.js';
 
-function isNullKey(key: any): boolean {
+type JoinKey = EvalValue | EvalValue[];
+
+interface JoinRow {
+  chunk: DataChunk;
+  idx: number;
+  key: JoinKey;
+}
+
+interface RowAdapterColumn {
+  get(): ColumnValue;
+}
+
+interface RowAdapter {
+  row: ColumnValue[] | null;
+  columns: RowAdapterColumn[];
+  setRow(r: ColumnValue[]): void;
+}
+
+type RowEvaluator = (adapter: RowAdapter, rowIdx: number) => EvalValue;
+
+function isNullKey(key: JoinKey): boolean {
   if (key === null || key === undefined) return true;
-  return Array.isArray(key) && key.some((k: any) => k === null || k === undefined);
+  return Array.isArray(key) && key.some((k) => k === null || k === undefined);
 }
 
 export class MergeJoinOperator {
-  buildChunks: any;
-  probeChunks: any;
-  buildKeyExtractors: any;
-  probeKeyExtractors: any;
+  buildChunks: DataChunk[];
+  probeChunks: DataChunk[];
+  buildKeyExtractors: CompiledExpr[];
+  probeKeyExtractors: CompiledExpr[];
   buildColCount: number;
   probeColCount: number;
-  joinType: any;
-  conditionEvaluator: any;
+  joinType: JoinType;
+  conditionEvaluator: CompiledExpr | null;
 
-  constructor(buildChunks: any, probeChunks: any, buildKeyExtractors: any, probeKeyExtractors: any, buildColCount: number, probeColCount: number, joinType: any = JoinType.INNER, conditionEvaluator: any = null) {
+  constructor(buildChunks: DataChunk[], probeChunks: DataChunk[], buildKeyExtractors: CompiledExpr[], probeKeyExtractors: CompiledExpr[], buildColCount: number, probeColCount: number, joinType: JoinType = JoinType.INNER, conditionEvaluator: CompiledExpr | null = null) {
     this.buildChunks = buildChunks;
     this.probeChunks = probeChunks;
     this.buildKeyExtractors = buildKeyExtractors;
@@ -29,24 +50,25 @@ export class MergeJoinOperator {
     this.conditionEvaluator = conditionEvaluator;
   }
 
-  async execute(): Promise<any> {
+  async execute(): Promise<DataChunk[]> {
     const isSemiAnti = this.joinType === JoinType.SEMI || this.joinType === JoinType.ANTI;
     const isMark = this.joinType === JoinType.MARK;
 
     const buildAll = this._flattenAndExtractKeys(this.buildChunks, this.buildKeyExtractors);
     const probeAll = this._flattenAndExtractKeys(this.probeChunks, this.probeKeyExtractors);
 
-    const buildRows = buildAll.filter((r: any) => !isNullKey(r.key));
-    const probeRows = probeAll.filter((r: any) => !isNullKey(r.key));
-    const buildNull = buildAll.filter((r: any) => isNullKey(r.key));
-    const probeNull = probeAll.filter((r: any) => isNullKey(r.key));
+    const buildRows = buildAll.filter((r) => !isNullKey(r.key));
+    const probeRows = probeAll.filter((r) => !isNullKey(r.key));
+    const buildNull = buildAll.filter((r) => isNullKey(r.key));
+    const probeNull = probeAll.filter((r) => isNullKey(r.key));
     const markUnmatched = buildNull.length > 0 ? null : false;
 
-    buildRows.sort((a: any, b: any) => this._compareKeys(a.key, b.key));
-    probeRows.sort((a: any, b: any) => this._compareKeys(a.key, b.key));
+    buildRows.sort((a, b) => this._compareKeys(a.key, b.key));
+    probeRows.sort((a, b) => this._compareKeys(a.key, b.key));
 
-    const outputRows: any[] = [];
+    const outputRows: ColumnValue[][] = [];
     const adapter = this.conditionEvaluator ? this.createAdapter() : null;
+    const evalCondition = this.conditionEvaluator as RowEvaluator | null;
 
     let b = 0;
     let p = 0;
@@ -88,7 +110,7 @@ export class MergeJoinOperator {
               if (adapter) {
                 const row = this._combineRow(buildRows[i], probeRows[j]);
                 adapter.setRow(row);
-                if (!this.conditionEvaluator(adapter, 0)) continue;
+                if (!evalCondition!(adapter, 0)) continue;
               }
               matched = true;
               break;
@@ -108,7 +130,7 @@ export class MergeJoinOperator {
               const row = this._combineRow(buildRows[i], probeRows[j]);
               if (adapter) {
                 adapter.setRow(row);
-                if (!this.conditionEvaluator(adapter, 0)) continue;
+                if (!evalCondition!(adapter, 0)) continue;
               }
               outputRows.push(row);
               matchedAny = true;
@@ -159,42 +181,45 @@ export class MergeJoinOperator {
 
     if (outputRows.length === 0) return [];
 
-    return [this._buildOutputChunk(outputRows)];
+    const chunk = this._buildOutputChunk(outputRows);
+    return chunk ? [chunk] : [];
   }
 
-  _flattenAndExtractKeys(chunks: any, extractors: any): any[] {
-    const rows: any[] = [];
+  _flattenAndExtractKeys(chunks: DataChunk[], extractors: CompiledExpr[]): JoinRow[] {
+    const rows: JoinRow[] = [];
     for (const chunk of chunks) {
       for (let i = 0; i < chunk.size; i++) {
         const idx = chunk.activeRowIndex(i);
-        const key = extractors.length === 1
+        const key: JoinKey = extractors.length === 1
           ? extractors[0](chunk, idx)
-          : extractors.map((fn: any) => fn(chunk, idx));
+          : extractors.map((fn) => fn(chunk, idx));
         rows.push({ chunk, idx, key });
       }
     }
     return rows;
   }
 
-  _compareKeys(k1: any, k2: any): number {
+  _compareKeys(k1: JoinKey, k2: JoinKey): number {
     if (Array.isArray(k1)) {
-      for (let i = 0; i < k1.length; i++) {
-        const c1 = typeof k1[i] === 'bigint' ? Number(k1[i]) : k1[i];
-        const c2 = typeof k2[i] === 'bigint' ? Number(k2[i]) : k2[i];
-        if (c1 < c2) return -1;
-        if (c1 > c2) return 1;
+      const a1 = k1;
+      const a2 = k2 as EvalValue[];
+      for (let i = 0; i < a1.length; i++) {
+        const c1 = typeof a1[i] === 'bigint' ? Number(a1[i]) : a1[i];
+        const c2 = typeof a2[i] === 'bigint' ? Number(a2[i]) : a2[i];
+        if ((c1 as number) < (c2 as number)) return -1;
+        if ((c1 as number) > (c2 as number)) return 1;
       }
       return 0;
     }
     const c1 = typeof k1 === 'bigint' ? Number(k1) : k1;
     const c2 = typeof k2 === 'bigint' ? Number(k2) : k2;
-    if (c1 < c2) return -1;
-    if (c1 > c2) return 1;
+    if ((c1 as number) < (c2 as number)) return -1;
+    if ((c1 as number) > (c2 as number)) return 1;
     return 0;
   }
 
-  _combineRow(bRow: any, pRow: any): any {
-    const row = [];
+  _combineRow(bRow: JoinRow, pRow: JoinRow): ColumnValue[] {
+    const row: ColumnValue[] = [];
     for (let c = 0; c < bRow.chunk.columns.length; c++) {
       row.push(bRow.chunk.columns[c].get(bRow.idx));
     }
@@ -204,16 +229,16 @@ export class MergeJoinOperator {
     return row;
   }
 
-  _extractProbeRow(rowObj: any): any {
-    const row = [];
+  _extractProbeRow(rowObj: JoinRow): ColumnValue[] {
+    const row: ColumnValue[] = [];
     for (let c = 0; c < rowObj.chunk.columns.length; c++) {
       row.push(rowObj.chunk.columns[c].get(rowObj.idx));
     }
     return row;
   }
 
-  _combineRowWithNulls(rowObj: any, isBuild: boolean): any {
-    const row = [];
+  _combineRowWithNulls(rowObj: JoinRow, isBuild: boolean): ColumnValue[] {
+    const row: ColumnValue[] = [];
     if (isBuild) {
       for (let c = 0; c < rowObj.chunk.columns.length; c++) {
         row.push(rowObj.chunk.columns[c].get(rowObj.idx));
@@ -228,14 +253,14 @@ export class MergeJoinOperator {
     return row;
   }
 
-  _buildOutputChunk(outputRows: any): any {
+  _buildOutputChunk(outputRows: ColumnValue[][]): DataChunk | null {
     if (outputRows.length === 0) return null;
     const isSemiAnti = this.joinType === JoinType.SEMI || this.joinType === JoinType.ANTI;
     const isMark = this.joinType === JoinType.MARK;
     const colCount = isSemiAnti ? this.probeColCount
       : isMark ? this.probeColCount + 1
       : this.buildColCount + this.probeColCount;
-    const columns = [];
+    const columns: Column[] = [];
 
     for (let c = 0; c < colCount; c++) {
       let dt = DataType.VARCHAR;
@@ -262,16 +287,16 @@ export class MergeJoinOperator {
     return new DataChunk(columns, outputRows.length);
   }
 
-  createAdapter(): any {
+  createAdapter(): RowAdapter {
     const totalCols = this.buildColCount + this.probeColCount;
-    const columns = new Array(totalCols);
-    const adapter: any = {
+    const columns: RowAdapterColumn[] = new Array(totalCols);
+    const adapter: RowAdapter = {
       row: null,
       columns,
-      setRow(r: any) { this.row = r; }
+      setRow(r: ColumnValue[]) { this.row = r; }
     };
     for (let c = 0; c < totalCols; c++) {
-      columns[c] = { get: () => adapter.row[c] };
+      columns[c] = { get: () => adapter.row![c] };
     }
     return adapter;
   }

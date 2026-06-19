@@ -1,7 +1,34 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanNodeType, JoinType, LogicalAggregate, type LogicalPlanNode } from '../../planner/logical-plan.js';
+import { PlanNodeType, JoinType, LogicalAggregate, type LogicalPlanNode, type LogicalAggregateNode, type LogicalJoinNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { BoundExprKind } from '../../binder/expression-binder.js';
+import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
+
+type Side = 'left' | 'right' | 'both' | 'none';
+
+interface ColumnRefLike {
+  kind: BoundExprKind;
+  columnName: string | undefined;
+  tableAlias: string | null;
+}
+
+interface ExprWalkFields {
+  left?: BoundExpr;
+  right?: BoundExpr;
+  operand?: BoundExpr;
+  args?: BoundExpr[];
+}
+
+interface AggDescriptor {
+  kind?: BoundExprKind;
+  func?: string;
+  functionName?: string;
+  outputName?: string;
+  args?: Array<BoundExpr | ColumnRefLike>;
+  distinct?: boolean;
+  tableAlias?: string;
+  _isPartial?: boolean;
+  _isFinal?: boolean;
+}
 
 const DECOMPOSABLE_FUNCTIONS = new Map<string, { partial: string; final: string }>([
   ['SUM', { partial: 'SUM', final: 'SUM' }],
@@ -20,15 +47,16 @@ export class AggregatePushdown extends OptimizationPass {
 }
 
 class AggregatePushdownRewriter extends PlanRewriter {
-  rewriteAggregate(node: any): any {
-    const rewritten: any = this.rewriteChildren(node);
+  rewriteAggregate(node: LogicalAggregateNode): LogicalPlanNode {
+    const rewritten = this.rewriteChildren(node);
     const child = rewritten.children[0];
 
     if (child.type !== PlanNodeType.JOIN || child.joinType !== JoinType.INNER) return rewritten;
     if (!rewritten.groupBy || rewritten.groupBy.length === 0) return rewritten;
     if (!rewritten.aggregates || rewritten.aggregates.length === 0) return rewritten;
 
-    if (!this.allAggregatesDecomposable(rewritten.aggregates)) return rewritten;
+    const aggDescriptors = rewritten.aggregates as AggDescriptor[];
+    if (!this.allAggregatesDecomposable(aggDescriptors)) return rewritten;
 
     const leftRefs = this.collectPlanTableRefs(child.children[0]);
     const rightRefs = this.collectPlanTableRefs(child.children[1]);
@@ -36,29 +64,29 @@ class AggregatePushdownRewriter extends PlanRewriter {
     const groupBySide = this.classifyColumns(rewritten.groupBy, leftRefs, rightRefs);
     if (groupBySide === 'both' || groupBySide === 'none') return rewritten;
 
-    const aggColumnSide = this.classifyAggInputs(rewritten.aggregates, leftRefs, rightRefs);
+    const aggColumnSide = this.classifyAggInputs(aggDescriptors, leftRefs, rightRefs);
     if (aggColumnSide === 'both') return rewritten;
     if (aggColumnSide !== groupBySide && aggColumnSide !== 'none') return rewritten;
 
     const pushSide = groupBySide;
     const pushChildIdx = pushSide === 'left' ? 0 : 1;
 
-    const partialAggregates = this.buildPartialAggregates(rewritten.aggregates);
+    const partialAggregates = this.buildPartialAggregates(aggDescriptors);
     const partialAgg = LogicalAggregate(
       [...rewritten.groupBy],
-      partialAggregates,
+      partialAggregates as BoundExpr[],
       child.children[pushChildIdx]
     );
 
     const newJoinChildren = [...child.children];
     newJoinChildren[pushChildIdx] = partialAgg;
-    const newJoin = { ...child, children: newJoinChildren };
+    const newJoin = { ...child, children: newJoinChildren } as LogicalJoinNode;
 
-    const finalAggregates = this.buildFinalAggregates(rewritten.aggregates, partialAggregates);
-    return LogicalAggregate(rewritten.groupBy, finalAggregates, newJoin);
+    const finalAggregates = this.buildFinalAggregates(aggDescriptors, partialAggregates);
+    return LogicalAggregate(rewritten.groupBy, finalAggregates as BoundExpr[], newJoin);
   }
 
-  allAggregatesDecomposable(aggregates: any[]): boolean {
+  allAggregatesDecomposable(aggregates: AggDescriptor[]): boolean {
     return aggregates.every(agg => {
       if (agg.distinct) return false;
       const funcName = (agg.func || agg.functionName || '').toUpperCase();
@@ -66,7 +94,7 @@ class AggregatePushdownRewriter extends PlanRewriter {
     });
   }
 
-  buildPartialAggregates(aggregates: any[]): any[] {
+  buildPartialAggregates(aggregates: AggDescriptor[]): AggDescriptor[] {
     return aggregates.map((agg, idx) => {
       const funcName = (agg.func || agg.functionName || '').toUpperCase();
       const rule = DECOMPOSABLE_FUNCTIONS.get(funcName)!;
@@ -80,11 +108,11 @@ class AggregatePushdownRewriter extends PlanRewriter {
     });
   }
 
-  buildFinalAggregates(originalAggs: any[], partialAggs: any[]): any[] {
+  buildFinalAggregates(originalAggs: AggDescriptor[], partialAggs: AggDescriptor[]): AggDescriptor[] {
     return originalAggs.map((agg, idx) => {
       const funcName = (agg.func || agg.functionName || '').toUpperCase();
       const rule = DECOMPOSABLE_FUNCTIONS.get(funcName)!;
-      const partialRef = {
+      const partialRef: ColumnRefLike = {
         kind: BoundExprKind.COLUMN_REF,
         columnName: partialAggs[idx].outputName,
         tableAlias: null,
@@ -99,7 +127,7 @@ class AggregatePushdownRewriter extends PlanRewriter {
     });
   }
 
-  classifyColumns(columns: any[], leftRefs: Set<string>, rightRefs: Set<string>): string {
+  classifyColumns(columns: BoundExpr[], leftRefs: Set<string>, rightRefs: Set<string>): Side {
     let hasLeft = false, hasRight = false;
     for (const col of columns) {
       if (col.kind !== BoundExprKind.COLUMN_REF) return 'both';
@@ -114,7 +142,7 @@ class AggregatePushdownRewriter extends PlanRewriter {
     return 'none';
   }
 
-  classifyAggInputs(aggregates: any[], leftRefs: Set<string>, rightRefs: Set<string>): string {
+  classifyAggInputs(aggregates: AggDescriptor[], leftRefs: Set<string>, rightRefs: Set<string>): Side {
     let hasLeft = false, hasRight = false;
     for (const agg of aggregates) {
       const funcName = (agg.func || agg.functionName || '').toUpperCase();
@@ -132,29 +160,30 @@ class AggregatePushdownRewriter extends PlanRewriter {
     return 'none';
   }
 
-  isCountStar(agg: any): boolean {
+  isCountStar(agg: AggDescriptor): boolean {
     if (!agg.args || agg.args.length === 0) return true;
     return agg.args.length === 1 && agg.args[0]?.kind === BoundExprKind.LITERAL;
   }
 
-  walkExprRefs(expr: any, callback: (table: string) => void): void {
+  walkExprRefs(expr: BoundExpr | ColumnRefLike, callback: (table: string) => void): void {
     if (!expr || typeof expr !== 'object') return;
     if (expr.kind === BoundExprKind.COLUMN_REF && expr.tableAlias) {
       callback(expr.tableAlias.toUpperCase());
     }
-    if (expr.left) this.walkExprRefs(expr.left, callback);
-    if (expr.right) this.walkExprRefs(expr.right, callback);
-    if (expr.operand) this.walkExprRefs(expr.operand, callback);
-    if (expr.args) for (const a of expr.args) this.walkExprRefs(a, callback);
+    const e = expr as ExprWalkFields;
+    if (e.left) this.walkExprRefs(e.left, callback);
+    if (e.right) this.walkExprRefs(e.right, callback);
+    if (e.operand) this.walkExprRefs(e.operand, callback);
+    if (e.args) for (const a of e.args) this.walkExprRefs(a, callback);
   }
 
-  collectPlanTableRefs(node: any): Set<string> {
+  collectPlanTableRefs(node: LogicalPlanNode): Set<string> {
     const refs = new Set<string>();
     this._collectRefs(node, refs);
     return refs;
   }
 
-  _collectRefs(node: any, refs: Set<string>): void {
+  _collectRefs(node: LogicalPlanNode, refs: Set<string>): void {
     if (!node) return;
     if (node.type === PlanNodeType.SCAN) {
       refs.add((node.alias || node.table || '').toUpperCase());

@@ -1,6 +1,20 @@
-import { DataChunk } from '../../storage/chunk.js';
+import { DataChunk, AnyColumn, SelectionVector } from '../../storage/chunk.js';
+import { Column } from '../../storage/column.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
+import type { BoundExpr, BoundColumnRefNode } from '../../binder/expression-binder.js';
 import { isFixedWidth } from '../../storage/data-type.js';
+import type { AnyTypedArray, ColumnValue, DataType } from '../../storage/data-type.js';
+import type { CompiledExpr, ColumnMapping } from '../execution-types.js';
+
+interface BoundComparisonNode {
+  kind: BoundExprKind.COMPARISON;
+  op: string;
+  left: BoundExpr;
+  right: BoundExpr;
+  dataType?: string | null;
+}
+
+type PredicateExpr = BoundExpr | BoundComparisonNode;
 
 const OP_TO_FILTER: Record<string, string> = {
   '=': 'filterEq',
@@ -10,13 +24,60 @@ const OP_TO_FILTER: Record<string, string> = {
   '>=': 'filterGe',
 };
 
-export class FilterOperator {
-  predicate: any;
-  evaluator: any;
-  columnMapping: any;
-  parallelDispatch: any;
+interface ParallelFilterResult {
+  selectionVector: Uint32Array;
+  matchCount: number;
+}
 
-  constructor(predicate: any, evaluator: any, columnMapping: any, parallelDispatch: any) {
+interface ParallelDispatch {
+  canParallelize(op: string, dt: DataType, n: number): boolean;
+  filterParallel(
+    data: AnyTypedArray,
+    len: number,
+    op: string,
+    dt: DataType,
+    args: { value?: ColumnValue; low?: ColumnValue; high?: ColumnValue },
+  ): Promise<ParallelFilterResult | null>;
+}
+
+interface SimpleFilterPlan {
+  type: 'simple';
+  operation: string;
+  dataType: DataType;
+  columnIndex: number;
+  value: ColumnValue;
+}
+
+interface BetweenFilterPlan {
+  type: 'between';
+  operation: string;
+  dataType: DataType;
+  columnIndex: number;
+  low: ColumnValue;
+  high: ColumnValue;
+}
+
+interface AndFilterPlan {
+  type: 'and';
+  left: FilterPlan;
+  right: FilterPlan;
+}
+
+interface OrFilterPlan {
+  type: 'or';
+  left: FilterPlan;
+  right: FilterPlan;
+}
+
+type FilterPlan = SimpleFilterPlan | BetweenFilterPlan | AndFilterPlan | OrFilterPlan;
+
+export class FilterOperator {
+  predicate: PredicateExpr | null;
+  evaluator: CompiledExpr;
+  columnMapping: ColumnMapping | null;
+  parallelDispatch: ParallelDispatch | null;
+
+  constructor(predicate: PredicateExpr | null, evaluator: CompiledExpr, columnMapping: ColumnMapping | null, parallelDispatch: ParallelDispatch | null) {
     this.predicate = predicate;
     this.evaluator = evaluator;
     this.columnMapping = columnMapping || null;
@@ -25,7 +86,7 @@ export class FilterOperator {
 
   async init(): Promise<void> {}
 
-  async process(chunk: any): Promise<any> {
+  async process(chunk: DataChunk): Promise<DataChunk> {
     const size = chunk.size;
     if (size === 0) return new DataChunk(chunk.columns, 0);
 
@@ -40,7 +101,7 @@ export class FilterOperator {
     return this._executeFallback(chunk);
   }
 
-  _analyze(expr: any): any {
+  _analyze(expr: PredicateExpr | null): FilterPlan | null {
     if (!expr) return null;
 
     if (expr.kind === BoundExprKind.COMPARISON || expr.kind === BoundExprKind.BINARY) {
@@ -56,18 +117,18 @@ export class FilterOperator {
     return null;
   }
 
-  _analyzeComparison(expr: any): any {
-    const op = expr.op;
+  _analyzeComparison(expr: PredicateExpr): FilterPlan | null {
+    const op = (expr as { op: string }).op;
     if (!OP_TO_FILTER[op]) return null;
 
     const { columnRef, literal } = this._extractColumnAndLiteral(expr);
     if (!columnRef || literal === null) return null;
 
-    const dataType = columnRef.dataType;
+    const dataType = columnRef.dataType as DataType;
     if (!isFixedWidth(dataType)) return null;
 
     const operation = OP_TO_FILTER[op];
-    if (!this.parallelDispatch.canParallelize(operation, dataType, 1)) return null;
+    if (!this.parallelDispatch!.canParallelize(operation, dataType, 1)) return null;
 
     return {
       type: 'simple',
@@ -78,62 +139,66 @@ export class FilterOperator {
     };
   }
 
-  _analyzeBetween(expr: any): any {
-    if (!expr.expr || expr.expr.kind !== BoundExprKind.COLUMN_REF) return null;
+  _analyzeBetween(expr: PredicateExpr): FilterPlan | null {
+    const between = expr as { expr: BoundExpr | null; low: BoundExpr; high: BoundExpr };
+    if (!between.expr || between.expr.kind !== BoundExprKind.COLUMN_REF) return null;
 
-    const colRef = expr.expr;
-    if (!isFixedWidth(colRef.dataType)) return null;
+    const colRef = between.expr as BoundColumnRefNode;
+    if (!isFixedWidth(colRef.dataType as DataType)) return null;
 
-    const low = this._extractLiteralValue(expr.low);
-    const high = this._extractLiteralValue(expr.high);
+    const low = this._extractLiteralValue(between.low);
+    const high = this._extractLiteralValue(between.high);
     if (low === null || high === null) return null;
 
     return {
       type: 'between',
       operation: 'filterBetween',
-      dataType: colRef.dataType,
+      dataType: colRef.dataType as DataType,
       columnIndex: colRef.columnIndex,
       low,
       high,
     };
   }
 
-  _analyzeLogical(expr: any): any {
-    if (expr.op !== 'AND' && expr.op !== 'OR') return null;
+  _analyzeLogical(expr: PredicateExpr): FilterPlan | null {
+    const op = (expr as { op: string }).op;
+    if (op !== 'AND' && op !== 'OR') return null;
 
-    const leftPlan = this._analyze(expr.left);
-    const rightPlan = this._analyze(expr.right);
+    const binary = expr as { left: BoundExpr; right: BoundExpr };
+    const leftPlan = this._analyze(binary.left);
+    const rightPlan = this._analyze(binary.right);
 
     if (!leftPlan || !rightPlan) return null;
 
     return {
-      type: expr.op === 'AND' ? 'and' : 'or',
+      type: op === 'AND' ? 'and' : 'or',
       left: leftPlan,
       right: rightPlan,
     };
   }
 
-  _extractColumnAndLiteral(expr: any): any {
-    let columnRef = null;
-    let literal = null;
+  _extractColumnAndLiteral(expr: PredicateExpr): { columnRef: BoundColumnRefNode | null; literal: ColumnValue } {
+    let columnRef: BoundColumnRefNode | null = null;
+    let literal: ColumnValue = null;
 
-    if (expr.left?.kind === BoundExprKind.COLUMN_REF && expr.right?.kind === BoundExprKind.LITERAL) {
-      columnRef = expr.left;
-      literal = expr.right.value;
-    } else if (expr.right?.kind === BoundExprKind.COLUMN_REF && expr.left?.kind === BoundExprKind.LITERAL) {
-      columnRef = expr.right;
-      literal = expr.left.value;
+    const binary = expr as { left?: BoundExpr; right?: BoundExpr };
+    if (binary.left?.kind === BoundExprKind.COLUMN_REF && binary.right?.kind === BoundExprKind.LITERAL) {
+      columnRef = binary.left;
+      literal = binary.right.value;
+    } else if (binary.right?.kind === BoundExprKind.COLUMN_REF && binary.left?.kind === BoundExprKind.LITERAL) {
+      columnRef = binary.right;
+      literal = binary.left.value;
     }
 
     return { columnRef, literal };
   }
 
-  _extractLiteralValue(expr: any): any {
+  _extractLiteralValue(expr: BoundExpr | null): ColumnValue {
     if (!expr || expr.kind !== BoundExprKind.LITERAL) return null;
     return expr.value;
   }
 
-  async _executeParallel(chunk: any, plan: any): Promise<any> {
+  async _executeParallel(chunk: DataChunk, plan: FilterPlan): Promise<DataChunk | null> {
     if (plan.type === 'simple') return this._executeSimple(chunk, plan);
     if (plan.type === 'between') return this._executeBetween(chunk, plan);
     if (plan.type === 'and') return this._executeAnd(chunk, plan);
@@ -141,12 +206,12 @@ export class FilterOperator {
     return null;
   }
 
-  async _executeSimple(chunk: any, plan: any): Promise<any> {
+  async _executeSimple(chunk: DataChunk, plan: SimpleFilterPlan): Promise<DataChunk | null> {
     const column = chunk.columns[plan.columnIndex];
     const data = this._getColumnData(chunk, column);
     if (!data) return null;
 
-    const result = await this.parallelDispatch.filterParallel(
+    const result = await this.parallelDispatch!.filterParallel(
       data, data.length, plan.operation, plan.dataType, { value: plan.value }
     );
 
@@ -155,7 +220,7 @@ export class FilterOperator {
     return this._applySelectionVector(chunk, result.selectionVector, count);
   }
 
-  _dropNullRows(column: any, sv: any, count: number): number {
+  _dropNullRows(column: AnyColumn, sv: Uint32Array, count: number): number {
     if (!column.hasNulls) return count;
     let w = 0;
     for (let i = 0; i < count; i++) {
@@ -164,12 +229,12 @@ export class FilterOperator {
     return w;
   }
 
-  async _executeBetween(chunk: any, plan: any): Promise<any> {
+  async _executeBetween(chunk: DataChunk, plan: BetweenFilterPlan): Promise<DataChunk | null> {
     const column = chunk.columns[plan.columnIndex];
     const data = this._getColumnData(chunk, column);
     if (!data) return null;
 
-    const result = await this.parallelDispatch.filterParallel(
+    const result = await this.parallelDispatch!.filterParallel(
       data, data.length, plan.operation, plan.dataType, { low: plan.low, high: plan.high }
     );
 
@@ -178,7 +243,7 @@ export class FilterOperator {
     return this._applySelectionVector(chunk, result.selectionVector, count);
   }
 
-  async _executeAnd(chunk: any, plan: any): Promise<any> {
+  async _executeAnd(chunk: DataChunk, plan: AndFilterPlan): Promise<DataChunk | null> {
     const leftResult = await this._executeParallel(chunk, plan.left);
     if (!leftResult || leftResult.size === 0) return new DataChunk(chunk.columns, 0);
 
@@ -194,7 +259,7 @@ export class FilterOperator {
     return this._applySelectionVector(chunk, merged.data, merged.count);
   }
 
-  async _executeOr(chunk: any, plan: any): Promise<any> {
+  async _executeOr(chunk: DataChunk, plan: OrFilterPlan): Promise<DataChunk | null> {
     const leftResult = await this._executeParallel(chunk, plan.left);
     const rightResult = await this._executeParallel(chunk, plan.right);
 
@@ -213,22 +278,23 @@ export class FilterOperator {
     return this._applySelectionVector(chunk, merged.data, merged.count);
   }
 
-  _getColumnData(chunk: any, column: any): any {
+  _getColumnData(chunk: DataChunk, column: AnyColumn): AnyTypedArray | null {
     if (chunk.selectionVector) return null;
-    if (!column.data) return null;
-    return column.data.subarray(0, column.length);
+    const data = (column as Column).data;
+    if (!data) return null;
+    return data.subarray(0, column.length);
   }
 
-  _applySelectionVector(chunk: any, sv: any, count: number): any {
+  _applySelectionVector(chunk: DataChunk, sv: SelectionVector, count: number): DataChunk {
     if (count === 0) return new DataChunk(chunk.columns, 0);
     if (count === chunk.size && !chunk.selectionVector) return chunk;
 
     const result = new DataChunk(chunk.columns, count);
-    result.setSelectionVector(sv.length === count ? sv : sv.subarray(0, count), count);
+    result.setSelectionVector(sv.length === count ? sv : (sv as Uint32Array).subarray(0, count), count);
     return result;
   }
 
-  _executeFallback(chunk: any): any {
+  _executeFallback(chunk: DataChunk): DataChunk {
     const size = chunk.size;
     const sv = new Uint32Array(size);
     let count = 0;
@@ -262,7 +328,7 @@ export class FilterOperator {
   }
 }
 
-export function intersectSorted(a: any, aLen: number, b: any, bLen: number): { data: Uint32Array; count: number } {
+export function intersectSorted(a: SelectionVector, aLen: number, b: SelectionVector, bLen: number): { data: Uint32Array; count: number } {
   const out = new Uint32Array(Math.min(aLen, bLen));
   let i = 0, j = 0, k = 0;
 
@@ -282,7 +348,7 @@ export function intersectSorted(a: any, aLen: number, b: any, bLen: number): { d
   return { data: out, count: k };
 }
 
-export function unionSorted(a: any, aLen: number, b: any, bLen: number): { data: Uint32Array; count: number } {
+export function unionSorted(a: SelectionVector, aLen: number, b: SelectionVector, bLen: number): { data: Uint32Array; count: number } {
   const out = new Uint32Array(aLen + bLen);
   let i = 0, j = 0, k = 0;
 

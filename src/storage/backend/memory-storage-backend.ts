@@ -3,20 +3,27 @@ import { MemoryPageStore } from '../page-store/memory-page-store.js';
 import { SpillManager } from '../spill-manager/spill-manager.js';
 import { MemoryStorage } from '../spill-manager/memory-storage.js';
 
+export interface StorageBackendOptions {
+  baseDir?: string;
+  tempDir?: string;
+}
+
 export class MemoryStorageBackend {
-  constructor(options = {}) {
+  options: StorageBackendOptions;
+
+  constructor(options: StorageBackendOptions = {}) {
     this.options = options;
   }
 
-  createTempSpace() {
+  createTempSpace(): MemoryTempSpace {
     return new MemoryTempSpace(this.options);
   }
 
-  createPageStore() {
+  createPageStore(): MemoryPageStore {
     return new MemoryPageStore();
   }
 
-  createSpillManager() {
+  createSpillManager(): SpillManager {
     return new SpillManager(new MemoryStorage());
   }
 }

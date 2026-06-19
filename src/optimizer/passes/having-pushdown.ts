@@ -1,7 +1,7 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { PlanNodeType, type LogicalPlanNode } from '../../planner/logical-plan.js';
-import { BoundExprKind } from '../../binder/expression-binder.js';
+import { PlanNodeType, type LogicalPlanNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
+import { BoundExprKind, type BoundExpr, type BoundBinaryNode } from '../../binder/expression-binder.js';
 
 export class HavingPushdown extends OptimizationPass {
   get name() { return 'HavingPushdown'; }
@@ -13,14 +13,14 @@ export class HavingPushdown extends OptimizationPass {
 }
 
 class HavingPushdownRewriter extends PlanRewriter {
-  rewriteFilter(node: any): any {
-    let child: any = this.rewrite(node.children[0]);
+  rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
+    let child: LogicalPlanNode = this.rewrite(node.children[0]);
 
     if (child.type === PlanNodeType.AGGREGATE) {
       const predicates = splitConjuncts(node.condition);
 
-            const pushable: any[] = [];
-      const unpushable: any[] = [];
+            const pushable: BoundExpr[] = [];
+      const unpushable: BoundExpr[] = [];
 
             for (const pred of predicates) {
         if (containsAggregate(pred)) {
@@ -34,7 +34,7 @@ class HavingPushdownRewriter extends PlanRewriter {
         const aggChild = child.children[0];
         const pushedCond = combineConjuncts(pushable);
 
-        const newBottomFilter = {
+        const newBottomFilter: LogicalFilterNode = {
           type: PlanNodeType.FILTER,
           condition: pushedCond,
           children: [aggChild]
@@ -57,7 +57,7 @@ class HavingPushdownRewriter extends PlanRewriter {
   }
 }
 
-function splitConjuncts(expr: any): any[] {
+function splitConjuncts(expr: BoundExpr | null): BoundExpr[] {
   if (!expr) return [];
   if (expr.kind === BoundExprKind.BINARY && expr.op?.toUpperCase() === 'AND') {
     return [...splitConjuncts(expr.left), ...splitConjuncts(expr.right)];
@@ -65,7 +65,7 @@ function splitConjuncts(expr: any): any[] {
   return [expr];
 }
 
-function combineConjuncts(exprs: any[]): any {
+function combineConjuncts(exprs: BoundExpr[]): BoundExpr | null {
   if (!exprs || exprs.length === 0) return null;
   let result = exprs[0];
   for (let i = 1; i < exprs.length; i++) {
@@ -74,13 +74,13 @@ function combineConjuncts(exprs: any[]): any {
       op: 'AND',
       left: result,
       right: exprs[i],
-      resultType: 'BOOLEAN' 
-    };
+      resultType: 'BOOLEAN'
+    } as BoundBinaryNode;
   }
   return result;
 }
 
-function containsAggregate(expr: any): boolean {
+function containsAggregate(expr: BoundExpr | null): boolean {
   if (!expr) return false;
   if (expr.kind === BoundExprKind.AGGREGATE) return true;
 
@@ -91,16 +91,16 @@ function containsAggregate(expr: any): boolean {
     return containsAggregate(expr.operand);
   }
   if (expr.kind === BoundExprKind.FUNCTION || expr.kind === BoundExprKind.CASE) {
-    if (expr.args) {
+    if (expr.kind === BoundExprKind.FUNCTION && expr.args) {
       return expr.args.some(containsAggregate);
     }
-    if (expr.whenClauses) {
+    if (expr.kind === BoundExprKind.CASE && expr.whenClauses) {
       for (const wc of expr.whenClauses) {
         if (containsAggregate(wc.condition) || containsAggregate(wc.result)) return true;
       }
     }
-    if (expr.operand && containsAggregate(expr.operand)) return true;
-    if (expr.elseExpr && containsAggregate(expr.elseExpr)) return true;
+    if (expr.kind === BoundExprKind.CASE && expr.operand && containsAggregate(expr.operand)) return true;
+    if (expr.kind === BoundExprKind.CASE && expr.elseExpr && containsAggregate(expr.elseExpr)) return true;
   }
 
     return false;

@@ -1,17 +1,20 @@
 import { popcount, subsets, type HyperGraph } from './hypergraph.js';
 import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
+import type { LogicalPlanNode } from '../../planner/logical-plan.js';
+import type { DefaultCostModel } from './cost-model.js';
+import type { DefaultCardinalityEstimator } from './cardinality.js';
 
 export interface DPhypPlan {
   type: 'HashJoin';
-  buildSide: any;
-  probeSide: any;
+  buildSide: LogicalPlanNode | DPhypPlan;
+  probeSide: LogicalPlanNode | DPhypPlan;
   condition: BoundExpr | null;
   buildCard: number;
   probeCard: number;
 }
 
 export interface DPEntry {
-  plan: any;
+  plan: LogicalPlanNode | DPhypPlan;
   cardinality: number;
   totalCost: number;
   mask: number;
@@ -19,11 +22,11 @@ export interface DPEntry {
 
 export class DPhypEnumerator {
   graph: HyperGraph;
-  costModel: any;
-  cardEstimator: any;
+  costModel: DefaultCostModel;
+  cardEstimator: DefaultCardinalityEstimator;
   dp: Map<number, DPEntry>;
 
-  constructor(hyperGraph: HyperGraph, costModel: any, cardinalityEstimator: any) {
+  constructor(hyperGraph: HyperGraph, costModel: DefaultCostModel, cardinalityEstimator: DefaultCardinalityEstimator) {
     this.graph = hyperGraph;
     this.costModel = costModel;
     this.cardEstimator = cardinalityEstimator;
@@ -153,7 +156,7 @@ function predicateKey(pred: BoundExpr | null): string {
   return JSON.stringify(pred).slice(0, 50);
 }
 
-export function runDPhyp(hyperGraph: HyperGraph, costModel: any, cardinalityEstimator: any): DPEntry | null {
+export function runDPhyp(hyperGraph: HyperGraph, costModel: DefaultCostModel, cardinalityEstimator: DefaultCardinalityEstimator): DPEntry | null {
   const enumerator = new DPhypEnumerator(hyperGraph, costModel, cardinalityEstimator);
   return enumerator.solve();
 }

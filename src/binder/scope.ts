@@ -23,7 +23,7 @@ export class BinderScope {
   parent: BinderScope | null;
   tables: Map<string, TableInfo>;
   columns: Map<string, ColumnInfo[]>;
-  correlatedRefs: unknown[];
+  correlatedRefs: never[];
 
   constructor(parent: BinderScope | null = null) {
     this.parent = parent;

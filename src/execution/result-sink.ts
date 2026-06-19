@@ -1,18 +1,20 @@
 import { Config } from '../config.js';
+import type { DataChunk } from '../storage/chunk.js';
+import type { Sink } from './execution-types.js';
 
-export class ResultSink {
+export class ResultSink implements Sink {
   _streaming: boolean;
   _capacity: number;
-  _queue: any[];
+  _queue: (DataChunk | undefined)[];
   _head: number;
   _tail: number;
   _count: number;
   _totalRows: number;
   _done: boolean;
-  _error: any;
-  _producerResolve: any;
-  _consumerResolve: any;
-  _collected: any[];
+  _error: Error | null;
+  _producerResolve: (() => void) | null;
+  _consumerResolve: (() => void) | null;
+  _collected: DataChunk[];
 
   constructor(streaming: boolean = false) {
     this._streaming = streaming;
@@ -31,7 +33,7 @@ export class ResultSink {
 
   async init(): Promise<void> {}
 
-  async consume(chunk: any): Promise<void> {
+  async consume(chunk: DataChunk): Promise<void> {
     if (!chunk || chunk.size === 0) return;
     if (this._error) throw this._error;
 
@@ -70,7 +72,7 @@ export class ResultSink {
     }
   }
 
-  error(err: any): void {
+  error(err: Error): void {
     this._error = err;
     this._done = true;
     if (this._consumerResolve) {
@@ -89,11 +91,11 @@ export class ResultSink {
     return this._totalRows;
   }
 
-  get chunks(): any[] {
+  get chunks(): DataChunk[] {
     return this._collected;
   }
 
-  _dequeue(): any {
+  _dequeue(): DataChunk | undefined {
     const chunk = this._queue[this._head];
     this._queue[this._head] = undefined;
     this._head = (this._head + 1) % this._capacity;
@@ -108,7 +110,7 @@ export class ResultSink {
     return chunk;
   }
 
-  [Symbol.asyncIterator](): AsyncIterator<any> {
+  [Symbol.asyncIterator](): AsyncIterator<DataChunk> {
     if (!this._streaming) {
       let index = 0;
       const collected = this._collected;
@@ -135,13 +137,13 @@ export class ResultSink {
 
         if (sink._error) throw sink._error;
 
-        return { done: false, value: sink._dequeue() };
+        return { done: false, value: sink._dequeue()! };
       }
     };
   }
 
-  async collect(): Promise<any[]> {
-    const chunks = [];
+  async collect(): Promise<DataChunk[]> {
+    const chunks: DataChunk[] = [];
     for await (const chunk of this) {
       chunks.push(chunk);
     }

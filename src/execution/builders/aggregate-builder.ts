@@ -1,45 +1,124 @@
 import { PhysicalStrategy } from '../../planner/logical-plan.js';
+import type {
+  LogicalPlanNode,
+  LogicalAggregateNode,
+  LogicalPartialAggregateNode,
+  LogicalFinalAggregateNode,
+} from '../../planner/logical-plan.js';
 import { compileExpression, aggExprKey } from '../expression-eval.js';
 import { HashAggregateOperator, getAccumulatorFactory } from '../operators/hash-aggregate.js';
 import { StreamAggregateOperator } from '../operators/stream-aggregate.js';
 import { buildAggregateDefs, extractAggregateFragment, buildFragmentSpec } from '../fragment-spec.js';
 import { Config } from '../../config.js';
 import { registerBufferedChild } from './builder-utils.js';
+import { DataType } from '../../storage/data-type.js';
+import type { DataChunk } from '../../storage/chunk.js';
+import type { PipelineGraph } from '../pipeline.js';
+import type { ColumnValue } from '../../storage/data-type.js';
+import { BoundExprKind } from '../../binder/expression-binder.js';
+import type { BoundExpr, BoundAggregateNode } from '../../binder/expression-binder.js';
+import type { CompiledExpr, EvalValue, CompiledPipeline, ColumnMapping, ExecColumn, ExecSchema, Sink } from '../execution-types.js';
 
-export async function buildAggregate(executor: any, node: any): Promise<any> {
+type HashAggDefs = ConstructorParameters<typeof HashAggregateOperator>[2];
+type AccumulatorFactory = ReturnType<typeof getAccumulatorFactory>;
+type ExtractValueFn = (chunk: DataChunk, rowIdx: number) => EvalValue | ColumnValue[];
+type AggregateSpecList = Parameters<typeof buildAggregateDefs>[0];
+type FragmentNode = Parameters<typeof buildFragmentSpec>[1];
+type BuiltFragmentSpec = NonNullable<ReturnType<typeof buildFragmentSpec>>;
+type FragmentSpec = BuiltFragmentSpec['spec'];
+
+interface AggDescriptor {
+  kind?: BoundExprKind;
+  name?: string;
+  func?: string;
+  distinct?: boolean;
+  args?: BoundExpr[];
+  outputName?: string;
+}
+
+interface GroupByExpr {
+  kind?: BoundExprKind;
+  columnName?: string;
+  tableAlias?: string;
+  dataType?: string | null;
+  resultType?: string | null;
+}
+
+interface BuiltAggregateDef {
+  name: string;
+  resultType: DataType;
+  createAccumulator: AccumulatorFactory;
+  extractValue: ExtractValueFn;
+}
+
+interface TableStorageLike {
+  scan(): AsyncGenerator<DataChunk>;
+  getSchema(): ExecSchema;
+  rowCount(): number;
+}
+
+interface CatalogLike {
+  getTableStorage(table: string): TableStorageLike | null;
+}
+
+export interface FragmentPoolLike {
+  runAggregate(spec: FragmentSpec, columnIndexes: number[], chunks: DataChunk[], options: { spillDir?: string }): Promise<DataChunk[]>;
+}
+
+interface TempManagerLike {
+  allocate(kind: string, label: string): string;
+}
+
+interface ExecutorLike {
+  buildPipeline(node: LogicalPlanNode): Promise<CompiledPipeline>;
+  catalog: CatalogLike;
+  tempManager: TempManagerLike;
+  fragmentPool: FragmentPoolLike | null;
+  normalizeExecType(dt: string): DataType;
+  normalizeAggResultType(agg: AggDescriptor): DataType;
+  _executeSubPipeline(compiled: CompiledPipeline): Promise<DataChunk[]>;
+}
+
+interface ParallelAggregate extends BuiltFragmentSpec {
+  storage: TableStorageLike;
+}
+
+type RegisterFn = (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => void;
+
+export async function buildAggregate(executor: ExecutorLike, node: LogicalAggregateNode): Promise<CompiledPipeline> {
   const child = await executor.buildPipeline(node.children[0]);
 
-  const groupByEvals = (node.groupBy || []).map((expr: any) =>
+  const groupByEvals = (node.groupBy || []).map((expr: BoundExpr) =>
     compileExpression(expr, child.columnMapping)
   );
-  const groupByTypes = (node.groupBy || []).map((expr: any) =>
+  const groupByTypes = (node.groupBy || []).map((expr: GroupByExpr) =>
     executor.normalizeExecType(expr?.dataType || expr?.resultType || 'VARCHAR')
   );
 
-  const aggDefs = buildAggregateDefs(node.aggregates, child.columnMapping);
+  const aggDefs = buildAggregateDefs(node.aggregates as BoundAggregateNode[], child.columnMapping) as HashAggDefs;
 
-  const schema = [
-    ...(node.groupBy || []).map((expr: any, i: any) => ({
+  const schema: ExecSchema = [
+    ...(node.groupBy || []).map((expr: GroupByExpr, i: number) => ({
       name: expr?.columnName || `group${i}`,
       dataType: groupByTypes[i],
       tableAlias: expr?.tableAlias || '',
     })),
-    ...node.aggregates.map((agg: any, i: any) => ({
-      name: agg.outputName || agg.name.toLowerCase(),
+    ...(node.aggregates as AggDescriptor[]).map((agg: AggDescriptor, i: number) => ({
+      name: agg.outputName || (agg.name || '').toLowerCase(),
       dataType: executor.normalizeAggResultType(agg),
       tableAlias: '',
     })),
   ];
 
-  const columnMapping = aggregateSchemaMapping(schema, node.groupBy || [], node.aggregates);
+  const columnMapping = aggregateSchemaMapping(schema, node.groupBy || [], node.aggregates as AggDescriptor[]);
 
   if (node.physicalStrategy === PhysicalStrategy.STREAM) {
     return {
       schema, columnMapping,
-      register: (graph: any, currentPipelineId: any, currentSink: any) => {
+      register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
         const childChunks = registerBufferedChild(graph, currentPipelineId, child);
 
-        graph.setSource(currentPipelineId, async function* () {
+        graph.setSource(currentPipelineId, async function* (): AsyncGenerator<DataChunk> {
           const aggOp = new StreamAggregateOperator(groupByEvals, groupByTypes, aggDefs);
           const resultChunks = await aggOp.execute(childChunks);
           for (const chunk of resultChunks) {
@@ -52,12 +131,12 @@ export async function buildAggregate(executor: any, node: any): Promise<any> {
     };
   }
 
-  const serialCompiled = {
+  const serialCompiled: CompiledPipeline = {
     schema, columnMapping,
-    register: (graph: any, currentPipelineId: any, currentSink: any) => {
+    register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       const aggOp = new HashAggregateOperator(groupByEvals, groupByTypes, aggDefs);
-      const aggSink = {
-        async consume(chunk: any) { await aggOp.consume(chunk); },
+      const aggSink: Sink = {
+        async consume(chunk: DataChunk) { await aggOp.consume(chunk); },
         async finalize() {}
       };
       const childPipelineId = graph.createPipeline(aggSink);
@@ -65,7 +144,7 @@ export async function buildAggregate(executor: any, node: any): Promise<any> {
 
       graph.addDependency(currentPipelineId, childPipelineId);
 
-      graph.setSource(currentPipelineId, async function* () {
+      graph.setSource(currentPipelineId, async function* (): AsyncGenerator<DataChunk> {
         const resultChunks = await aggOp.finalize();
         for (const chunk of resultChunks) {
           await currentSink.consume(chunk);
@@ -81,19 +160,19 @@ export async function buildAggregate(executor: any, node: any): Promise<any> {
 
   return {
     schema, columnMapping,
-    register: (graph: any, currentPipelineId: any, currentSink: any) => {
+    register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       const rowCount = parallel.storage.rowCount();
       const withinMemory = rowCount * parallel.estimatedRowBytes <= Config.parallelAggMemoryBytes;
       if (rowCount < Config.parallelAggThreshold || !withinMemory) {
         serialCompiled.register(graph, currentPipelineId, currentSink);
         return;
       }
-      graph.setSource(currentPipelineId, async function* () {
-        let resultChunks: any = null;
+      graph.setSource(currentPipelineId, async function* (): AsyncGenerator<DataChunk> {
+        let resultChunks: DataChunk[] | null = null;
         try {
-          const chunks: any[] = [];
+          const chunks: DataChunk[] = [];
           for await (const chunk of parallel.storage.scan()) chunks.push(chunk);
-          resultChunks = await executor.fragmentPool.runAggregate(parallel.spec, parallel.columnIndexes, chunks, {
+          resultChunks = await executor.fragmentPool!.runAggregate(parallel.spec, parallel.columnIndexes, chunks, {
             spillDir: executor.tempManager.allocate('spill', 'pagg'),
           });
         } catch (_) {
@@ -112,19 +191,19 @@ export async function buildAggregate(executor: any, node: any): Promise<any> {
   };
 }
 
-function prepareParallelAggregate(executor: any, node: any): any {
+function prepareParallelAggregate(executor: ExecutorLike, node: LogicalAggregateNode): ParallelAggregate | null {
   if (!executor.fragmentPool) return null;
   const fragment = extractAggregateFragment(node);
   if (!fragment) return null;
   const storage = executor.catalog.getTableStorage(fragment.table);
   if (!storage || typeof storage.scan !== 'function') return null;
-  const built = buildFragmentSpec(fragment, node, storage.getSchema());
+  const built = buildFragmentSpec(fragment, node, storage.getSchema()) as BuiltFragmentSpec | null;
   if (!built) return null;
   return { storage, ...built };
 }
 
-function aggregateSchemaMapping(schema: any, groupBy: any, aggregates: any): any {
-  const columnMapping = new Map<string, any>();
+function aggregateSchemaMapping(schema: ExecSchema, groupBy: BoundExpr[], aggregates: AggDescriptor[]): ColumnMapping {
+  const columnMapping: ColumnMapping = new Map<string, number>();
   let idx = 0;
   for (const col of schema) {
     const key = col.tableAlias
@@ -137,55 +216,55 @@ function aggregateSchemaMapping(schema: any, groupBy: any, aggregates: any): any
 
   const groupByCount = groupBy.length;
   for (let a = 0; a < aggregates.length; a++) {
-    columnMapping.set(aggExprKey(aggregates[a]), groupByCount + a);
+    columnMapping.set(aggExprKey(aggregates[a] as BoundAggregateNode), groupByCount + a);
   }
   return columnMapping;
 }
 
-export async function buildPartialAggregate(executor: any, node: any): Promise<any> {
+export async function buildPartialAggregate(executor: ExecutorLike, node: LogicalPartialAggregateNode): Promise<CompiledPipeline> {
   const child = await executor.buildPipeline(node.children[0]);
 
-  const groupByEvals = (node.groupBy || []).map((expr: any) =>
+  const groupByEvals = (node.groupBy || []).map((expr: BoundExpr) =>
     compileExpression(expr, child.columnMapping)
   );
-  const groupByTypes = (node.groupBy || []).map((expr: any) =>
+  const groupByTypes = (node.groupBy || []).map((expr: GroupByExpr) =>
     executor.normalizeExecType(expr?.dataType || expr?.resultType || 'VARCHAR')
   );
 
-  const aggDefs: any[] = [];
-  const aggSchemaCols: any[] = [];
-  const mappingAggs: any[] = [];
-  for (const agg of node.aggregates) {
+  const aggDefs: BuiltAggregateDef[] = [];
+  const aggSchemaCols: ExecColumn[] = [];
+  const mappingAggs: AggDescriptor[] = [];
+  for (const agg of node.aggregates as AggDescriptor[]) {
     const funcName = (agg.func || agg.name || '').toUpperCase();
     const valueExtractor = agg.args && agg.args.length > 0
       ? compileExpression(agg.args[0], child.columnMapping)
       : () => 1;
-    const extract = (chunk: any, rowIdx: any) => {
+    const extract: CompiledExpr = (chunk: DataChunk, rowIdx: number) => {
       const val = valueExtractor(chunk, rowIdx);
       return typeof val === 'bigint' ? Number(val) : val;
     };
 
     if (funcName === 'AVG_PARTIAL') {
-      aggDefs.push({ name: 'SUM', resultType: 'FLOAT64', createAccumulator: getAccumulatorFactory('SUM'), extractValue: extract });
-      aggDefs.push({ name: 'COUNT', resultType: 'FLOAT64', createAccumulator: getAccumulatorFactory('COUNT'), extractValue: extract });
-      aggSchemaCols.push({ name: '_avg_sum', dataType: 'FLOAT64', tableAlias: '' });
-      aggSchemaCols.push({ name: '_avg_count', dataType: 'FLOAT64', tableAlias: '' });
+      aggDefs.push({ name: 'SUM', resultType: DataType.FLOAT64, createAccumulator: getAccumulatorFactory('SUM'), extractValue: extract });
+      aggDefs.push({ name: 'COUNT', resultType: DataType.FLOAT64, createAccumulator: getAccumulatorFactory('COUNT'), extractValue: extract });
+      aggSchemaCols.push({ name: '_avg_sum', dataType: DataType.FLOAT64, tableAlias: '' });
+      aggSchemaCols.push({ name: '_avg_count', dataType: DataType.FLOAT64, tableAlias: '' });
       mappingAggs.push({ func: 'SUM', args: agg.args }, { func: 'COUNT', args: agg.args });
       continue;
     }
 
     aggDefs.push({
-      name: agg.func || agg.name,
+      name: (agg.func || agg.name)!,
       resultType: executor.normalizeAggResultType(agg),
-      createAccumulator: getAccumulatorFactory(agg.func || agg.name, agg.distinct),
+      createAccumulator: getAccumulatorFactory((agg.func || agg.name)!, agg.distinct),
       extractValue: extract,
     });
     aggSchemaCols.push({ name: (agg.func || agg.name || '').toLowerCase(), dataType: executor.normalizeAggResultType(agg), tableAlias: '' });
     mappingAggs.push(agg);
   }
 
-  const schema = [
-    ...(node.groupBy || []).map((expr: any, i: any) => ({
+  const schema: ExecSchema = [
+    ...(node.groupBy || []).map((expr: GroupByExpr, i: number) => ({
       name: expr?.columnName || `group${i}`,
       dataType: groupByTypes[i],
       tableAlias: expr?.tableAlias || '',
@@ -197,33 +276,33 @@ export async function buildPartialAggregate(executor: any, node: any): Promise<a
 
   return {
     schema, columnMapping,
-    register: registerHashAggregate(child, () => new HashAggregateOperator(groupByEvals, groupByTypes, aggDefs)),
+    register: registerHashAggregate(child, () => new HashAggregateOperator(groupByEvals, groupByTypes, aggDefs as HashAggDefs)),
   };
 }
 
-export async function buildFinalAggregate(executor: any, node: any): Promise<any> {
+export async function buildFinalAggregate(executor: ExecutorLike, node: LogicalFinalAggregateNode): Promise<CompiledPipeline> {
   const child = await executor.buildPipeline(node.children[0]);
 
   const groupByCount = (node.groupBy || []).length;
-  const groupByEvals = (node.groupBy || []).map((_expr: any, i: any) => {
+  const groupByEvals = (node.groupBy || []).map((_expr: BoundExpr, i: number): CompiledExpr => {
     const colIdx = i;
-    return (chunk: any, rowIdx: any) => chunk.columns[colIdx]?.get(rowIdx);
+    return (chunk: DataChunk, rowIdx: number) => chunk.columns[colIdx]?.get(rowIdx) ?? null;
   });
-  const groupByTypes = (node.groupBy || []).map((expr: any) =>
+  const groupByTypes = (node.groupBy || []).map((expr: GroupByExpr) =>
     executor.normalizeExecType(expr?.dataType || expr?.resultType || 'VARCHAR')
   );
 
-  const finalAggs = node.aggregates;
-  const partialAggs = node.partialAggregates || finalAggs;
-  const partialWidth = (agg: any) => ((agg.func || agg.name || '').toUpperCase() === 'AVG_PARTIAL' ? 2 : 1);
-  const partialStarts: any[] = [];
+  const finalAggs = node.aggregates as AggDescriptor[];
+  const partialAggs = (node.partialAggregates || finalAggs) as AggDescriptor[];
+  const partialWidth = (agg: AggDescriptor) => ((agg.func || agg.name || '').toUpperCase() === 'AVG_PARTIAL' ? 2 : 1);
+  const partialStarts: number[] = [];
   let partialOffset = groupByCount;
   for (let i = 0; i < finalAggs.length; i++) {
     partialStarts.push(partialOffset);
     partialOffset += partialWidth(partialAggs[i] || finalAggs[i]);
   }
 
-  const aggDefs = finalAggs.map((agg: any, aggIdx: any) => {
+  const aggDefs: BuiltAggregateDef[] = finalAggs.map((agg: AggDescriptor, aggIdx: number) => {
     const funcName = (agg.func || agg.name || '').toUpperCase();
     const start = partialStarts[aggIdx];
 
@@ -232,7 +311,7 @@ export async function buildFinalAggregate(executor: any, node: any): Promise<any
         name: 'AVG',
         resultType: executor.normalizeAggResultType(agg),
         createAccumulator: getAccumulatorFactory('AVG_FINAL', false),
-        extractValue: (chunk: any, rowIdx: any) => {
+        extractValue: (chunk: DataChunk, rowIdx: number): ColumnValue[] => {
           const s = chunk.columns[start]?.get(rowIdx);
           const c = chunk.columns[start + 1]?.get(rowIdx);
           return [
@@ -247,20 +326,20 @@ export async function buildFinalAggregate(executor: any, node: any): Promise<any
       name: funcName,
       resultType: executor.normalizeAggResultType(agg),
       createAccumulator: getAccumulatorFactory(funcName, false),
-      extractValue: (chunk: any, rowIdx: any) => {
+      extractValue: (chunk: DataChunk, rowIdx: number) => {
         const val = chunk.columns[start]?.get(rowIdx);
         return typeof val === 'bigint' ? Number(val) : val;
       },
     };
   });
 
-  const schema = [
-    ...(node.groupBy || []).map((expr: any, i: any) => ({
+  const schema: ExecSchema = [
+    ...(node.groupBy || []).map((expr: GroupByExpr, i: number) => ({
       name: expr?.columnName || `group${i}`,
       dataType: groupByTypes[i],
       tableAlias: expr?.tableAlias || '',
     })),
-    ...finalAggs.map((agg: any) => ({
+    ...finalAggs.map((agg: AggDescriptor) => ({
       name: (agg.name || agg.func || '').toLowerCase(),
       dataType: executor.normalizeAggResultType(agg),
       tableAlias: '',
@@ -271,15 +350,15 @@ export async function buildFinalAggregate(executor: any, node: any): Promise<any
 
   return {
     schema, columnMapping,
-    register: registerHashAggregate(child, () => new HashAggregateOperator(groupByEvals, groupByTypes, aggDefs)),
+    register: registerHashAggregate(child, () => new HashAggregateOperator(groupByEvals, groupByTypes, aggDefs as HashAggDefs)),
   };
 }
 
-function registerHashAggregate(child: any, makeAggOp: any): any {
-  return (graph: any, currentPipelineId: any, currentSink: any) => {
+function registerHashAggregate(child: CompiledPipeline, makeAggOp: () => HashAggregateOperator): RegisterFn {
+  return (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
     const aggOp = makeAggOp();
-    const aggSink = {
-      async consume(chunk: any) { await aggOp.consume(chunk); },
+    const aggSink: Sink = {
+      async consume(chunk: DataChunk) { await aggOp.consume(chunk); },
       async finalize() {}
     };
     const childPipelineId = graph.createPipeline(aggSink);
@@ -287,7 +366,7 @@ function registerHashAggregate(child: any, makeAggOp: any): any {
 
     graph.addDependency(currentPipelineId, childPipelineId);
 
-    graph.setSource(currentPipelineId, async function* () {
+    graph.setSource(currentPipelineId, async function* (): AsyncGenerator<DataChunk> {
       const resultChunks = await aggOp.finalize();
       for (const chunk of resultChunks) {
         await currentSink.consume(chunk);

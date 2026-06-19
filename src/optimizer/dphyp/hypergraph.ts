@@ -1,9 +1,17 @@
 import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
+import type { LogicalPlanNode } from '../../planner/logical-plan.js';
+import type { DefaultCardinalityEstimator } from './cardinality.js';
+
+export interface Relation {
+  name: string;
+  alias?: string;
+  plan: LogicalPlanNode;
+}
 
 export interface RelationEntry {
   id: number;
   name: string;
-  plan: any;
+  plan: LogicalPlanNode;
   cardinality: number;
   mask: number;
 }
@@ -33,7 +41,7 @@ export class HyperGraph {
     this.adjacency = [];
   }
 
-  addRelation(name: string, plan: any, cardinality: number): number {
+  addRelation(name: string, plan: LogicalPlanNode, cardinality: number): number {
     const id = this.relations.length;
     if (id >= 30) return -1;
     const mask = 1 << id;
@@ -125,7 +133,7 @@ export class HyperGraph {
   }
 }
 
-export function buildHyperGraph(relations: any[], joinPredicates: BoundExpr[], cardinalityEstimator: any): HyperGraph {
+export function buildHyperGraph(relations: Relation[], joinPredicates: BoundExpr[], cardinalityEstimator: DefaultCardinalityEstimator): HyperGraph {
   const graph = new HyperGraph();
 
   for (const rel of relations) {
@@ -153,7 +161,7 @@ export function buildHyperGraph(relations: any[], joinPredicates: BoundExpr[], c
 
 function collectColumnTableRefs(expr: BoundExpr): Set<string> {
   const refs = new Set<string>();
-  _walkExpr(expr, (e: any) => {
+  _walkExpr(expr, (e: BoundExpr) => {
     if (e.kind === BoundExprKind.COLUMN_REF && e.tableAlias) {
       refs.add(e.tableAlias.toUpperCase());
     }
@@ -161,13 +169,22 @@ function collectColumnTableRefs(expr: BoundExpr): Set<string> {
   return refs;
 }
 
-function _walkExpr(expr: any, fn: (e: any) => void): void {
-  if (!expr || typeof expr !== 'object') return;
+function _walkExpr(expr: BoundExpr | null | undefined, fn: (e: BoundExpr) => void): void {
+  if (!expr) return;
   fn(expr);
-  if (expr.left) _walkExpr(expr.left, fn);
-  if (expr.right) _walkExpr(expr.right, fn);
-  if (expr.operand) _walkExpr(expr.operand, fn);
-  if (expr.args) for (const a of expr.args) _walkExpr(a, fn);
+  switch (expr.kind) {
+    case BoundExprKind.BINARY:
+      _walkExpr(expr.left, fn);
+      _walkExpr(expr.right, fn);
+      return;
+    case BoundExprKind.UNARY:
+      _walkExpr(expr.operand, fn);
+      return;
+    case BoundExprKind.FUNCTION:
+    case BoundExprKind.AGGREGATE:
+      for (const a of expr.args) _walkExpr(a, fn);
+      return;
+  }
 }
 
 function lowestBit(mask: number): number {

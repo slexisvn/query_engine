@@ -5,7 +5,7 @@ export class OptimizationPass {
     throw new Error('Subclass must implement name');
   }
 
-  apply(plan: LogicalPlanNode, context?: Record<string, unknown>): LogicalPlanNode {
+  apply(plan: LogicalPlanNode, context?: Record<string, never>): LogicalPlanNode {
     throw new Error('Subclass must implement apply()');
   }
 }

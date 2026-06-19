@@ -3,23 +3,31 @@ import fs from 'fs';
 import path from 'path';
 import { ChunkSerializer } from '../serializer.js';
 import { PAGE_FILE_SUFFIX } from '../storage-constants.js';
+import type { DataChunk } from '../chunk.js';
+import type { PageStore } from '../buffer-pool.js';
+import type { Allocator } from '../sab-arena.js';
 
-export class FilePageStore {
-  constructor(basePath, allocatorFactory = null) {
+export type AllocatorFactory = (byteHint: number) => Allocator;
+
+export class FilePageStore implements PageStore {
+  basePath: string;
+  allocatorFactory: AllocatorFactory | null;
+
+  constructor(basePath: string, allocatorFactory: AllocatorFactory | null = null) {
     this.basePath = basePath;
     this.allocatorFactory = allocatorFactory;
   }
 
-  getPagePath(pageId) {
+  getPagePath(pageId: string): string {
     return path.join(this.basePath, `${pageId}${PAGE_FILE_SUFFIX}`);
   }
 
-  async write(pageId, chunk) {
+  async write(pageId: string, chunk: DataChunk): Promise<void> {
     const data = ChunkSerializer.serialize(chunk);
     await fsPromises.writeFile(this.getPagePath(pageId), data);
   }
 
-  async read(pageId) {
+  async read(pageId: string): Promise<DataChunk> {
     const data = await fsPromises.readFile(this.getPagePath(pageId));
     if (this.allocatorFactory) {
       return ChunkSerializer.deserialize(data, this.allocatorFactory(data.length));
@@ -27,7 +35,7 @@ export class FilePageStore {
     return ChunkSerializer.deserialize(data);
   }
 
-  clear() {
+  clear(): void {
     if (fs.existsSync(this.basePath)) {
       fs.rmSync(this.basePath, { recursive: true, force: true });
     }

@@ -1,4 +1,4 @@
-import { PlanNodeType } from '../planner/logical-plan.js';
+import { PlanNodeType, type LogicalPlanNode, type LogicalJoinNode } from '../planner/logical-plan.js';
 import {
   normalizeExecType as normalizeExecTypeShared,
   normalizeAggResultType as normalizeAggResultTypeShared,
@@ -14,11 +14,67 @@ import {
   buildLimit, buildDistinct, buildUnion, buildWindow,
 } from './builders/pipeline-builders.js';
 import { buildJoin, prepareParallelJoin, runBufferedSerialJoin } from './builders/join-builder.js';
+import type { ParallelJoinPrep, MakeBuildSide, MakeProbeOp, FragmentPoolLike as JoinFragmentPoolLike } from './builders/join-builder.js';
+import type { FragmentPoolLike as AggFragmentPoolLike } from './builders/aggregate-builder.js';
 import { buildAggregate, buildPartialAggregate, buildFinalAggregate } from './builders/aggregate-builder.js';
 import { buildCTEAnchor, buildCTEScan, buildMaterialize, buildDependentJoin } from './builders/cte-builders.js';
 import { buildExchange, buildMergeExchange, buildExchangeReceive } from './builders/exchange-builders.js';
+import type { DataChunk } from '../storage/chunk.js';
+import type { DataType, ColumnValue } from '../storage/data-type.js';
+import type { BoundAggregateNode, BoundExpr } from '../binder/expression-binder.js';
+import type {
+  CompiledPipeline,
+  Sink,
+  ExecSchema,
+  ExecColumn,
+  ColumnMapping,
+} from './execution-types.js';
 
-const BUILDERS: Record<string, any> = {
+type BuilderFn = (executor: QueryExecutor, node: LogicalPlanNode) => Promise<CompiledPipeline>;
+
+interface TableStorageLike {
+  rowCount(): number;
+  scan(): AsyncGenerator<DataChunk>;
+  getSchema(): ExecSchema;
+}
+
+type BTreeLike = object;
+
+interface CatalogLike {
+  getTableStorage(name: string): TableStorageLike | null;
+  getIndexForColumn(table: string, column: string): BTreeLike | null;
+}
+
+interface TempManagerLike {
+  allocate(category: string, label: string): string;
+}
+
+interface SpillManagerLike {
+  appendChunk(id: string, chunk: DataChunk | null): Promise<void>;
+  readChunks(id: string): AsyncGenerator<DataChunk>;
+  clearAll(): Promise<void>;
+}
+
+interface StorageBackendLike {
+  createTempSpace(): object;
+  createPageStore(): object;
+  createSpillManager(handle: string): SpillManagerLike;
+}
+
+type WorkerPoolLike = object;
+
+type ParallelDispatchLike = object;
+
+type FragmentPoolLike = JoinFragmentPoolLike & AggFragmentPoolLike;
+
+type DistributedContextLike = object;
+
+interface ExecuteResult {
+  sink: ResultSink;
+  columnNames: string[];
+}
+
+const BUILDERS = {
   [PlanNodeType.SCAN]: buildScan,
   [PlanNodeType.INDEX_SCAN]: buildIndexScan,
   [PlanNodeType.FILTER]: buildFilter,
@@ -45,17 +101,17 @@ const BUILDERS: Record<string, any> = {
 };
 
 export class QueryExecutor {
-  catalog: any;
-  tempManager: any;
-  storageBackend: any;
-  cteResults: Map<any, any>;
-  cteDefinitions: Map<any, any>;
-  workerPool: any;
-  parallelDispatch: any;
-  fragmentPool: any;
-  _distributedContext: any;
+  catalog: CatalogLike;
+  tempManager: TempManagerLike;
+  storageBackend: StorageBackendLike;
+  cteResults: Map<string, DataChunk[]>;
+  cteDefinitions: Map<string, LogicalPlanNode>;
+  workerPool: WorkerPoolLike | null;
+  parallelDispatch: ParallelDispatchLike | null;
+  fragmentPool: FragmentPoolLike | null;
+  _distributedContext: DistributedContextLike | null;
 
-  constructor(catalog: any, tempManager: any, storageBackend: any = null) {
+  constructor(catalog: CatalogLike, tempManager: TempManagerLike, storageBackend: StorageBackendLike | null = null) {
     this.catalog = catalog;
     this.tempManager = tempManager;
     this.storageBackend = storageBackend ?? new MemoryStorageBackend();
@@ -64,35 +120,36 @@ export class QueryExecutor {
     this.workerPool = null;
     this.parallelDispatch = null;
     this.fragmentPool = null;
+    this._distributedContext = null;
   }
 
-  setParallelContext(workerPool: any, parallelDispatch: any, fragmentPool: any = null): void {
+  setParallelContext(workerPool: WorkerPoolLike, parallelDispatch: ParallelDispatchLike, fragmentPool: FragmentPoolLike | null = null): void {
     this.workerPool = workerPool;
     this.parallelDispatch = parallelDispatch;
     this.fragmentPool = fragmentPool;
   }
 
-  setDistributedContext(ctx: any): void {
+  setDistributedContext(ctx: DistributedContextLike): void {
     this._distributedContext = ctx;
   }
 
-  _shouldParallelize(storage: any): any {
-    return this.workerPool
+  _shouldParallelize(storage: TableStorageLike): boolean {
+    return !!(this.workerPool
       && this.parallelDispatch
-      && storage.rowCount() >= Config.parallelThreshold;
+      && storage.rowCount() >= Config.parallelThreshold);
   }
 
-  async execute(logicalPlan: any, outputColumns: any, streaming: boolean = false): Promise<any> {
+  async execute(logicalPlan: LogicalPlanNode, outputColumns: ExecColumn[], streaming: boolean = false): Promise<ExecuteResult> {
     const sink = await this.executePlan(logicalPlan, streaming);
-    const columnNames = outputColumns.map((c: any) => c.name);
+    const columnNames = outputColumns.map((c: ExecColumn) => c.name);
     return { sink, columnNames };
   }
 
-  async executeStreaming(logicalPlan: any, outputColumns: any): Promise<any> {
+  async executeStreaming(logicalPlan: LogicalPlanNode, outputColumns: ExecColumn[]): Promise<ExecuteResult> {
     return this.execute(logicalPlan, outputColumns, true);
   }
 
-  async executePlan(logicalPlan: any, streaming: boolean = false): Promise<any> {
+  async executePlan(logicalPlan: LogicalPlanNode, streaming: boolean = false): Promise<ResultSink> {
     this.cteResults.clear();
     const graph = new PipelineGraph();
     const resultSink = new ResultSink(streaming);
@@ -116,30 +173,30 @@ export class QueryExecutor {
     return resultSink;
   }
 
-  async buildPipeline(node: any): Promise<any> {
-    const builder = BUILDERS[node.type];
+  async buildPipeline(node: LogicalPlanNode): Promise<CompiledPipeline> {
+    const builder = BUILDERS[node.type] as BuilderFn | undefined;
     if (!builder) {
       throw new Error(`Unsupported plan node: ${node.type}`);
     }
     return builder(this, node);
   }
 
-  resolveProjectedColumnIndexes(storageSchema: any, planColumns: any): any {
+  resolveProjectedColumnIndexes(storageSchema: ExecSchema, planColumns: ExecColumn[] | null): number[] | null {
     if (!planColumns || planColumns.length === 0 || planColumns.length >= storageSchema.length) {
       return null;
     }
 
-    const indexes = [];
+    const indexes: number[] = [];
     for (const col of planColumns) {
-      const idx = storageSchema.findIndex((s: any) => s.name.toUpperCase() === col.name.toUpperCase());
+      const idx = storageSchema.findIndex((s: ExecColumn) => s.name.toUpperCase() === col.name.toUpperCase());
       if (idx < 0) return null;
       indexes.push(idx);
     }
     return indexes;
   }
 
-  buildSchemaMapping(schema: any, alias: any): any {
-    const mapping = new Map();
+  buildSchemaMapping(schema: ExecSchema, alias: string): ColumnMapping {
+    const mapping: ColumnMapping = new Map();
     for (let i = 0; i < schema.length; i++) {
       const col = schema[i];
       const tableAlias = col.tableAlias || alias || '';
@@ -152,14 +209,14 @@ export class QueryExecutor {
     return mapping;
   }
 
-  findCTEPlan(cteName: any): any {
+  findCTEPlan(cteName: string): LogicalPlanNode | null {
     const key = cteName.toUpperCase();
     return this.cteDefinitions?.get(key) || null;
   }
 
-  _estimatePlanRows(planNode: any): number {
+  _estimatePlanRows(planNode: LogicalPlanNode): number {
     let total = 0;
-    const stack = [planNode];
+    const stack: LogicalPlanNode[] = [planNode];
     while (stack.length > 0) {
       const current = stack.pop();
       if (!current) continue;
@@ -172,10 +229,10 @@ export class QueryExecutor {
     return total;
   }
 
-  async _executeSubPipeline(compiled: any): Promise<any> {
-    const chunks: any[] = [];
-    const sink = {
-      consume: async (chunk: any) => { chunks.push(chunk); },
+  async _executeSubPipeline(compiled: CompiledPipeline): Promise<DataChunk[]> {
+    const chunks: DataChunk[] = [];
+    const sink: Sink = {
+      consume: async (chunk: DataChunk) => { chunks.push(chunk); },
       finalize: async () => {},
     };
     const graph = new PipelineGraph();
@@ -185,19 +242,36 @@ export class QueryExecutor {
     return chunks;
   }
 
-  _prepareParallelJoin(node: any, buildInput: any, probeInput: any, buildNode: any, probeNode: any, buildKeys: any, probeKeys: any, residualCondition: any, combinedMapping: any): any {
+  _prepareParallelJoin(
+    node: LogicalJoinNode,
+    buildInput: CompiledPipeline,
+    probeInput: CompiledPipeline,
+    buildNode: LogicalPlanNode,
+    probeNode: LogicalPlanNode,
+    buildKeys: BoundExpr[],
+    probeKeys: BoundExpr[],
+    residualCondition: BoundExpr | null,
+    combinedMapping: ColumnMapping,
+  ): ParallelJoinPrep | null {
     return prepareParallelJoin(this, node, buildInput, probeInput, buildNode, probeNode, buildKeys, probeKeys, residualCondition, combinedMapping);
   }
 
-  _runBufferedSerialJoin(makeBuildSide: any, makeProbeOp: any, buildChunks: any, probeChunks: any, node: any, probeColCount: any): any {
+  _runBufferedSerialJoin(
+    makeBuildSide: MakeBuildSide,
+    makeProbeOp: MakeProbeOp,
+    buildChunks: DataChunk[],
+    probeChunks: DataChunk[],
+    node: LogicalJoinNode,
+    probeColCount: number,
+  ): Promise<DataChunk[]> {
     return runBufferedSerialJoin(makeBuildSide, makeProbeOp, buildChunks, probeChunks, node, probeColCount);
   }
 
-  normalizeExecType(dt: any): any {
+  normalizeExecType(dt: DataType | string): DataType {
     return normalizeExecTypeShared(dt);
   }
 
-  normalizeAggResultType(agg: any): any {
+  normalizeAggResultType(agg: BoundAggregateNode | { name?: string }): DataType {
     return normalizeAggResultTypeShared(agg);
   }
 }

@@ -1,7 +1,9 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { PlanNodeType, type LogicalPlanNode } from '../../planner/logical-plan.js';
-import { BoundExprKind } from '../../binder/expression-binder.js';
+import { PlanNodeType, type LogicalPlanNode, type LogicalFilterNode, type LogicalProjectNode, type LogicalLimitNode, type ProjectedExpr } from '../../planner/logical-plan.js';
+import { BoundExprKind, type BoundBinaryNode } from '../../binder/expression-binder.js';
+
+type EqualityValue = string | number | boolean | bigint | null | undefined | object;
 
 export class NodeMerge extends OptimizationPass {
   get name() { return 'NodeMerge'; }
@@ -13,8 +15,8 @@ export class NodeMerge extends OptimizationPass {
 }
 
 class NodeMergeRewriter extends PlanRewriter {
-  rewriteFilter(node: any): any {
-    let child: any = this.rewrite(node.children[0]);
+  rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
+    let child: LogicalPlanNode = this.rewrite(node.children[0]);
 
     if (child.type === PlanNodeType.FILTER) {
       const mergedCond = {
@@ -23,7 +25,7 @@ class NodeMergeRewriter extends PlanRewriter {
         left: node.condition,
         right: child.condition,
         resultType: 'BOOLEAN'
-      };
+      } as BoundBinaryNode;
 
       child = child.children[0];
       return { ...node, condition: mergedCond, children: [child] };
@@ -35,8 +37,8 @@ class NodeMergeRewriter extends PlanRewriter {
     return node;
   }
 
-  rewriteProject(node: any): any {
-    const child: any = this.rewrite(node.children[0]);
+  rewriteProject(node: LogicalProjectNode): LogicalPlanNode {
+    const child: LogicalPlanNode = this.rewrite(node.children[0]);
 
     if (child.type === PlanNodeType.PROJECT && sameProjectExpressions(node.expressions, child.expressions)) {
       return { ...node, children: [child.children[0]] };
@@ -48,8 +50,8 @@ class NodeMergeRewriter extends PlanRewriter {
     return node;
   }
 
-  rewriteLimit(node: any): any {
-    const child: any = this.rewrite(node.children[0]);
+  rewriteLimit(node: LogicalLimitNode): LogicalPlanNode {
+    const child: LogicalPlanNode = this.rewrite(node.children[0]);
 
     if (child.type === PlanNodeType.LIMIT) {
       const mergedCount = Math.min(node.count, child.count);
@@ -63,13 +65,13 @@ class NodeMergeRewriter extends PlanRewriter {
   }
 }
 
-function sameProjectExpressions(left: any, right: any): boolean {
+function sameProjectExpressions(left: ProjectedExpr[], right: ProjectedExpr[]): boolean {
   if (!Array.isArray(left) || !Array.isArray(right)) return false;
   if (left.length !== right.length) return false;
   return left.every((expr, i) => exprEqualsIgnoringOutput(expr, right[i]));
 }
 
-function exprEqualsIgnoringOutput(left: any, right: any): boolean {
+function exprEqualsIgnoringOutput(left: EqualityValue, right: EqualityValue): boolean {
   if (left === right) return true;
   if (!left || !right) return false;
   if (typeof left !== 'object' || typeof right !== 'object') return left === right;
@@ -78,12 +80,14 @@ function exprEqualsIgnoringOutput(left: any, right: any): boolean {
     return left.every((item, i) => exprEqualsIgnoringOutput(item, right[i]));
   }
 
-  const leftKeys = Object.keys(left).filter(isSemanticKey).sort();
-  const rightKeys = Object.keys(right).filter(isSemanticKey).sort();
+  const leftRecord = left as Record<string, EqualityValue>;
+  const rightRecord = right as Record<string, EqualityValue>;
+  const leftKeys = Object.keys(leftRecord).filter(isSemanticKey).sort();
+  const rightKeys = Object.keys(rightRecord).filter(isSemanticKey).sort();
   if (leftKeys.length !== rightKeys.length) return false;
   for (let i = 0; i < leftKeys.length; i++) {
     if (leftKeys[i] !== rightKeys[i]) return false;
-    if (!exprEqualsIgnoringOutput(left[leftKeys[i]], right[rightKeys[i]])) return false;
+    if (!exprEqualsIgnoringOutput(leftRecord[leftKeys[i]], rightRecord[rightKeys[i]])) return false;
   }
   return true;
 }

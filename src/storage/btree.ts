@@ -1,7 +1,26 @@
 import { Config } from '../config.js';
+import type { DataType } from './data-type.js';
+
+export type BTreeKey = string | number | bigint | boolean | null | undefined;
+
+export interface RowLocation {
+  pageId: string;
+  rowIndex: number;
+}
+
+interface SplitResult {
+  key: BTreeKey;
+  right: BTreeNode;
+}
 
 class BTreeNode {
-  constructor(isLeaf) {
+  isLeaf: boolean;
+  keys: BTreeKey[];
+  children: BTreeNode[];
+  values: RowLocation[][];
+  next: BTreeNode | null;
+
+  constructor(isLeaf: boolean) {
     this.isLeaf = isLeaf;
     this.keys = [];
     this.children = [];
@@ -11,24 +30,28 @@ class BTreeNode {
 }
 
 export class BTreeIndex {
-  constructor(dataType) {
+  dataType: DataType;
+  root: BTreeNode;
+  order: number;
+
+  constructor(dataType: DataType) {
     this.dataType = dataType;
     this.root = new BTreeNode(true);
     this.order = Config.btreeOrder;
   }
 
-  _compare(a, b) {
+  _compare(a: BTreeKey, b: BTreeKey): number {
     if (a === b) return 0;
     if (a === null || a === undefined) return -1;
     if (b === null || b === undefined) return 1;
     if (typeof a === 'bigint') a = Number(a);
     if (typeof b === 'bigint') b = Number(b);
-    if (a < b) return -1;
-    if (a > b) return 1;
+    if ((a as number) < (b as number)) return -1;
+    if ((a as number) > (b as number)) return 1;
     return 0;
   }
 
-  _findIndex(keys, key) {
+  _findIndex(keys: BTreeKey[], key: BTreeKey): number {
     let lo = 0, hi = keys.length;
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
@@ -38,7 +61,7 @@ export class BTreeIndex {
     return lo;
   }
 
-  insert(key, rowLocation) {
+  insert(key: BTreeKey, rowLocation: RowLocation): void {
     const result = this._insertInternal(this.root, key, rowLocation);
     if (result) {
       const newRoot = new BTreeNode(false);
@@ -48,7 +71,7 @@ export class BTreeIndex {
     }
   }
 
-  _insertInternal(node, key, rowLocation) {
+  _insertInternal(node: BTreeNode, key: BTreeKey, rowLocation: RowLocation): SplitResult | null {
     if (node.isLeaf) {
       const pos = this._findIndex(node.keys, key);
       if (pos < node.keys.length && this._compare(node.keys[pos], key) === 0) {
@@ -78,7 +101,7 @@ export class BTreeIndex {
     return null;
   }
 
-  _findChildIndex(node, key) {
+  _findChildIndex(node: BTreeNode, key: BTreeKey): number {
     let lo = 0, hi = node.keys.length;
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
@@ -88,7 +111,7 @@ export class BTreeIndex {
     return lo;
   }
 
-  _splitLeaf(leaf) {
+  _splitLeaf(leaf: BTreeNode): SplitResult {
     const mid = Math.ceil(leaf.keys.length / 2);
     const rightKeys = leaf.keys.splice(mid);
     const rightValues = leaf.values.splice(mid);
@@ -100,7 +123,7 @@ export class BTreeIndex {
     return { key: rightKeys[0], right: newRight };
   }
 
-  _splitInternal(node) {
+  _splitInternal(node: BTreeNode): SplitResult {
     const mid = Math.floor(node.keys.length / 2);
     const upKey = node.keys[mid];
     const rightKeys = node.keys.splice(mid + 1);
@@ -112,7 +135,7 @@ export class BTreeIndex {
     return { key: upKey, right: newRight };
   }
 
-  search(key) {
+  search(key: BTreeKey): RowLocation[] {
     let node = this.root;
     while (!node.isLeaf) {
       const idx = this._findChildIndex(node, key);
@@ -125,7 +148,7 @@ export class BTreeIndex {
     return [];
   }
 
-  *range(low, high, lowInclusive, highInclusive) {
+  *range(low: BTreeKey, high: BTreeKey, lowInclusive: boolean, highInclusive: boolean): Generator<RowLocation> {
     let node = this.root;
     if (low !== null && low !== undefined) {
       while (!node.isLeaf) {
@@ -146,7 +169,7 @@ export class BTreeIndex {
       }
     }
 
-    let current = node;
+    let current: BTreeNode | null = node;
     let i = pos;
     while (current) {
       while (i < current.keys.length) {

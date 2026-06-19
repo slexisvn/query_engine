@@ -1,3 +1,5 @@
+import type { PipelineGraph, Pipeline } from './pipeline.js';
+
 export class TaskScheduler {
   concurrency: number;
 
@@ -5,7 +7,7 @@ export class TaskScheduler {
     this.concurrency = concurrency;
   }
 
-  async schedule(pipelineGraph: any): Promise<void> {
+  async schedule(pipelineGraph: PipelineGraph): Promise<void> {
     let hasMoreWork = true;
 
     while (hasMoreWork) {
@@ -21,7 +23,7 @@ export class TaskScheduler {
           throw new Error('Pipeline deadlock detected: pending pipelines with unresolved dependencies.');
         }
 
-        break; 
+        break;
       }
 
       for (const p of readyPipelines) {
@@ -36,8 +38,8 @@ export class TaskScheduler {
     }
   }
 
-  async executePipelines(pipelines: any, graph: any): Promise<void> {
-    const tasks = [];
+  async executePipelines(pipelines: Pipeline[], graph: PipelineGraph): Promise<void> {
+    const tasks: Promise<void>[] = [];
     for (const p of pipelines) {
       if (p.source) {
         tasks.push(this.runPipelineSource(p, graph));
@@ -47,8 +49,8 @@ export class TaskScheduler {
     await Promise.all(tasks);
   }
 
-  async runPipelineSource(pipeline: any, graph: any): Promise<void> {
-    const generator = pipeline.source();
+  async runPipelineSource(pipeline: Pipeline, graph: PipelineGraph): Promise<void> {
+    const generator = pipeline.source!();
     for await (const _ of generator) {
       if (pipeline.cancelled) break;
     }

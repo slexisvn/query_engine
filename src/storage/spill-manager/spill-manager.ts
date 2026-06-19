@@ -1,13 +1,24 @@
 import { ChunkSerializer } from '../serializer.js';
+import type { DataChunk } from '../chunk.js';
+
+export interface SpillStorage {
+  append(partitionId: string, buffer: Buffer): Promise<void>;
+  read(partitionId: string): Promise<Buffer | null>;
+  exists(partitionId: string): boolean;
+  remove(partitionId: string): Promise<void>;
+  removeAll(): Promise<void>;
+}
 
 const LENGTH_HEADER_BYTES = 4;
 
 export class SpillManager {
-  constructor(storage) {
+  storage: SpillStorage;
+
+  constructor(storage: SpillStorage) {
     this.storage = storage;
   }
 
-  async appendChunk(partitionId, chunk) {
+  async appendChunk(partitionId: string, chunk: DataChunk | null): Promise<void> {
     if (!chunk || chunk.size === 0) return;
     const data = ChunkSerializer.serialize(chunk);
     const header = Buffer.allocUnsafe(LENGTH_HEADER_BYTES);
@@ -15,7 +26,7 @@ export class SpillManager {
     await this.storage.append(partitionId, Buffer.concat([header, data]));
   }
 
-  async *readChunks(partitionId) {
+  async *readChunks(partitionId: string): AsyncGenerator<DataChunk> {
     const fileBuffer = await this.storage.read(partitionId);
     if (!fileBuffer) return;
 
@@ -29,15 +40,15 @@ export class SpillManager {
     }
   }
 
-  async clearPartition(partitionId) {
+  async clearPartition(partitionId: string): Promise<void> {
     await this.storage.remove(partitionId);
   }
 
-  async clearAll() {
+  async clearAll(): Promise<void> {
     await this.storage.removeAll();
   }
 
-  hasSpilled(partitionId) {
+  hasSpilled(partitionId: string): boolean {
     return this.storage.exists(partitionId);
   }
 }

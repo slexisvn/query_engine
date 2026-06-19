@@ -1,5 +1,17 @@
+import type { Sink, SourceGenerator } from './execution-types.js';
+
+export interface Pipeline {
+  id: number;
+  sink: Sink;
+  source: SourceGenerator | null;
+  dependencies: Set<number>;
+  dependents: Set<number>;
+  state: 'PENDING' | 'RUNNING' | 'DONE';
+  cancelled: boolean;
+}
+
 export class PipelineGraph {
-  pipelines: Map<number, any>;
+  pipelines: Map<number, Pipeline>;
   nextId: number;
 
   constructor() {
@@ -7,7 +19,7 @@ export class PipelineGraph {
     this.nextId = 1;
   }
 
-  createPipeline(sink: any): number {
+  createPipeline(sink: Sink): number {
     const id = this.nextId++;
     this.pipelines.set(id, {
       id,
@@ -22,19 +34,19 @@ export class PipelineGraph {
   }
 
   addDependency(pipelineId: number, dependsOnId: number): void {
-    const pipeline = this.pipelines.get(pipelineId);
-    const dependency = this.pipelines.get(dependsOnId);
+    const pipeline = this.pipelines.get(pipelineId)!;
+    const dependency = this.pipelines.get(dependsOnId)!;
     pipeline.dependencies.add(dependsOnId);
     dependency.dependents.add(pipelineId);
   }
 
-  setSource(pipelineId: number, sourceGenerator: any): void {
-    const pipeline = this.pipelines.get(pipelineId);
+  setSource(pipelineId: number, sourceGenerator: SourceGenerator): void {
+    const pipeline = this.pipelines.get(pipelineId)!;
     pipeline.source = sourceGenerator;
   }
 
-  getReadyPipelines(): any[] {
-    const ready = [];
+  getReadyPipelines(): Pipeline[] {
+    const ready: Pipeline[] = [];
     for (const [id, pipeline] of this.pipelines.entries()) {
       if (pipeline.state === 'PENDING' && pipeline.dependencies.size === 0) {
         ready.push(pipeline);
@@ -44,11 +56,11 @@ export class PipelineGraph {
   }
 
   markPipelineDone(pipelineId: number): void {
-    const pipeline = this.pipelines.get(pipelineId);
+    const pipeline = this.pipelines.get(pipelineId)!;
     pipeline.state = 'DONE';
 
     for (const depId of pipeline.dependents) {
-      const dependent = this.pipelines.get(depId);
+      const dependent = this.pipelines.get(depId)!;
       dependent.dependencies.delete(pipelineId);
     }
   }

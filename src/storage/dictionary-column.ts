@@ -1,12 +1,31 @@
-import { DataType } from './data-type.js';
+import { DataType, type ColumnValue } from './data-type.js';
 import { bitmapWordCount, setBit, clearBit, testBit } from '../utils/bitmap.js';
-import { heapAllocator } from './sab-arena.js';
+import { heapAllocator, type Allocator } from './sab-arena.js';
 
 const DEFAULT_CAPACITY = 2048;
 const MAX_DICT_SIZE = 65535;
 
+export interface DictionaryColumnParts {
+  indices: Uint16Array;
+  reverseDict: string[];
+  nullBitmap: Uint32Array;
+  length: number;
+  hasNulls: boolean;
+  allocator?: Allocator;
+}
+
 export class DictionaryColumn {
-  constructor(capacity = DEFAULT_CAPACITY, allocator = heapAllocator) {
+  dataType: DataType;
+  capacity: number;
+  length: number;
+  allocator: Allocator;
+  _dictionary: Map<string, number> | null;
+  reverseDict: string[];
+  indices: Uint16Array;
+  nullBitmap: Uint32Array;
+  hasNulls: boolean;
+
+  constructor(capacity: number = DEFAULT_CAPACITY, allocator: Allocator = heapAllocator) {
     this.dataType = DataType.VARCHAR;
     this.capacity = capacity;
     this.length = 0;
@@ -21,8 +40,8 @@ export class DictionaryColumn {
     this.hasNulls = false;
   }
 
-  static fromParts({ indices, reverseDict, nullBitmap, length, hasNulls, allocator }) {
-    const col = Object.create(DictionaryColumn.prototype);
+  static fromParts({ indices, reverseDict, nullBitmap, length, hasNulls, allocator }: DictionaryColumnParts): DictionaryColumn {
+    const col = Object.create(DictionaryColumn.prototype) as DictionaryColumn;
     col.dataType = DataType.VARCHAR;
     col.capacity = length;
     col.length = length;
@@ -35,18 +54,18 @@ export class DictionaryColumn {
     return col;
   }
 
-  get dictionary() {
+  get dictionary(): Map<string, number> {
     if (this._dictionary === null) {
       this._dictionary = new Map(this.reverseDict.map((value, id) => [value, id]));
     }
     return this._dictionary;
   }
 
-  set dictionary(map) {
+  set dictionary(map: Map<string, number>) {
     this._dictionary = map;
   }
 
-  get(index) {
+  get(index: number): ColumnValue {
     if (this.hasNulls && !testBit(this.nullBitmap, index)) {
       return null;
     }
@@ -54,7 +73,7 @@ export class DictionaryColumn {
     return this.reverseDict[dictId];
   }
 
-  set(index, value) {
+  set(index: number, value: ColumnValue): void {
     if (value === null || value === undefined) {
       this._setNull(index);
       return;
@@ -62,14 +81,15 @@ export class DictionaryColumn {
 
     setBit(this.nullBitmap, index);
 
-    let dictId = this.dictionary.get(value);
+    const key = value as string;
+    let dictId = this.dictionary.get(key);
     if (dictId === undefined) {
       dictId = this.reverseDict.length;
       if (dictId > MAX_DICT_SIZE) {
         throw new Error(`Dictionary capacity exceeded ${MAX_DICT_SIZE} values per chunk`);
       }
-      this.dictionary.set(value, dictId);
-      this.reverseDict.push(value);
+      this.dictionary.set(key, dictId);
+      this.reverseDict.push(key);
     }
 
     this.indices[index] = dictId;
@@ -79,24 +99,24 @@ export class DictionaryColumn {
     }
   }
 
-  append(value) {
+  append(value: ColumnValue): void {
     if (this.length >= this.capacity) {
       this._grow();
     }
     this.set(this.length, value);
   }
 
-  appendBatch(values) {
+  appendBatch(values: ColumnValue[]): void {
     for (let i = 0; i < values.length; i++) {
       this.append(values[i]);
     }
   }
 
-  isNull(index) {
+  isNull(index: number): boolean {
     return this.hasNulls && !testBit(this.nullBitmap, index);
   }
 
-  slice(start, end) {
+  slice(start: number, end: number): DictionaryColumn {
     const len = end - start;
     const col = new DictionaryColumn(len, this.allocator);
 
@@ -117,7 +137,7 @@ export class DictionaryColumn {
     return col;
   }
 
-  _setNull(index) {
+  _setNull(index: number): void {
     this.hasNulls = true;
     clearBit(this.nullBitmap, index);
     if (index >= this.length) {
@@ -125,7 +145,7 @@ export class DictionaryColumn {
     }
   }
 
-  _grow() {
+  _grow(): void {
     const newCapacity = this.capacity * 2;
     const newIndices = this.allocator.acquire(Uint16Array, newCapacity);
     newIndices.set(this.indices);

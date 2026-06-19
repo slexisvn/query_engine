@@ -1,7 +1,7 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { PlanNodeType, setChildren, type LogicalPlanNode } from '../../planner/logical-plan.js';
-import { BoundExprKind, BoundLiteral } from '../../binder/expression-binder.js';
+import { PlanNodeType, setChildren, type LogicalPlanNode, type LogicalFilterNode, type LogicalProjectNode, type LogicalJoinNode, type LogicalEmptyNode, type ProjectedExpr } from '../../planner/logical-plan.js';
+import { BoundExprKind, BoundLiteral, type BoundExpr, type BoundBinaryNode, type LiteralValue } from '../../binder/expression-binder.js';
 
 export class ExpressionSimplifier extends OptimizationPass {
   get name() { return 'ExpressionSimplifier'; }
@@ -13,16 +13,17 @@ export class ExpressionSimplifier extends OptimizationPass {
 }
 
 class SimplifierRewriter extends PlanRewriter {
-  rewriteFilter(node: any): any {
+  rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
     const child = this.rewrite(node.children[0]);
     const simplifiedCond = simplifyExpression(node.condition);
 
-        if (simplifiedCond.kind === BoundExprKind.LITERAL && simplifiedCond.value === true) {
+        if (simplifiedCond && simplifiedCond.kind === BoundExprKind.LITERAL && simplifiedCond.value === true) {
       return child;
     }
 
-        if (simplifiedCond.kind === BoundExprKind.LITERAL && simplifiedCond.value === false) {
-      return { type: PlanNodeType.EMPTY, children: [child] };
+        if (simplifiedCond && simplifiedCond.kind === BoundExprKind.LITERAL && simplifiedCond.value === false) {
+      const empty: LogicalEmptyNode = { type: PlanNodeType.EMPTY, children: [child] };
+      return empty;
     }
 
         if (simplifiedCond !== node.condition || child !== node.children[0]) {
@@ -31,13 +32,13 @@ class SimplifierRewriter extends PlanRewriter {
     return node;
   }
 
-  rewriteProject(node: any): any {
+  rewriteProject(node: LogicalProjectNode): LogicalPlanNode {
     const child = this.rewrite(node.children[0]);
     let changed = false;
-    const newExprs = node.expressions.map((expr: any) => {
+    const newExprs = node.expressions.map((expr): ProjectedExpr => {
       const s = simplifyExpression(expr);
       if (s !== expr) changed = true;
-      return s;
+      return s as ProjectedExpr;
     });
 
         if (changed || child !== node.children[0]) {
@@ -46,9 +47,9 @@ class SimplifierRewriter extends PlanRewriter {
     return node;
   }
 
-  rewriteJoin(node: any): any {
-    const newChildren = node.children.map((c: any) => this.rewrite(c));
-    let changed = newChildren.some((c: any, i: number) => c !== node.children[i]);
+  rewriteJoin(node: LogicalJoinNode): LogicalPlanNode {
+    const newChildren = node.children.map((c) => this.rewrite(c));
+    let changed = newChildren.some((c, i) => c !== node.children[i]);
 
         let newCond = node.condition;
     if (node.condition) {
@@ -63,13 +64,13 @@ class SimplifierRewriter extends PlanRewriter {
   }
 }
 
-export function simplifyExpression(expr: any): any {
+export function simplifyExpression(expr: BoundExpr | null): BoundExpr | null {
   if (!expr) return expr;
 
     switch (expr.kind) {
     case BoundExprKind.BINARY: {
-      const left = simplifyExpression(expr.left);
-      const right = simplifyExpression(expr.right);
+      const left = simplifyExpression(expr.left)!;
+      const right = simplifyExpression(expr.right)!;
       const op = expr.op.toUpperCase();
 
             if (op === 'AND') {
@@ -98,13 +99,14 @@ export function simplifyExpression(expr: any): any {
         }
 
         if (left.kind === BoundExprKind.LITERAL && right.kind === BoundExprKind.LITERAL) {
-          const lVal = left.value;
-          const rVal = right.value;
+          const lVal = left.value as number;
+          const rVal = right.value as number;
+          const exprType = (expr as { dataType?: string | null }).dataType ?? null;
           if (lVal !== null && rVal !== null) {
             try {
-              if (op === '+') return BoundLiteral(lVal + rVal, typeof (lVal + rVal) === 'number' ? 'FLOAT64' : expr.dataType);
-              if (op === '-') return BoundLiteral(lVal - rVal, typeof (lVal - rVal) === 'number' ? 'FLOAT64' : expr.dataType);
-              if (op === '*') return BoundLiteral(lVal * rVal, typeof (lVal * rVal) === 'number' ? 'FLOAT64' : expr.dataType);
+              if (op === '+') return BoundLiteral(lVal + rVal, typeof (lVal + rVal) === 'number' ? 'FLOAT64' : exprType);
+              if (op === '-') return BoundLiteral(lVal - rVal, typeof (lVal - rVal) === 'number' ? 'FLOAT64' : exprType);
+              if (op === '*') return BoundLiteral(lVal * rVal, typeof (lVal * rVal) === 'number' ? 'FLOAT64' : exprType);
               if (op === '/') return BoundLiteral(lVal / rVal, 'FLOAT64');
               if (op === '=') return BoundLiteral(lVal === rVal, 'BOOLEAN');
               if (op === '!=') return BoundLiteral(lVal !== rVal, 'BOOLEAN');
@@ -124,7 +126,7 @@ export function simplifyExpression(expr: any): any {
       return expr;
     }
     case BoundExprKind.UNARY: {
-      const operand = simplifyExpression(expr.operand);
+      const operand = simplifyExpression(expr.operand)!;
       const op = expr.op.toUpperCase();
 
             if (op === 'NOT') {
@@ -141,19 +143,19 @@ export function simplifyExpression(expr: any): any {
       return expr;
     }
     case BoundExprKind.FUNCTION: {
-      const args = expr.args.map(simplifyExpression);
-      const changed = args.some((a: any, i: number) => a !== expr.args[i]);
+      const args = expr.args.map(a => simplifyExpression(a)!);
+      const changed = args.some((a, i) => a !== expr.args[i]);
       if (changed) {
         return { ...expr, args };
       }
       return expr;
     }
     case BoundExprKind.CASE: {
-      const whenClauses = [];
+      const whenClauses: { condition: BoundExpr; result: BoundExpr }[] = [];
       let changed = false;
       for (const wc of expr.whenClauses) {
-        const cond = simplifyExpression(wc.condition);
-        const result = simplifyExpression(wc.result);
+        const cond = simplifyExpression(wc.condition)!;
+        const result = simplifyExpression(wc.result)!;
         if (cond !== wc.condition || result !== wc.result) changed = true;
         if (isLiteral(cond, false)) { changed = true; continue; }
         if (isLiteral(cond, true)) {
@@ -171,7 +173,7 @@ export function simplifyExpression(expr: any): any {
       return expr;
     }
     case BoundExprKind.CAST: {
-      const inner = simplifyExpression(expr.expr);
+      const inner = simplifyExpression(expr.expr)!;
       if (inner.kind === BoundExprKind.LITERAL && inner.value !== null) {
         const folded = foldCast(inner.value, expr.targetType);
         if (folded !== undefined) return BoundLiteral(folded, expr.targetType);
@@ -180,9 +182,10 @@ export function simplifyExpression(expr: any): any {
       return expr;
     }
     case BoundExprKind.EXTRACT: {
-      const source = simplifyExpression(expr.source);
-      if (source.kind === BoundExprKind.LITERAL && source.value instanceof Date) {
-        const extracted = extractFromDate(source.value, expr.field);
+      const source = simplifyExpression(expr.source)!;
+      const sourceVal = source.kind === BoundExprKind.LITERAL ? (source.value as LiteralValue | Date) : null;
+      if (sourceVal instanceof Date) {
+        const extracted = extractFromDate(sourceVal, expr.field);
         if (extracted !== null) return BoundLiteral(extracted, 'INT32');
       }
       if (source !== expr.source) return { ...expr, source };
@@ -193,30 +196,30 @@ export function simplifyExpression(expr: any): any {
   return expr;
 }
 
-function isLiteral(expr: any, val: any): boolean {
-  return expr && expr.kind === BoundExprKind.LITERAL && expr.value === val;
+function isLiteral(expr: BoundExpr | null, val: LiteralValue): boolean {
+  return !!expr && expr.kind === BoundExprKind.LITERAL && expr.value === val;
 }
 
-function exprEquals(e1: any, e2: any): boolean {
+function exprEquals(e1: BoundExpr | null, e2: BoundExpr | null): boolean {
   if (e1 === e2) return true;
   if (!e1 || !e2) return false;
   if (e1.kind !== e2.kind) return false;
 
-    if (e1.kind === BoundExprKind.COLUMN_REF) {
+    if (e1.kind === BoundExprKind.COLUMN_REF && e2.kind === BoundExprKind.COLUMN_REF) {
     return e1.tableAlias === e2.tableAlias && e1.columnName === e2.columnName;
   }
-  if (e1.kind === BoundExprKind.LITERAL) {
+  if (e1.kind === BoundExprKind.LITERAL && e2.kind === BoundExprKind.LITERAL) {
     return e1.value === e2.value;
   }
   return exprKey(e1) === exprKey(e2);
 }
 
-function factorCommonConjuncts(left: any, right: any): any {
+function factorCommonConjuncts(left: BoundExpr, right: BoundExpr): BoundExpr | null {
   const leftConjuncts = splitConjuncts(left);
   const rightConjuncts = splitConjuncts(right);
   const rightByKey = new Map(rightConjuncts.map(expr => [exprKey(expr), expr]));
-  const common = [];
-  const leftRest = [];
+  const common: BoundExpr[] = [];
+  const leftRest: BoundExpr[] = [];
   const commonKeys = new Set<string>();
 
   for (const expr of leftConjuncts) {
@@ -234,7 +237,7 @@ function factorCommonConjuncts(left: any, right: any): any {
   const rightRest = rightConjuncts.filter(expr => !commonKeys.has(exprKey(expr)));
   const leftRemainder = combineConjuncts(leftRest) || BoundLiteral(true, 'BOOLEAN');
   const rightRemainder = combineConjuncts(rightRest) || BoundLiteral(true, 'BOOLEAN');
-  const residualOr = {
+  const residualOr: BoundBinaryNode = {
     kind: BoundExprKind.BINARY,
     op: 'OR',
     left: leftRemainder,
@@ -245,7 +248,7 @@ function factorCommonConjuncts(left: any, right: any): any {
   return combineConjuncts([...common, residualOr]);
 }
 
-function splitConjuncts(expr: any): any[] {
+function splitConjuncts(expr: BoundExpr | null): BoundExpr[] {
   if (!expr) return [];
   if (expr.kind === BoundExprKind.BINARY && expr.op.toUpperCase() === 'AND') {
     return [...splitConjuncts(expr.left), ...splitConjuncts(expr.right)];
@@ -253,9 +256,9 @@ function splitConjuncts(expr: any): any[] {
   return [expr];
 }
 
-function combineConjuncts(exprs: any[]): any {
+function combineConjuncts(exprs: BoundExpr[]): BoundExpr | null {
   if (exprs.length === 0) return null;
-  return exprs.reduce((acc: any, expr: any) => acc ? ({
+  return exprs.reduce((acc: BoundExpr | null, expr): BoundExpr => acc ? ({
     kind: BoundExprKind.BINARY,
     op: 'AND',
     left: acc,
@@ -264,7 +267,7 @@ function combineConjuncts(exprs: any[]): any {
   }) : expr, null);
 }
 
-function foldCast(value: any, targetType: any): any {
+function foldCast(value: LiteralValue, targetType: string | null): LiteralValue | undefined {
   const type = (targetType || '').toUpperCase();
   try {
     if (type.includes('INT')) return Math.trunc(Number(value));
@@ -275,7 +278,7 @@ function foldCast(value: any, targetType: any): any {
   return undefined;
 }
 
-function extractFromDate(date: any, field: any): number | null {
+function extractFromDate(date: Date, field: string): number | null {
   const f = (field || '').toUpperCase();
   if (f === 'YEAR') return date.getFullYear();
   if (f === 'MONTH') return date.getMonth() + 1;
@@ -286,7 +289,7 @@ function extractFromDate(date: any, field: any): number | null {
   return null;
 }
 
-function exprKey(expr: any): string {
+function exprKey(expr: BoundExpr | null): string {
   if (!expr || typeof expr !== 'object') return String(expr);
   switch (expr.kind) {
     case BoundExprKind.COLUMN_REF:

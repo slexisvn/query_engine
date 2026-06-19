@@ -1,16 +1,25 @@
-import { DataChunk } from '../../storage/chunk.js';
+import { DataChunk, AnyColumn } from '../../storage/chunk.js';
 import { Column } from '../../storage/column.js';
+import type { DataType, ColumnValue } from '../../storage/data-type.js';
 import { JoinType } from '../../planner/logical-plan.js';
+import type { CompiledExpr } from '../execution-types.js';
+
+type JoinRow = ColumnValue[];
+
+interface RowAdapter {
+  chunk: DataChunk;
+  setRow(r: JoinRow): void;
+}
 
 export class NestedLoopJoinOperator {
-  outerChunks: any;
-  innerChunks: any;
+  outerChunks: DataChunk[];
+  innerChunks: DataChunk[];
   outerColCount: number;
   innerColCount: number;
-  joinType: any;
-  conditionEvaluator: any;
+  joinType: JoinType;
+  conditionEvaluator: CompiledExpr | null;
 
-  constructor(outerChunks: any, innerChunks: any, outerColCount: number, innerColCount: number, joinType: any = JoinType.INNER, conditionEvaluator: any = null) {
+  constructor(outerChunks: DataChunk[], innerChunks: DataChunk[], outerColCount: number, innerColCount: number, joinType: JoinType = JoinType.INNER, conditionEvaluator: CompiledExpr | null = null) {
     this.outerChunks = outerChunks;
     this.innerChunks = innerChunks;
     this.outerColCount = outerColCount;
@@ -19,10 +28,10 @@ export class NestedLoopJoinOperator {
     this.conditionEvaluator = conditionEvaluator;
   }
 
-  async execute(): Promise<any> {
+  async execute(): Promise<DataChunk[]> {
     const outerRows = this._flattenChunks(this.outerChunks);
     const innerRows = this._flattenChunks(this.innerChunks);
-    const outputRows: any[] = [];
+    const outputRows: JoinRow[] = [];
     const adapter = this.conditionEvaluator ? this._createAdapter() : null;
     const innerMatched = (this.joinType === JoinType.FULL || this.joinType === JoinType.RIGHT)
       ? new Uint8Array(innerRows.length)
@@ -38,7 +47,7 @@ export class NestedLoopJoinOperator {
 
         if (adapter) {
           adapter.setRow(combined);
-          if (!this.conditionEvaluator(adapter, 0)) continue;
+          if (!this.conditionEvaluator!(adapter.chunk, 0)) continue;
         }
 
         matched = true;
@@ -81,8 +90,8 @@ export class NestedLoopJoinOperator {
     return [this._buildOutputChunk(outputRows)];
   }
 
-  _flattenChunks(chunks: any): any[] {
-    const rows: any[] = [];
+  _flattenChunks(chunks: DataChunk[]): JoinRow[] {
+    const rows: JoinRow[] = [];
     for (const chunk of chunks) {
       for (let i = 0; i < chunk.size; i++) {
         const idx = chunk.activeRowIndex(i);
@@ -96,44 +105,44 @@ export class NestedLoopJoinOperator {
     return rows;
   }
 
-  _combineRow(outerRow: any, innerRow: any): any {
+  _combineRow(outerRow: JoinRow, innerRow: JoinRow): JoinRow {
     const row = new Array(this.outerColCount + this.innerColCount);
     for (let c = 0; c < this.outerColCount; c++) row[c] = outerRow[c];
     for (let c = 0; c < this.innerColCount; c++) row[this.outerColCount + c] = innerRow[c];
     return row;
   }
 
-  _extractOuter(outerRow: any): any {
+  _extractOuter(outerRow: JoinRow): JoinRow {
     return outerRow.slice(0, this.outerColCount);
   }
 
-  _outerWithNulls(outerRow: any): any {
+  _outerWithNulls(outerRow: JoinRow): JoinRow {
     const row = new Array(this.outerColCount + this.innerColCount);
     for (let c = 0; c < this.outerColCount; c++) row[c] = outerRow[c];
     for (let c = 0; c < this.innerColCount; c++) row[this.outerColCount + c] = null;
     return row;
   }
 
-  _innerWithNulls(innerRow: any): any {
+  _innerWithNulls(innerRow: JoinRow): JoinRow {
     const row = new Array(this.outerColCount + this.innerColCount);
     for (let c = 0; c < this.outerColCount; c++) row[c] = null;
     for (let c = 0; c < this.innerColCount; c++) row[this.outerColCount + c] = innerRow[c];
     return row;
   }
 
-  _outerWithMark(outerRow: any, markValue: boolean): any {
+  _outerWithMark(outerRow: JoinRow, markValue: boolean): JoinRow {
     const row = new Array(this.outerColCount + 1);
     for (let c = 0; c < this.outerColCount; c++) row[c] = outerRow[c];
     row[this.outerColCount] = markValue;
     return row;
   }
 
-  _buildOutputChunk(rows: any): any {
+  _buildOutputChunk(rows: JoinRow[]): DataChunk {
     const colCount = rows[0].length;
     const columns = new Array(colCount);
 
     for (let c = 0; c < colCount; c++) {
-      let dt = 'VARCHAR';
+      let dt: DataType | string = 'VARCHAR';
       if (this.joinType === JoinType.MARK && c === colCount - 1) {
         dt = 'BOOLEAN';
       } else if (this.joinType === JoinType.SEMI || this.joinType === JoinType.ANTI) {
@@ -151,7 +160,7 @@ export class NestedLoopJoinOperator {
         }
       }
 
-      const col = new Column(dt, rows.length);
+      const col = new Column(dt as DataType, rows.length);
       for (let r = 0; r < rows.length; r++) {
         col.set(r, rows[r][c]);
       }
@@ -162,17 +171,18 @@ export class NestedLoopJoinOperator {
     return new DataChunk(columns, rows.length);
   }
 
-  _createAdapter(): any {
+  _createAdapter(): RowAdapter {
     const totalCols = this.outerColCount + this.innerColCount;
-    const columns = new Array(totalCols);
-    const adapter: any = {
-      row: null,
-      columns,
-      setRow(r: any) { this.row = r; },
-    };
+    const columns: Pick<AnyColumn, 'get'>[] = new Array(totalCols);
+    let currentRow: JoinRow | null = null;
     for (let c = 0; c < totalCols; c++) {
-      columns[c] = { get: () => adapter.row[c] };
+      const col = c;
+      columns[c] = { get: () => currentRow![col] };
     }
-    return adapter;
+    const chunk: Pick<DataChunk, 'columns'> = { columns: columns as AnyColumn[] };
+    return {
+      chunk: chunk as DataChunk,
+      setRow(r: JoinRow) { currentRow = r; },
+    };
   }
 }

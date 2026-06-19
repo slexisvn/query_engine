@@ -1,7 +1,15 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { PlanNodeType, JoinType, getChildren, type LogicalPlanNode } from '../../planner/logical-plan.js';
-import { BoundExprKind } from '../../binder/expression-binder.js';
+import { PlanNodeType, JoinType, getChildren, type LogicalPlanNode, type LogicalJoinNode } from '../../planner/logical-plan.js';
+import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
+import type { ColumnInfo } from '../../binder/scope.js';
+
+interface NamedExpr {
+  outputName?: string;
+  alias?: string;
+  name?: string;
+  columnName?: string;
+}
 
 export class JoinElimination extends OptimizationPass {
   get name() { return 'JoinElimination'; }
@@ -12,11 +20,11 @@ export class JoinElimination extends OptimizationPass {
   }
 }
 
-const COLUMN_RESTRICTING_PARENTS = new Set([PlanNodeType.PROJECT, PlanNodeType.AGGREGATE]);
+const COLUMN_RESTRICTING_PARENTS = new Set<PlanNodeType>([PlanNodeType.PROJECT, PlanNodeType.AGGREGATE]);
 
 class JoinEliminationRewriter extends PlanRewriter {
   rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
-    const newNode: any = this.rewriteChildren(node);
+    const newNode = this.rewriteChildren(node);
 
     if (COLUMN_RESTRICTING_PARENTS.has(newNode.type) && hasLeftJoinChild(newNode)) {
       return tryEliminateLeftJoin(newNode);
@@ -26,13 +34,14 @@ class JoinEliminationRewriter extends PlanRewriter {
   }
 }
 
-function hasLeftJoinChild(node: any): boolean {
+function hasLeftJoinChild(node: LogicalPlanNode): boolean {
   if (!node.children) return false;
-  return node.children.some((c: any) => c.type === PlanNodeType.JOIN && c.joinType === JoinType.LEFT);
+  return node.children.some((c) => c.type === PlanNodeType.JOIN && c.joinType === JoinType.LEFT);
 }
 
-function tryEliminateLeftJoin(parent: any): any {
-  const newChildren = parent.children.map((child: any) => {
+function tryEliminateLeftJoin(parent: LogicalPlanNode): LogicalPlanNode {
+  const parentChildren = parent.children || [];
+  const newChildren = parentChildren.map((child) => {
     if (child.type !== PlanNodeType.JOIN || child.joinType !== JoinType.LEFT) return child;
 
     const rightTables = collectTableAliases(child.children[1]);
@@ -50,12 +59,12 @@ function tryEliminateLeftJoin(parent: any): any {
     return child;
   });
 
-  const changed = newChildren.some((c: any, i: number) => c !== parent.children[i]);
+  const changed = newChildren.some((c, i) => c !== parentChildren[i]);
   return changed ? { ...parent, children: newChildren } : parent;
 }
 
-function collectNodeExprColumns(node: any, used: Set<string>): void {
-  const collectExpr = (expr: any) => {
+function collectNodeExprColumns(node: LogicalPlanNode, used: Set<string>): void {
+  const collectExpr = (expr: BoundExpr): void => {
     if (!expr || typeof expr !== 'object') return;
     if (expr.kind === BoundExprKind.COLUMN_REF) {
       used.add(`${(expr.tableAlias || '').toUpperCase()}.${(expr.columnName || '').toUpperCase()}`);
@@ -63,9 +72,9 @@ function collectNodeExprColumns(node: any, used: Set<string>): void {
     }
     for (const val of Object.values(expr)) {
       if (Array.isArray(val)) {
-        for (const item of val) collectExpr(item);
+        for (const item of val) collectExpr(item as BoundExpr);
       } else if (val && typeof val === 'object') {
-        collectExpr(val);
+        collectExpr(val as BoundExpr);
       }
     }
   };
@@ -75,12 +84,12 @@ function collectNodeExprColumns(node: any, used: Set<string>): void {
       for (const expr of node.expressions) collectExpr(expr);
       break;
     case PlanNodeType.FILTER:
-      collectExpr(node.condition);
+      if (node.condition) collectExpr(node.condition);
       break;
     case PlanNodeType.AGGREGATE:
       if (node.groupBy) for (const g of node.groupBy) collectExpr(g);
       for (const agg of node.aggregates) {
-        for (const arg of agg.args) collectExpr(arg);
+        for (const arg of (agg as BoundExpr & { args?: BoundExpr[] }).args || []) collectExpr(arg);
       }
       break;
     case PlanNodeType.SORT:
@@ -91,9 +100,9 @@ function collectNodeExprColumns(node: any, used: Set<string>): void {
   }
 }
 
-function collectTableAliases(node: any): Set<string> {
+function collectTableAliases(node: LogicalPlanNode): Set<string> {
   const aliases = new Set<string>();
-  function walk(n: any): void {
+  function walk(n: LogicalPlanNode): void {
     if (!n) return;
     if (n.type === PlanNodeType.SCAN) {
       aliases.add((n.alias || n.table).toUpperCase());
@@ -120,27 +129,27 @@ function hasAnyNameUsed(columnNames: Set<string>, usedColumns: Set<string>): boo
   return false;
 }
 
-function collectOutputNames(node: any): Set<string> {
+function collectOutputNames(node: LogicalPlanNode): Set<string> {
   const names = new Set<string>();
-  const add = (value: any) => {
+  const add = (value: string | undefined | null): void => {
     const name = (value || '').toUpperCase();
     if (name) names.add(name);
   };
-  const outputName = (expr: any) =>
+  const outputName = (expr: NamedExpr): void =>
     add(expr?.outputName || expr?.alias || expr?.name || expr?.columnName);
 
-  function walk(n: any): void {
+  function walk(n: LogicalPlanNode): void {
     if (!n) return;
     switch (n.type) {
       case PlanNodeType.SCAN:
-        for (const col of n.columns || []) add(col.name || col.columnName);
+        for (const col of n.columns || []) add(col.name || (col as ColumnInfo & { columnName?: string }).columnName);
         return;
       case PlanNodeType.PROJECT:
-        for (const expr of n.expressions || []) outputName(expr);
+        for (const expr of n.expressions || []) outputName(expr as NamedExpr);
         return;
       case PlanNodeType.AGGREGATE:
-        for (const expr of n.groupBy || []) outputName(expr);
-        for (const agg of n.aggregates || []) outputName(agg);
+        for (const expr of n.groupBy || []) outputName(expr as NamedExpr);
+        for (const agg of n.aggregates || []) outputName(agg as NamedExpr);
         return;
       default:
         for (const child of getChildren(n)) walk(child);

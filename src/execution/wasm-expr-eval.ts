@@ -1,15 +1,29 @@
 import { BoundExprKind } from '../binder/expression-binder.js';
+import type { BoundExpr, BoundColumnRefNode } from '../binder/expression-binder.js';
 import { globalDispatch } from '../wasm/dispatch.js';
 import { Config } from '../config.js';
+import type { DataChunk } from '../storage/chunk.js';
+import type { Column } from '../storage/column.js';
+import type { ColumnMapping } from './execution-types.js';
 
 const NUMERIC_TYPES = new Set(['INT32', 'FLOAT64', 'DATE', 'DECIMAL']);
 const WIDEN_TYPES = new Set(['INT32', 'DATE']);
 const ARITH_OPS = new Set(['+', '-', '*', '/']);
 const DECIMAL_SCALE = 100;
 
-export function isVectorizableExpr(expr: any): boolean {
+type VecData = Float64Array | Int32Array;
+type Kernel = (a: VecData | number, b?: VecData | number) => VecData | Promise<VecData>;
+
+interface WasmDispatchModule {
+  kernels: Map<string, Kernel>;
+  lookup(operation: string, dataType: string): Kernel | null;
+}
+
+const dispatch: WasmDispatchModule = globalDispatch;
+
+export function isVectorizableExpr(expr: BoundExpr | null): boolean {
   if (!expr) return false;
-  if (expr.kind === BoundExprKind.COLUMN_REF) return NUMERIC_TYPES.has(expr.dataType);
+  if (expr.kind === BoundExprKind.COLUMN_REF) return NUMERIC_TYPES.has(expr.dataType as string);
   if (expr.kind === BoundExprKind.LITERAL) return typeof expr.value === 'number';
   if (expr.kind === BoundExprKind.BINARY && ARITH_OPS.has(expr.op)) {
     return isVectorizableExpr(expr.left) && isVectorizableExpr(expr.right);
@@ -20,48 +34,49 @@ export function isVectorizableExpr(expr: any): boolean {
   return false;
 }
 
-function extractColumnF64(col: any, chunk: any, size: number): any {
+function extractColumnF64(col: Column, chunk: DataChunk, size: number): VecData | null {
   const sv = chunk.selectionVector;
+  const data = col.data!;
   if (col.dataType === 'DECIMAL') {
     const f64 = new Float64Array(size);
     if (sv) {
-      for (let i = 0; i < size; i++) f64[i] = Number(col.data[sv[i]]) / DECIMAL_SCALE;
+      for (let i = 0; i < size; i++) f64[i] = Number(data[sv[i]]) / DECIMAL_SCALE;
     } else {
-      for (let i = 0; i < size; i++) f64[i] = Number(col.data[i]) / DECIMAL_SCALE;
+      for (let i = 0; i < size; i++) f64[i] = Number(data[i]) / DECIMAL_SCALE;
     }
     return f64;
   }
   if (WIDEN_TYPES.has(col.dataType)) {
     if (sv) {
       const compact = new Int32Array(size);
-      for (let i = 0; i < size; i++) compact[i] = col.data[sv[i]];
+      for (let i = 0; i < size; i++) compact[i] = data[sv[i]] as number;
       return compact;
     }
-    return col.data.subarray(0, size);
+    return (data as Int32Array).subarray(0, size);
   }
   if (col.dataType === 'FLOAT64') {
     if (sv) {
       const compact = new Float64Array(size);
-      for (let i = 0; i < size; i++) compact[i] = col.data[sv[i]];
+      for (let i = 0; i < size; i++) compact[i] = data[sv[i]] as number;
       return compact;
     }
-    return col.data.subarray(0, size);
+    return (data as Float64Array).subarray(0, size);
   }
   return null;
 }
 
-export async function evalVectorized(expr: any, chunk: any, columnMapping: any, size: number): Promise<any> {
-  if (globalDispatch.kernels.size === 0) return null;
+export async function evalVectorized(expr: BoundExpr, chunk: DataChunk, columnMapping: ColumnMapping | null, size: number): Promise<VecData | number | null> {
+  if (dispatch.kernels.size === 0) return null;
 
   if (expr.kind === BoundExprKind.COLUMN_REF) {
     const idx = resolveColIndex(expr, columnMapping);
     if (idx < 0) return null;
-    const col = chunk.columns[idx];
+    const col = chunk.columns[idx] as Column;
     if (!col || !col.data) return null;
     const raw = extractColumnF64(col, chunk, size);
     if (!raw) return null;
     if (raw instanceof Int32Array) {
-      const kernel = globalDispatch.lookup('widenI32ToF64', 'INT32');
+      const kernel = dispatch.lookup('widenI32ToF64', 'INT32');
       return kernel ? await kernel(raw) : null;
     }
     return raw;
@@ -75,7 +90,7 @@ export async function evalVectorized(expr: any, chunk: any, columnMapping: any, 
     const operand = await evalVectorized(expr.operand, chunk, columnMapping, size);
     if (operand === null) return null;
     if (typeof operand === 'number') return -operand;
-    const kernel = globalDispatch.lookup('negF64', 'FLOAT64');
+    const kernel = dispatch.lookup('negF64', 'FLOAT64');
     if (!kernel) return null;
     return await kernel(operand);
   }
@@ -91,28 +106,28 @@ export async function evalVectorized(expr: any, chunk: any, columnMapping: any, 
 
     if (leftIsArr && rightIsArr) {
       const name = ({ '+': 'vecAddF64', '-': 'vecSubF64', '*': 'vecMulF64', '/': 'vecDivF64' } as Record<string, string>)[expr.op];
-      const kernel = globalDispatch.lookup(name, 'FLOAT64');
+      const kernel = dispatch.lookup(name, 'FLOAT64');
       return kernel ? await kernel(left, right) : null;
     }
 
     if (leftIsArr && !rightIsArr) {
       const name = ({ '+': 'scalarAddF64', '-': 'scalarSubF64', '*': 'scalarMulF64', '/': 'scalarDivF64' } as Record<string, string>)[expr.op];
-      const kernel = globalDispatch.lookup(name, 'FLOAT64');
+      const kernel = dispatch.lookup(name, 'FLOAT64');
       return kernel ? await kernel(left, Number(right)) : null;
     }
 
     if (!leftIsArr && rightIsArr) {
       if (expr.op === '+' || expr.op === '*') {
         const name = expr.op === '+' ? 'scalarAddF64' : 'scalarMulF64';
-        const kernel = globalDispatch.lookup(name, 'FLOAT64');
+        const kernel = dispatch.lookup(name, 'FLOAT64');
         return kernel ? await kernel(right, Number(left)) : null;
       }
       if (expr.op === '-') {
-        const kernel = globalDispatch.lookup('scalarSubRevF64', 'FLOAT64');
+        const kernel = dispatch.lookup('scalarSubRevF64', 'FLOAT64');
         return kernel ? await kernel(Number(left), right) : null;
       }
       if (expr.op === '/') {
-        const kernel = globalDispatch.lookup('scalarDivRevF64', 'FLOAT64');
+        const kernel = dispatch.lookup('scalarDivRevF64', 'FLOAT64');
         return kernel ? await kernel(Number(left), right) : null;
       }
     }
@@ -121,12 +136,12 @@ export async function evalVectorized(expr: any, chunk: any, columnMapping: any, 
   return null;
 }
 
-function resolveColIndex(expr: any, columnMapping: any): any {
+function resolveColIndex(expr: BoundColumnRefNode, columnMapping: ColumnMapping | null): number {
   if (columnMapping) {
     const key = `${expr.tableAlias}.${expr.columnName}`.toUpperCase();
-    if (columnMapping.has(key)) return columnMapping.get(key);
+    if (columnMapping.has(key)) return columnMapping.get(key)!;
     const byName = expr.columnName.toUpperCase();
-    if (columnMapping.has(byName)) return columnMapping.get(byName);
+    if (columnMapping.has(byName)) return columnMapping.get(byName)!;
   }
   return expr.columnIndex >= 0 ? expr.columnIndex : -1;
 }

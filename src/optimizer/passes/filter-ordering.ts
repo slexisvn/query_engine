@@ -1,12 +1,16 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanNodeType, type LogicalPlanNode } from '../../planner/logical-plan.js';
+import { PlanNodeType, type LogicalPlanNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { DefaultCardinalityEstimator } from '../dphyp/cardinality.js';
-import { BoundExprKind } from '../../binder/expression-binder.js';
+import { BoundExprKind, type BoundExpr, type BoundBinaryNode } from '../../binder/expression-binder.js';
+
+interface TableStatistics { rowCount: number; }
+
+interface ScoredPred { pred: BoundExpr; selectivity: number; }
 
 export class FilterOrdering extends OptimizationPass {
-  cardEstimator: any;
-  constructor(statisticsMap: any = new Map()) {
+  cardEstimator: DefaultCardinalityEstimator;
+  constructor(statisticsMap: Map<string, TableStatistics> = new Map<string, TableStatistics>()) {
     super();
     this.cardEstimator = new DefaultCardinalityEstimator(statisticsMap);
   }
@@ -20,30 +24,30 @@ export class FilterOrdering extends OptimizationPass {
 }
 
 class FilterOrderingRewriter extends PlanRewriter {
-  cardEstimator: any;
-  constructor(cardEstimator: any) {
+  cardEstimator: DefaultCardinalityEstimator;
+  constructor(cardEstimator: DefaultCardinalityEstimator) {
     super();
     this.cardEstimator = cardEstimator;
   }
 
-  rewriteFilter(node: any): any {
-    const rewritten: any = this.rewriteChildren(node);
+  rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
+    const rewritten = this.rewriteChildren(node);
     const conjuncts = splitConjuncts(rewritten.condition);
     if (conjuncts.length < 2) return rewritten;
 
-    const scored = conjuncts.map((pred: any) => ({
+    const scored: ScoredPred[] = conjuncts.map((pred) => ({
       pred,
       selectivity: this.cardEstimator.estimateSelectivity(pred),
     }));
 
-    scored.sort((a: any, b: any) => a.selectivity - b.selectivity);
+    scored.sort((a, b) => a.selectivity - b.selectivity);
 
-    const reordered = combineConjuncts(scored.map((s: any) => s.pred));
+    const reordered = combineConjuncts(scored.map((s) => s.pred));
     return { ...rewritten, condition: reordered };
   }
 }
 
-function splitConjuncts(expr: any): any[] {
+function splitConjuncts(expr: BoundExpr | null): BoundExpr[] {
   if (!expr) return [];
   if (expr.kind === BoundExprKind.BINARY && expr.op === 'AND') {
     return [...splitConjuncts(expr.left), ...splitConjuncts(expr.right)];
@@ -51,14 +55,14 @@ function splitConjuncts(expr: any): any[] {
   return [expr];
 }
 
-function combineConjuncts(preds: any[]): any {
+function combineConjuncts(preds: BoundExpr[]): BoundExpr | null {
   if (preds.length === 0) return null;
   if (preds.length === 1) return preds[0];
-  return preds.reduce((acc: any, p: any) => ({
+  return preds.reduce((acc, p) => ({
     kind: BoundExprKind.BINARY,
     op: 'AND',
     left: acc,
     right: p,
     resultType: 'BOOLEAN',
-  }));
+  } as BoundBinaryNode));
 }

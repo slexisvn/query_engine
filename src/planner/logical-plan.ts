@@ -115,6 +115,8 @@ export interface LogicalAggregateNode extends PlanNodeBase {
 export interface LogicalSortNode extends PlanNodeBase {
   type: PlanNodeType.SORT;
   orderKeys: LogicalOrderKey[];
+  limit?: number;
+  offset?: number;
   children: LogicalPlanNode[];
 }
 
@@ -394,8 +396,8 @@ export function getChildren(node: LogicalPlanNode): LogicalPlanNode[] {
   return node.children || [];
 }
 
-export function setChildren(node: LogicalPlanNode, children: LogicalPlanNode[]): LogicalPlanNode {
-  return { ...node, children } as LogicalPlanNode;
+export function setChildren<T extends LogicalPlanNode>(node: T, children: LogicalPlanNode[]): T {
+  return { ...node, children } as T;
 }
 
 export function planToString(node: LogicalPlanNode, indent: number = 0): string {

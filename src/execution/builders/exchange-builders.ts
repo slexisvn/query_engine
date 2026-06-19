@@ -1,14 +1,65 @@
 import { compileExpression } from '../expression-eval.js';
+import type { DataChunk } from '../../storage/chunk.js';
+import type { PipelineGraph } from '../pipeline.js';
+import type { BoundExpr } from '../../binder/expression-binder.js';
+import type {
+  LogicalPlanNode,
+  LogicalExchangeNode,
+  LogicalMergeExchangeNode,
+  LogicalExchangeReceiveNode,
+} from '../../planner/logical-plan.js';
+import type { CompiledExpr, CompiledPipeline, ColumnMapping, ExecColumn, ExecSchema, Sink } from '../execution-types.js';
 
-function buildKeyExtractors(partitionKeys: any, columnMapping: any): any[] {
+type EncodedChunk = Uint8Array;
+
+interface TransportLike {
+  sendChunk(nodeId: string, channelId: string, encoded: EncodedChunk): Promise<void>;
+  onChunkReceived(channelId: string, handler: (sourceNodeId: string, encodedChunk: EncodedChunk) => void): void;
+}
+
+interface ExchangeConfig {
+  transport: TransportLike;
+  sourceNodes: string[];
+  channelId: string;
+  exchangeType?: string;
+}
+
+interface MergeExchangeConfig {
+  transport: TransportLike;
+  sourceNodes: string[];
+  channelId: string;
+}
+
+interface DistributedContextLike {
+  role: string;
+  getExchangeConfig(node: LogicalExchangeNode): ExchangeConfig;
+  getMergeExchangeConfig(node: LogicalMergeExchangeNode): MergeExchangeConfig;
+}
+
+interface DistributedExchangeNode extends LogicalExchangeNode {
+  _targetNodes?: string[];
+}
+
+interface ChunkReceiverLike {
+  generate(): AsyncGenerator<DataChunk>;
+  cleanup(): void;
+}
+
+interface ExecutorLike {
+  buildPipeline(node: LogicalPlanNode): Promise<CompiledPipeline>;
+  _distributedContext: DistributedContextLike | null;
+  _exchangeReceivers: Map<number, ChunkReceiverLike> | null;
+}
+
+function buildKeyExtractors(partitionKeys: BoundExpr[] | null, columnMapping: ColumnMapping): CompiledExpr[] {
   if (!partitionKeys || partitionKeys.length === 0) return [];
-  return partitionKeys.map((key: any) => {
+  return partitionKeys.map((key: BoundExpr) => {
     const evalFn = compileExpression(key, columnMapping);
-    return (chunk: any, rowIdx: any) => evalFn(chunk, rowIdx);
+    return (chunk: DataChunk, rowIdx: number) => evalFn(chunk, rowIdx);
   });
 }
 
-export async function buildExchange(executor: any, node: any): Promise<any> {
+export async function buildExchange(executor: ExecutorLike, node: LogicalExchangeNode): Promise<CompiledPipeline> {
   const child = await executor.buildPipeline(node.children[0]);
 
   if (executor._distributedContext) {
@@ -23,8 +74,8 @@ export async function buildExchange(executor: any, node: any): Promise<any> {
       return {
         schema: child.schema,
         columnMapping: child.columnMapping,
-        register: (graph: any, currentPipelineId: any, currentSink: any) => {
-          graph.setSource(currentPipelineId, async function* () {
+        register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
+          graph.setSource(currentPipelineId, async function* (): AsyncGenerator<DataChunk> {
             for await (const chunk of receiver.generate()) {
               await currentSink.consume(chunk);
               yield chunk;
@@ -37,7 +88,7 @@ export async function buildExchange(executor: any, node: any): Promise<any> {
     }
 
     const { ExchangeSender } = await import('../../distributed/execution/exchange-operator.js');
-    const sender = new ExchangeSender(transport, node._targetNodes || [], {
+    const sender = new ExchangeSender(transport, (node as DistributedExchangeNode)._targetNodes || [], {
       exchangeType: exchangeType || node.exchangeType,
       channelId,
       partitionCount: node.partitionCount,
@@ -47,10 +98,10 @@ export async function buildExchange(executor: any, node: any): Promise<any> {
     return {
       schema: child.schema,
       columnMapping: child.columnMapping,
-      register: (graph: any, currentPipelineId: any, currentSink: any) => {
-        const childSink = {
+      register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
+        const childSink: Sink = {
           get cancelToken() { return currentSink.cancelToken; },
-          async consume(chunk: any) {
+          async consume(chunk: DataChunk) {
             await sender.consume(chunk);
             await currentSink.consume(chunk);
           },
@@ -67,13 +118,13 @@ export async function buildExchange(executor: any, node: any): Promise<any> {
   return {
     schema: child.schema,
     columnMapping: child.columnMapping,
-    register: (graph: any, currentPipelineId: any, currentSink: any) => {
+    register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       child.register(graph, currentPipelineId, currentSink);
     }
   };
 }
 
-export async function buildMergeExchange(executor: any, node: any): Promise<any> {
+export async function buildMergeExchange(executor: ExecutorLike, node: LogicalMergeExchangeNode): Promise<CompiledPipeline> {
   const child = await executor.buildPipeline(node.children[0]);
 
   if (executor._distributedContext) {
@@ -89,8 +140,8 @@ export async function buildMergeExchange(executor: any, node: any): Promise<any>
     return {
       schema: child.schema,
       columnMapping: child.columnMapping,
-      register: (graph: any, currentPipelineId: any, currentSink: any) => {
-        graph.setSource(currentPipelineId, async function* () {
+      register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
+        graph.setSource(currentPipelineId, async function* (): AsyncGenerator<DataChunk> {
           for await (const chunk of merge.generate()) {
             await currentSink.consume(chunk);
             yield chunk;
@@ -105,17 +156,17 @@ export async function buildMergeExchange(executor: any, node: any): Promise<any>
   return {
     schema: child.schema,
     columnMapping: child.columnMapping,
-    register: (graph: any, currentPipelineId: any, currentSink: any) => {
+    register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       child.register(graph, currentPipelineId, currentSink);
     }
   };
 }
 
-export async function buildExchangeReceive(executor: any, node: any): Promise<any> {
+export async function buildExchangeReceive(executor: ExecutorLike, node: LogicalExchangeReceiveNode): Promise<CompiledPipeline> {
   const receivers = executor._exchangeReceivers;
   const fragmentIds = node.sourceFragmentIds || [];
 
-  const matchingReceivers: any[] = [];
+  const matchingReceivers: ChunkReceiverLike[] = [];
   if (receivers) {
     for (const fid of fragmentIds) {
       const receiver = receivers.get(fid);
@@ -123,9 +174,9 @@ export async function buildExchangeReceive(executor: any, node: any): Promise<an
     }
   }
 
-  const schema = node.schema || [];
-  const columnMapping = new Map<string, any>();
-  schema.forEach((col: any, idx: any) => {
+  const schema = (node.schema || []) as ExecSchema;
+  const columnMapping: ColumnMapping = new Map<string, number>();
+  schema.forEach((col: ExecColumn, idx: number) => {
     if (col.tableAlias) columnMapping.set(`${col.tableAlias}.${col.name}`.toUpperCase(), idx);
     columnMapping.set(col.name.toUpperCase(), idx);
   });
@@ -133,8 +184,8 @@ export async function buildExchangeReceive(executor: any, node: any): Promise<an
   return {
     schema,
     columnMapping,
-    register: (graph: any, currentPipelineId: any, currentSink: any) => {
-      graph.setSource(currentPipelineId, async function* () {
+    register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
+      graph.setSource(currentPipelineId, async function* (): AsyncGenerator<DataChunk> {
         for (const receiver of matchingReceivers) {
           for await (const chunk of receiver.generate()) {
             if (chunk && chunk.size > 0) {

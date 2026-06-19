@@ -1,6 +1,19 @@
 import { BoundExprKind } from '../binder/expression-binder.js';
+import type { BoundExpr, BoundColumnRefNode } from '../binder/expression-binder.js';
+import type { ColumnMapping } from './execution-types.js';
 
-export function splitAnd(expr: any): any[] {
+export interface JoinKeyPair {
+  buildKey: BoundColumnRefNode;
+  probeKey: BoundColumnRefNode;
+}
+
+export interface ExtractedJoinKeys {
+  buildKeys: BoundExpr[];
+  probeKeys: BoundExpr[];
+  residualCondition: BoundExpr | null;
+}
+
+export function splitAnd(expr: BoundExpr | null): BoundExpr[] {
   if (!expr) return [];
   if (expr.kind === BoundExprKind.BINARY && expr.op === 'AND') {
     return [...splitAnd(expr.left), ...splitAnd(expr.right)];
@@ -8,14 +21,14 @@ export function splitAnd(expr: any): any[] {
   return [expr];
 }
 
-function hasColumn(mapping: any, colRef: any): boolean {
+function hasColumn(mapping: ColumnMapping, colRef: BoundColumnRefNode): boolean {
   const fullKey = `${colRef.tableAlias || ''}.${colRef.columnName}`.toUpperCase();
   if (mapping.has(fullKey)) return true;
   const shortKey = colRef.columnName.toUpperCase();
   return mapping.has(shortKey);
 }
 
-export function findCommonEquiJoinKeys(expr: any, leftMapping: any, rightMapping: any): any {
+export function findCommonEquiJoinKeys(expr: BoundExpr | null, leftMapping: ColumnMapping, rightMapping: ColumnMapping): JoinKeyPair | null {
   if (!expr) return null;
 
     if (expr.kind === BoundExprKind.BINARY && expr.op === 'OR') {
@@ -52,14 +65,14 @@ export function findCommonEquiJoinKeys(expr: any, leftMapping: any, rightMapping
     return null;
 }
 
-export function extractJoinKeys(condition: any, leftMapping: any, rightMapping: any): any {
+export function extractJoinKeys(condition: BoundExpr | null, leftMapping: ColumnMapping, rightMapping: ColumnMapping): ExtractedJoinKeys {
   if (!condition) {
     return { buildKeys: [], probeKeys: [], residualCondition: null };
   }
 
-  const buildKeys: any[] = [];
-  const probeKeys: any[] = [];
-  const residualPreds: any[] = [];
+  const buildKeys: BoundExpr[] = [];
+  const probeKeys: BoundExpr[] = [];
+  const residualPreds: BoundExpr[] = [];
   const preds = splitAnd(condition);
 
   for (const pred of preds) {
@@ -91,12 +104,12 @@ export function extractJoinKeys(condition: any, leftMapping: any, rightMapping: 
       residualPreds.length = 0;
       residualPreds.push(condition);
     } else {
-      buildKeys.push({ kind: BoundExprKind.LITERAL, value: 1 });
-      probeKeys.push({ kind: BoundExprKind.LITERAL, value: 1 });
+      buildKeys.push({ kind: BoundExprKind.LITERAL, value: 1, dataType: null });
+      probeKeys.push({ kind: BoundExprKind.LITERAL, value: 1, dataType: null });
     }
   }
 
-  let residualCondition = null;
+  let residualCondition: BoundExpr | null = null;
   if (residualPreds.length > 0) {
     residualCondition = residualPreds.reduce((acc, p) => ({
       kind: BoundExprKind.BINARY,

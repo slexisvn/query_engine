@@ -1,7 +1,17 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanNodeType, JoinType, LogicalFilter, LogicalJoin, getChildren, setChildren, type LogicalPlanNode } from '../../planner/logical-plan.js';
+import { PlanNodeType, JoinType, LogicalFilter, LogicalJoin, getChildren, setChildren, type LogicalPlanNode, type LogicalJoinNode, type LogicalProjectNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { BoundExprKind } from '../../binder/expression-binder.js';
+import { BoundExprKind, type BoundExpr, type BoundBinaryNode } from '../../binder/expression-binder.js';
+
+type MetadataValue = string | number | boolean | object | null | undefined;
+
+interface PlanRefs { aliases: Set<string>; columns: Set<string>; }
+
+interface ExprRef { tableAlias: string; columnName: string; }
+
+interface NamedExpr { outputName?: string; alias?: string; name?: string; columnName?: string; }
+
+type JoinWithMark = LogicalJoinNode & { markColumn?: string };
 
 export class PredicatePushdown extends OptimizationPass {
   get name() { return 'PredicatePushdown'; }
@@ -13,13 +23,13 @@ export class PredicatePushdown extends OptimizationPass {
 }
 
 class PushdownRewriter extends PlanRewriter {
-  rewriteJoin(node: any): any {
-    const rewritten: any = this.rewriteChildren(node);
+  rewriteJoin(node: LogicalJoinNode): LogicalPlanNode {
+    const rewritten = this.rewriteChildren(node);
     return pushJoinConditionPredicates(rewritten);
   }
 
-  rewriteFilter(node: any): any {
-    const child: any = this.rewrite(node.children[0]);
+  rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
+    const child = this.rewrite(node.children[0]);
     const predicates = splitConjuncts(node.condition);
     return pushPredicates(predicates, child);
   }
@@ -29,16 +39,16 @@ class PushdownRewriter extends PlanRewriter {
   }
 }
 
-function pushJoinConditionPredicates(joinNode: any): any {
+function pushJoinConditionPredicates(joinNode: LogicalJoinNode): LogicalPlanNode {
   if (!joinNode.condition) return joinNode;
 
   const rightRefs = collectPlanRefs(joinNode.children[1]);
-  const rightPreds: any[] = [];
-  const joinPreds: any[] = [];
+  const rightPreds: BoundExpr[] = [];
+  const joinPreds: BoundExpr[] = [];
 
   for (const pred of splitConjuncts(joinNode.condition)) {
     const refs = collectTableRefs(pred);
-    const rightOnly = refs.length > 0 && refs.every((r: any) => refBelongsToPlan(r, rightRefs));
+    const rightOnly = refs.length > 0 && refs.every((r) => refBelongsToPlan(r, rightRefs));
 
     if (joinNode.joinType === JoinType.LEFT) {
       if (rightOnly) rightPreds.push(pred);
@@ -65,16 +75,17 @@ function pushJoinConditionPredicates(joinNode: any): any {
   return result;
 }
 
-function copyJoinProperties(joinNode: any): any {
-  const props: any = {};
-  if (joinNode.markColumn) props.markColumn = joinNode.markColumn;
-  for (const key of Object.keys(joinNode)) {
-    if (key.startsWith('_')) props[key] = joinNode[key];
+function copyJoinProperties(joinNode: LogicalJoinNode): Record<string, MetadataValue> {
+  const props: Record<string, MetadataValue> = {};
+  const src = joinNode as JoinWithMark & Record<string, MetadataValue>;
+  if (src.markColumn) props.markColumn = src.markColumn;
+  for (const key of Object.keys(src)) {
+    if (key.startsWith('_')) props[key] = src[key];
   }
   return props;
 }
 
-function pushPredicates(predicates: any[], target: any): any {
+function pushPredicates(predicates: BoundExpr[], target: LogicalPlanNode): LogicalPlanNode {
   if (target.type === PlanNodeType.JOIN) {
     return pushIntoJoin(predicates, target);
   }
@@ -93,11 +104,11 @@ function pushPredicates(predicates: any[], target: any): any {
         groupByRefs.add(`${(gb.tableAlias || '').toUpperCase()}.${(gb.columnName || '').toUpperCase()}`);
       }
     }
-    const pushable: any[] = [];
-    const remaining: any[] = [];
+    const pushable: BoundExpr[] = [];
+    const remaining: BoundExpr[] = [];
     for (const pred of predicates) {
       const refs = collectTableRefs(pred);
-      if (refs.length > 0 && !containsAggregate(pred) && refs.every((r: any) => groupByRefs.has(`${r.tableAlias}.${r.columnName}`))) {
+      if (refs.length > 0 && !containsAggregate(pred) && refs.every((r) => groupByRefs.has(`${r.tableAlias}.${r.columnName}`))) {
         pushable.push(pred);
       } else {
         remaining.push(pred);
@@ -112,8 +123,8 @@ function pushPredicates(predicates: any[], target: any): any {
   }
 
   if (target.type === PlanNodeType.PROJECT) {
-    const pushable: any[] = [];
-    const remaining: any[] = [];
+    const pushable: BoundExpr[] = [];
+    const remaining: BoundExpr[] = [];
     for (const pred of predicates) {
       if (canPushThroughProject(pred, target)) {
         pushable.push(pred);
@@ -133,9 +144,9 @@ function pushPredicates(predicates: any[], target: any): any {
   return LogicalFilter(combineConjuncts(predicates), target);
 }
 
-function canPushThroughProject(pred: any, projectNode: any): boolean {
-  const predRefs = new Set<any>();
-  _walkExpr(pred, (e: any) => {
+function canPushThroughProject(pred: BoundExpr, projectNode: LogicalProjectNode): boolean {
+  const predRefs = new Set<ExprRef>();
+  _walkExpr(pred, (e) => {
     if (e.kind === BoundExprKind.COLUMN_REF) {
       predRefs.add({
         tableAlias: (e.tableAlias || '').toUpperCase(),
@@ -151,19 +162,19 @@ function canPushThroughProject(pred: any, projectNode: any): boolean {
   return true;
 }
 
-function pushIntoJoin(predicates: any[], joinNode: any): any {
+function pushIntoJoin(predicates: BoundExpr[], joinNode: LogicalJoinNode): LogicalPlanNode {
   const leftRefs = collectPlanRefs(joinNode.children[0]);
   const rightRefs = collectPlanRefs(joinNode.children[1]);
 
-  const leftPreds: any[] = [];
-  const rightPreds: any[] = [];
-  const joinPreds: any[] = [];
-  const remaining: any[] = [];
+  const leftPreds: BoundExpr[] = [];
+  const rightPreds: BoundExpr[] = [];
+  const joinPreds: BoundExpr[] = [];
+  const remaining: BoundExpr[] = [];
 
   for (const pred of predicates) {
     const refs = collectTableRefs(pred);
-    const leftOnly = refs.every((r: any) => refBelongsToPlan(r, leftRefs));
-    const rightOnly = refs.every((r: any) => refBelongsToPlan(r, rightRefs));
+    const leftOnly = refs.every((r) => refBelongsToPlan(r, leftRefs));
+    const rightOnly = refs.every((r) => refBelongsToPlan(r, rightRefs));
 
     if (joinNode.joinType === JoinType.INNER || joinNode.joinType === JoinType.CROSS) {
       if (leftOnly) leftPreds.push(pred);
@@ -198,13 +209,14 @@ function pushIntoJoin(predicates: any[], joinNode: any): any {
     joinCondition = combineConjuncts(allJoinPreds);
   }
 
-  let result: any = LogicalJoin(
+  let result: LogicalPlanNode = LogicalJoin(
     joinNode.joinType === JoinType.CROSS && joinCondition ? JoinType.INNER : joinNode.joinType,
     joinCondition,
     left,
     right,
   );
-  if (joinNode.markColumn) result.markColumn = joinNode.markColumn;
+  const srcMark = (joinNode as JoinWithMark).markColumn;
+  if (srcMark) (result as JoinWithMark).markColumn = srcMark;
 
   if (remaining.length > 0) {
     result = LogicalFilter(combineConjuncts(remaining), result);
@@ -213,7 +225,7 @@ function pushIntoJoin(predicates: any[], joinNode: any): any {
   return result;
 }
 
-function rejectsNulls(pred: any): boolean {
+function rejectsNulls(pred: BoundExpr): boolean {
   if (pred.kind === BoundExprKind.BINARY) {
     return ['=', '<>', '<', '>', '<=', '>='].includes(pred.op);
   }
@@ -223,7 +235,7 @@ function rejectsNulls(pred: any): boolean {
   return true;
 }
 
-export function splitConjuncts(expr: any): any[] {
+export function splitConjuncts(expr: BoundExpr | null): BoundExpr[] {
   if (!expr) return [];
   if (expr.kind === BoundExprKind.BINARY && expr.op === 'AND') {
     return [...splitConjuncts(expr.left), ...splitConjuncts(expr.right)];
@@ -231,10 +243,10 @@ export function splitConjuncts(expr: any): any[] {
   return [expr];
 }
 
-export function combineConjuncts(preds: any[]): any {
+export function combineConjuncts(preds: BoundExpr[]): BoundExpr | null {
   if (preds.length === 0) return null;
   if (preds.length === 1) return preds[0];
-  return preds.reduce((acc, p) => ({
+  return preds.reduce((acc, p): BoundBinaryNode => ({
     kind: BoundExprKind.BINARY,
     op: 'AND',
     left: acc,
@@ -243,39 +255,42 @@ export function combineConjuncts(preds: any[]): any {
   }));
 }
 
-function collectPlanRefs(node: any): { aliases: Set<string>; columns: Set<string> } {
-  const refs = { aliases: new Set<string>(), columns: new Set<string>() };
+function collectPlanRefs(node: LogicalPlanNode): PlanRefs {
+  const refs: PlanRefs = { aliases: new Set<string>(), columns: new Set<string>() };
   addOutputRefs(node, refs);
   refs.aliases.delete('');
   refs.columns.delete('');
   return refs;
 }
 
-function addOutputRefs(node: any, refs: { aliases: Set<string>; columns: Set<string> }): void {
+function addOutputRefs(node: LogicalPlanNode, refs: PlanRefs): void {
   if (!node) return;
   if (node.type === PlanNodeType.SCAN) {
     refs.aliases.add(node.alias?.toUpperCase() || node.table?.toUpperCase());
     for (const col of node.columns || []) {
-      refs.columns.add((col.name || col.columnName || '').toUpperCase());
+      refs.columns.add((col.name || (col as { columnName?: string }).columnName || '').toUpperCase());
     }
     return;
   }
   if (node.type === PlanNodeType.CTE_SCAN) {
-    refs.aliases.add((node.alias || node.cteName || '').toUpperCase());
+    refs.aliases.add(((node as { alias?: string }).alias || node.cteName || '').toUpperCase());
     return;
   }
   if (node.type === PlanNodeType.PROJECT) {
     for (const expr of node.expressions || []) {
-      refs.columns.add((expr.outputName || expr.alias || expr.name || expr.columnName || '').toUpperCase());
+      const named = expr as NamedExpr;
+      refs.columns.add((named.outputName || named.alias || named.name || named.columnName || '').toUpperCase());
     }
     return;
   }
   if (node.type === PlanNodeType.AGGREGATE) {
     for (const expr of node.groupBy || []) {
-      refs.columns.add((expr.outputName || expr.alias || expr.name || expr.columnName || '').toUpperCase());
+      const named = expr as NamedExpr;
+      refs.columns.add((named.outputName || named.alias || named.name || named.columnName || '').toUpperCase());
     }
     for (const agg of node.aggregates || []) {
-      refs.columns.add((agg.outputName || agg.alias || agg.name || '').toUpperCase());
+      const named = agg as NamedExpr;
+      refs.columns.add((named.outputName || named.alias || named.name || '').toUpperCase());
     }
     return;
   }
@@ -286,20 +301,20 @@ function addOutputRefs(node: any, refs: { aliases: Set<string>; columns: Set<str
   if (node.children?.[0]) addOutputRefs(node.children[0], refs);
 }
 
-function refBelongsToPlan(ref: any, planRefs: { aliases: Set<string>; columns: Set<string> }): boolean {
+function refBelongsToPlan(ref: ExprRef, planRefs: PlanRefs): boolean {
   if (ref.tableAlias) return planRefs.aliases.has(ref.tableAlias);
   return planRefs.columns.has(ref.columnName);
 }
 
-function containsAggregate(expr: any): boolean {
+function containsAggregate(expr: BoundExpr): boolean {
   let found = false;
-  _walkExpr(expr, (e: any) => { if (e.kind === BoundExprKind.AGGREGATE) found = true; });
+  _walkExpr(expr, (e) => { if (e.kind === BoundExprKind.AGGREGATE) found = true; });
   return found;
 }
 
-function collectTableRefs(expr: any): any[] {
+function collectTableRefs(expr: BoundExpr): ExprRef[] {
   const keys = new Set<string>();
-  _walkExpr(expr, (e: any) => {
+  _walkExpr(expr, (e) => {
     if (e.kind === BoundExprKind.COLUMN_REF) {
       keys.add(`${(e.tableAlias || '').toUpperCase()}.${(e.columnName || '').toUpperCase()}`);
     }
@@ -310,19 +325,35 @@ function collectTableRefs(expr: any): any[] {
   });
 }
 
-function _walkExpr(expr: any, fn: (e: any) => void): void {
+function _walkExpr(expr: BoundExpr | null, fn: (e: BoundExpr) => void): void {
   if (!expr || typeof expr !== 'object') return;
   fn(expr);
-  if (expr.left) _walkExpr(expr.left, fn);
-  if (expr.right) _walkExpr(expr.right, fn);
-  if (expr.operand) _walkExpr(expr.operand, fn);
-  if (expr.expr) _walkExpr(expr.expr, fn);
-  if (expr.low) _walkExpr(expr.low, fn);
-  if (expr.high) _walkExpr(expr.high, fn);
-  if (expr.args) for (const a of expr.args) _walkExpr(a, fn);
-  if (expr.whenClauses) for (const wc of expr.whenClauses) { _walkExpr(wc.condition, fn); _walkExpr(wc.result, fn); }
-  if (expr.elseExpr) _walkExpr(expr.elseExpr, fn);
-  if (expr.list && Array.isArray(expr.list)) for (const item of expr.list) _walkExpr(item, fn);
-  if (expr.pattern) _walkExpr(expr.pattern, fn);
-  if (expr.source) _walkExpr(expr.source, fn);
+  const e = expr as ExprLike;
+  if (e.left) _walkExpr(e.left, fn);
+  if (e.right) _walkExpr(e.right, fn);
+  if (e.operand) _walkExpr(e.operand, fn);
+  if (e.expr) _walkExpr(e.expr, fn);
+  if (e.low) _walkExpr(e.low, fn);
+  if (e.high) _walkExpr(e.high, fn);
+  if (e.args) for (const a of e.args) _walkExpr(a, fn);
+  if (e.whenClauses) for (const wc of e.whenClauses) { _walkExpr(wc.condition, fn); _walkExpr(wc.result, fn); }
+  if (e.elseExpr) _walkExpr(e.elseExpr, fn);
+  if (e.list && Array.isArray(e.list)) for (const item of e.list) _walkExpr(item, fn);
+  if (e.pattern) _walkExpr(e.pattern, fn);
+  if (e.source) _walkExpr(e.source, fn);
 }
+
+type ExprLike = BoundExpr & {
+  left?: BoundExpr;
+  right?: BoundExpr;
+  operand?: BoundExpr;
+  expr?: BoundExpr;
+  low?: BoundExpr;
+  high?: BoundExpr;
+  args?: BoundExpr[];
+  whenClauses?: Array<{ condition: BoundExpr; result: BoundExpr }>;
+  elseExpr?: BoundExpr;
+  list?: BoundExpr | BoundExpr[];
+  pattern?: BoundExpr;
+  source?: BoundExpr;
+};

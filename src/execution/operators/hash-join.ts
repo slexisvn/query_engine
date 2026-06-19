@@ -3,8 +3,55 @@ import { DataChunk } from '../../storage/chunk.js';
 import { JoinType } from '../../planner/logical-plan.js';
 import { Config } from '../../config.js';
 import { joinKeyOf, probeJoinRows, buildJoinOutputChunk } from './join-core.js';
+import type { DataType, ColumnValue } from '../../storage/data-type.js';
+import type { CompiledExpr, EvalValue } from '../execution-types.js';
 
-function hashString(str: any): number {
+type JoinKey = ColumnValue;
+
+interface JoinRowAdapterColumn {
+  get(): ColumnValue;
+}
+
+interface JoinRowAdapter {
+  row: ColumnValue[] | null;
+  columns: JoinRowAdapterColumn[];
+  setRow(r: ColumnValue[]): void;
+}
+
+type ConditionEvaluatorLike = (adapter: JoinRowAdapter, rowIdx: number) => EvalValue;
+
+interface BuildItem {
+  row: ColumnValue[];
+  pIdx?: number;
+  rIdx?: number;
+}
+
+interface PartitionRow {
+  row: ColumnValue[];
+  key: JoinKey;
+}
+
+interface BuildPartition {
+  rows: PartitionRow[];
+  spilled: boolean;
+}
+
+interface ProbeItem {
+  row: ColumnValue[];
+  key: JoinKey;
+}
+
+interface SpillManagerLike {
+  appendChunk(id: string, chunk: DataChunk | null): Promise<void>;
+  readChunks(id: string): AsyncGenerator<DataChunk>;
+  clearAll(): Promise<void>;
+}
+
+interface JoinSink {
+  consume(chunk: DataChunk): Promise<void>;
+}
+
+function hashString(str: string): number {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     hash = (hash << 5) - hash + str.charCodeAt(i);
@@ -13,25 +60,25 @@ function hashString(str: any): number {
   return Math.abs(hash);
 }
 
-function getPartition(keyStr: any): number {
-  return hashString(keyStr) % Config.hashJoinPartitions;
+function getPartition(keyStr: JoinKey): number {
+  return hashString(String(keyStr)) % Config.hashJoinPartitions;
 }
 
 export class HashJoinBuild {
-  keyExtractors: any;
-  joinType: any;
+  keyExtractors: CompiledExpr[];
+  joinType: JoinType;
   uniqueKeys: boolean;
   buildPreserved: boolean;
-  hashTable: Map<any, any>;
-  buildSchema: any;
+  hashTable: Map<JoinKey, BuildItem[]>;
+  buildSchema: DataType[] | null;
   hasNullKey: boolean;
-  nullKeyRows: any[];
-  spillManager: any;
-  partitions: any[];
+  nullKeyRows: ColumnValue[][];
+  spillManager: SpillManagerLike;
+  partitions: BuildPartition[];
   totalRowsInRAM: number;
-  matchedSet: Set<any>;
+  matchedSet: Set<string>;
 
-  constructor(keyExtractors: any, joinType: any, uniqueKeys: any, spillManager: any, buildPreserved: any = false) {
+  constructor(keyExtractors: CompiledExpr[], joinType: JoinType, uniqueKeys: boolean, spillManager: SpillManagerLike, buildPreserved: boolean = false) {
     this.keyExtractors = keyExtractors;
     this.joinType = joinType || JoinType.INNER;
     this.uniqueKeys = !!uniqueKeys;
@@ -52,15 +99,15 @@ export class HashJoinBuild {
 
   async init(): Promise<void> {}
 
-  async consume(chunk: any): Promise<void> {
+  async consume(chunk: DataChunk): Promise<void> {
     if (!this.buildSchema) {
-      this.buildSchema = chunk.columns.map((c: any) => c.dataType);
+      this.buildSchema = chunk.columns.map((c) => c.dataType);
     }
     const flat = chunk.selectionVector ? chunk.flatten() : chunk;
 
-    const chunkRows = new Array(flat.size);
+    const chunkRows: ColumnValue[][] = new Array(flat.size);
     for (let i = 0; i < flat.size; i++) {
-      const row = new Array(flat.columns.length);
+      const row: ColumnValue[] = new Array(flat.columns.length);
       for (let c = 0; c < flat.columns.length; c++) {
         row[c] = flat.columns[c].get(i);
       }
@@ -76,7 +123,7 @@ export class HashJoinBuild {
       }
       const pIdx = getPartition(key);
       const part = this.partitions[pIdx];
-      
+
       part.rows.push({ row: chunkRows[i], key });
 
       if (!part.spilled) {
@@ -105,21 +152,21 @@ export class HashJoinBuild {
     }
   }
 
-  async flushPartition(pIdx: any): Promise<void> {
+  async flushPartition(pIdx: number): Promise<void> {
     const part = this.partitions[pIdx];
     if (part.rows.length === 0) return;
-    const chunk = this.rowsToChunk(part.rows.map((r: any) => r.row));
+    const chunk = this.rowsToChunk(part.rows.map((r) => r.row));
     await this.spillManager.appendChunk(`build_${pIdx}`, chunk);
-    
+
     part.rows = [];
   }
 
-  rowsToChunk(rows: any): any {
+  rowsToChunk(rows: ColumnValue[][]): DataChunk {
     if (rows.length === 0) return new DataChunk([], 0);
     const colCount = rows[0].length;
-    const columns = new Array(colCount);
+    const columns: Column[] = new Array(colCount);
     for (let c = 0; c < colCount; c++) {
-      const col = new Column(this.buildSchema?.[c] || 'VARCHAR', rows.length);
+      const col = new Column((this.buildSchema?.[c] || 'VARCHAR') as DataType, rows.length);
       for (let r = 0; r < rows.length; r++) {
         col.set(r, rows[r][c]);
       }
@@ -150,12 +197,12 @@ export class HashJoinBuild {
     }
   }
 
-  markMatched(packed: any): void {
+  markMatched(packed: BuildItem): void {
     this.matchedSet.add(`${packed.pIdx}_${packed.rIdx}`);
   }
 
-  emitUnmatched(probeColCount: any): any {
-    const rows = [];
+  emitUnmatched(probeColCount: number): ColumnValue[][] {
+    const rows: ColumnValue[][] = [];
     for (let i = 0; i < Config.hashJoinPartitions; i++) {
       const part = this.partitions[i];
       if (!part.spilled) {
@@ -176,59 +223,59 @@ export class HashJoinBuild {
     return rows;
   }
 
-  probe(key: any): any {
+  probe(key: JoinKey): BuildItem[] | null {
     return this.hashTable.get(key) || null;
   }
 
-  buildKey(chunk: any, rowIdx: any): any {
+  buildKey(chunk: DataChunk, rowIdx: number): JoinKey | null {
     return joinKeyOf(this.keyExtractors, chunk, rowIdx);
   }
 }
 
 export class HashJoinProbe {
-  buildSide: any;
-  probeKeyExtractors: any;
-  buildColCount: any;
-  probeColCount: any;
-  joinType: any;
-  conditionEvaluator: any;
-  spillBuffers: any[];
-  probeSchema: any;
+  buildSide: HashJoinBuild;
+  probeKeyExtractors: CompiledExpr[];
+  buildColCount: number;
+  probeColCount: number;
+  joinType: JoinType;
+  conditionEvaluator: CompiledExpr | null;
+  spillBuffers: ProbeItem[][];
+  probeSchema: DataType[] | null;
 
-  constructor(buildSide: any, probeKeyExtractors: any, buildColCount: any, probeColCount: any, joinType: any = JoinType.INNER, conditionEvaluator: any = null) {
+  constructor(buildSide: HashJoinBuild, probeKeyExtractors: CompiledExpr[], buildColCount: number, probeColCount: number, joinType: JoinType = JoinType.INNER, conditionEvaluator: CompiledExpr | null = null) {
     this.buildSide = buildSide;
     this.probeKeyExtractors = probeKeyExtractors;
     this.buildColCount = buildColCount;
     this.probeColCount = probeColCount;
     this.joinType = joinType;
     this.conditionEvaluator = conditionEvaluator;
-    
+
     this.spillBuffers = Array.from({ length: Config.hashJoinPartitions }, () => []);
     this.probeSchema = null;
   }
 
   async init(): Promise<void> {}
 
-  async process(probeChunk: any): Promise<any> {
+  async process(probeChunk: DataChunk): Promise<DataChunk | null> {
     if (!this.probeSchema) {
-      this.probeSchema = probeChunk.columns.map((c: any) => c.dataType);
+      this.probeSchema = probeChunk.columns.map((c) => c.dataType);
     }
-    
+
     const flat = probeChunk.selectionVector ? probeChunk.flatten() : probeChunk;
-    const inMemoryRows = [];
-    
+    const inMemoryRows: ProbeItem[] = [];
+
     for (let i = 0; i < flat.size; i++) {
       const key = this.extractProbeKey(flat, i);
-      const row = new Array(flat.columns.length);
+      const row: ColumnValue[] = new Array(flat.columns.length);
       for (let c = 0; c < flat.columns.length; c++) {
         row[c] = flat.columns[c].get(i);
       }
-      
+
       if (key === null) {
         inMemoryRows.push({ row, key: null });
         continue;
       }
-      
+
       const pIdx = getPartition(key);
       if (this.buildSide.partitions[pIdx].spilled) {
         this.spillBuffers[pIdx].push({ row, key });
@@ -239,28 +286,28 @@ export class HashJoinProbe {
         inMemoryRows.push({ row, key });
       }
     }
-    
+
     if (inMemoryRows.length > 0) {
       return this.executeInMemoryJoin(inMemoryRows);
     }
     return null;
   }
 
-  async flushProbePartition(pIdx: any): Promise<void> {
+  async flushProbePartition(pIdx: number): Promise<void> {
     const buffer = this.spillBuffers[pIdx];
     if (buffer.length === 0) return;
-    
-    const chunk = this.rowsToProbeChunk(buffer.map((r: any) => r.row));
+
+    const chunk = this.rowsToProbeChunk(buffer.map((r) => r.row));
     await this.buildSide.spillManager.appendChunk(`probe_${pIdx}`, chunk);
     this.spillBuffers[pIdx] = [];
   }
 
-  rowsToProbeChunk(rows: any): any {
+  rowsToProbeChunk(rows: ColumnValue[][]): DataChunk {
     if (rows.length === 0) return new DataChunk([], 0);
     const colCount = rows[0].length;
-    const columns = new Array(colCount);
+    const columns: Column[] = new Array(colCount);
     for (let c = 0; c < colCount; c++) {
-      const col = new Column(this.probeSchema?.[c] || 'VARCHAR', rows.length);
+      const col = new Column((this.probeSchema?.[c] || 'VARCHAR') as DataType, rows.length);
       for (let r = 0; r < rows.length; r++) {
         col.set(r, rows[r][c]);
       }
@@ -270,20 +317,20 @@ export class HashJoinProbe {
     return new DataChunk(columns, rows.length);
   }
 
-  executeInMemoryJoin(probeItems: any): any {
-    const resultRows = probeJoinRows(probeItems, (key: any) => this.buildSide.probe(key), {
+  executeInMemoryJoin(probeItems: ProbeItem[]): DataChunk {
+    const resultRows = probeJoinRows(probeItems, (key: JoinKey) => this.buildSide.probe(key), {
       joinType: this.joinType,
       buildColCount: this.buildColCount,
       probeColCount: this.probeColCount,
-      conditionEvaluator: this.conditionEvaluator,
+      conditionEvaluator: this.conditionEvaluator as ConditionEvaluatorLike | null,
       hasNullKey: this.buildSide.hasNullKey,
-      onMatched: (buildItem: any) => this.buildSide.markMatched(buildItem),
+      onMatched: (buildItem: BuildItem) => this.buildSide.markMatched(buildItem),
     });
 
     return this.buildOutputChunk(resultRows);
   }
 
-  async finalize(sink: any): Promise<void> {
+  async finalize(sink: JoinSink): Promise<void> {
     for (let i = 0; i < Config.hashJoinPartitions; i++) {
       if (this.spillBuffers[i].length > 0) {
         await this.flushProbePartition(i);
@@ -301,17 +348,17 @@ export class HashJoinProbe {
       for await (const bChunk of buildIter) {
         for (let r = 0; r < bChunk.size; r++) {
           const key = this.buildSide.buildKey(bChunk, r);
-          const row = new Array(bChunk.columns.length);
+          const row: ColumnValue[] = new Array(bChunk.columns.length);
           for (let c = 0; c < bChunk.columns.length; c++) row[c] = bChunk.columns[c].get(r);
-          
+
           const rIdx = part.rows.length;
-          part.rows.push({ row, key });
-          
-          let bucket = this.buildSide.hashTable.get(key);
+          part.rows.push({ row, key: key as JoinKey });
+
+          let bucket = this.buildSide.hashTable.get(key as JoinKey);
           if (this.buildSide.uniqueKeys && bucket) continue;
           if (!bucket) {
             bucket = [];
-            this.buildSide.hashTable.set(key, bucket);
+            this.buildSide.hashTable.set(key as JoinKey, bucket);
           }
           bucket.push({ row, pIdx: i, rIdx });
         }
@@ -319,14 +366,14 @@ export class HashJoinProbe {
 
       const probeIter = this.buildSide.spillManager.readChunks(`probe_${i}`);
       for await (const pChunk of probeIter) {
-        const pItems: any[] = [];
+        const pItems: ProbeItem[] = [];
         for (let r = 0; r < pChunk.size; r++) {
           const key = this.extractProbeKey(pChunk, r);
-          const row = new Array(pChunk.columns.length);
+          const row: ColumnValue[] = new Array(pChunk.columns.length);
           for (let c = 0; c < pChunk.columns.length; c++) row[c] = pChunk.columns[c].get(r);
           pItems.push({ row, key });
         }
-        
+
         const result = this.executeInMemoryJoin(pItems);
         if (result && result.size > 0) {
           await sink.consume(result);
@@ -337,16 +384,16 @@ export class HashJoinProbe {
     await this.buildSide.spillManager.clearAll();
   }
 
-  extractProbeKey(chunk: any, rowIdx: any): any {
+  extractProbeKey(chunk: DataChunk, rowIdx: number): JoinKey | null {
     return joinKeyOf(this.probeKeyExtractors, chunk, rowIdx);
   }
 
-  buildOutputChunk(rows: any): any {
+  buildOutputChunk(rows: ColumnValue[][]): DataChunk {
     return buildJoinOutputChunk(rows, {
       joinType: this.joinType,
       buildColCount: this.buildColCount,
-      buildSchema: this.buildSide.buildSchema,
-      probeSchema: this.probeSchema,
+      buildSchema: this.buildSide.buildSchema ?? undefined,
+      probeSchema: this.probeSchema ?? undefined,
     });
   }
 }

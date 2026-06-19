@@ -7,9 +7,69 @@ import { UnionOperator } from '../operators/union.js';
 import { WindowOperator } from '../operators/window.js';
 import { CancelToken } from '../pipeline.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
+import type { BoundExpr, BoundWindowNode } from '../../binder/expression-binder.js';
 import { registerBufferedChild } from './builder-utils.js';
+import type { DataChunk } from '../../storage/chunk.js';
+import type { DataType } from '../../storage/data-type.js';
+import type { PipelineGraph } from '../pipeline.js';
+import type {
+  ColumnMapping,
+  CompiledExpr,
+  CompiledPipeline,
+  ExecColumn,
+  ExecSchema,
+  Sink,
+  SourceGenerator,
+} from '../execution-types.js';
+import type {
+  LogicalPlanNode,
+  LogicalFilterNode,
+  LogicalProjectNode,
+  LogicalSortNode,
+  LogicalTopNNode,
+  LogicalLimitNode,
+  LogicalDistinctNode,
+  LogicalUnionNode,
+  LogicalWindowNode,
+  LogicalOrderKey,
+  ProjectedExpr,
+} from '../../planner/logical-plan.js';
 
-export async function buildFilter(executor: any, node: any): Promise<any> {
+type ParallelDispatchLike = ConstructorParameters<typeof FilterOperator>[3];
+type SpillManagerLike = ConstructorParameters<typeof SortOperator>[3];
+
+interface TempManagerLike {
+  allocate(category: string, label: string): string;
+}
+
+interface StorageBackendLike {
+  createSpillManager(handle: string): SpillManagerLike;
+}
+
+interface ExecutorLike {
+  buildPipeline(node: LogicalPlanNode): Promise<CompiledPipeline>;
+  buildSchemaMapping(schema: ExecSchema, alias: string): ColumnMapping;
+  normalizeExecType(dt: DataType | string): DataType;
+  parallelDispatch: ParallelDispatchLike;
+  tempManager: TempManagerLike;
+  storageBackend: StorageBackendLike;
+}
+
+interface ProjectExprMeta {
+  outputName?: string;
+  alias?: string;
+  name?: string;
+  columnName?: string;
+  dataType?: string;
+  resultType?: string;
+}
+
+interface KeyExtractor {
+  eval: CompiledExpr;
+  direction: string;
+}
+
+export async function buildFilter(executor: ExecutorLike, node: LogicalFilterNode): Promise<CompiledPipeline> {
   const child = await executor.buildPipeline(node.children[0]);
   const evalFn = compileExpression(node.condition, child.columnMapping);
   const parallelDispatch = executor.parallelDispatch;
@@ -17,11 +77,11 @@ export async function buildFilter(executor: any, node: any): Promise<any> {
   return {
     schema: child.schema,
     columnMapping: child.columnMapping,
-    register: (graph: any, currentPipelineId: any, currentSink: any) => {
+    register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       const filterOp = new FilterOperator(node.condition, evalFn, child.columnMapping, parallelDispatch);
-      const childSink = {
+      const childSink: Sink = {
         get cancelToken() { return currentSink.cancelToken; },
-        async consume(chunk: any) {
+        async consume(chunk: DataChunk) {
           if (this.cancelToken?.isCancelled) return;
           const filtered = await filterOp.process(chunk);
           if (filtered && filtered.size > 0) {
@@ -37,26 +97,32 @@ export async function buildFilter(executor: any, node: any): Promise<any> {
   };
 }
 
-export async function buildProject(executor: any, node: any): Promise<any> {
+export async function buildProject(executor: ExecutorLike, node: LogicalProjectNode): Promise<CompiledPipeline> {
   const child = await executor.buildPipeline(node.children[0]);
-  const evaluators = node.expressions.map((expr: any) => compileExpression(expr, child.columnMapping));
-  const resultTypes = node.expressions.map((expr: any) => executor.normalizeExecType(expr?.dataType || expr?.resultType || 'VARCHAR'));
+  const evaluators: CompiledExpr[] = node.expressions.map((expr: ProjectedExpr) => compileExpression(expr, child.columnMapping));
+  const resultTypes: DataType[] = node.expressions.map((expr: ProjectedExpr) => {
+    const meta = expr as ProjectExprMeta;
+    return executor.normalizeExecType(meta.dataType || meta.resultType || 'VARCHAR');
+  });
 
-  const schema = node.expressions.map((expr: any, i: any) => ({
-    name: expr?.outputName || expr?.alias || expr?.name || expr?.columnName || `col${i}`,
-    dataType: executor.normalizeExecType(expr?.dataType || expr?.resultType || 'VARCHAR'),
-    tableAlias: '',
-  }));
+  const schema: ExecSchema = node.expressions.map((expr: ProjectedExpr, i: number) => {
+    const meta = expr as ProjectExprMeta;
+    return {
+      name: meta.outputName || meta.alias || meta.name || meta.columnName || `col${i}`,
+      dataType: executor.normalizeExecType(meta.dataType || meta.resultType || 'VARCHAR'),
+      tableAlias: '',
+    };
+  });
   const columnMapping = executor.buildSchemaMapping(schema, '');
 
   return {
     schema,
     columnMapping,
-    register: (graph: any, currentPipelineId: any, currentSink: any) => {
+    register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       const projOp = new ProjectionOperator(node.expressions, evaluators, resultTypes, child.columnMapping, executor.parallelDispatch);
-      const childSink = {
+      const childSink: Sink = {
         get cancelToken() { return currentSink.cancelToken; },
-        async consume(chunk: any) {
+        async consume(chunk: DataChunk) {
           if (this.cancelToken?.isCancelled) return;
           const projected = await projOp.process(chunk);
           await currentSink.consume(projected);
@@ -70,9 +136,9 @@ export async function buildProject(executor: any, node: any): Promise<any> {
   };
 }
 
-export async function buildSort(executor: any, node: any): Promise<any> {
+export async function buildSort(executor: ExecutorLike, node: LogicalSortNode): Promise<CompiledPipeline> {
   const child = await executor.buildPipeline(node.children[0]);
-  const keyExtractors = node.orderKeys.map((ok: any) => ({
+  const keyExtractors: KeyExtractor[] = node.orderKeys.map((ok: LogicalOrderKey) => ({
     eval: compileExpression(ok.expr, child.columnMapping),
     direction: ok.direction || 'ASC',
   }));
@@ -80,11 +146,11 @@ export async function buildSort(executor: any, node: any): Promise<any> {
   return {
     schema: child.schema,
     columnMapping: child.columnMapping,
-    register: (graph: any, currentPipelineId: any, currentSink: any) => {
+    register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       const spillHandle = executor.tempManager.allocate('spill', 'sort');
-      const sortOp = new SortOperator(keyExtractors, node.limit, node.offset || 0, executor.storageBackend.createSpillManager(spillHandle));
-      const sortSink = {
-        async consume(chunk: any) { await sortOp.consume(chunk); },
+      const sortOp = new SortOperator(keyExtractors, node.limit ?? null, node.offset || 0, executor.storageBackend.createSpillManager(spillHandle));
+      const sortSink: Sink = {
+        async consume(chunk: DataChunk) { await sortOp.consume(chunk); },
         async finalize() {}
       };
       const childPipelineId = graph.createPipeline(sortSink);
@@ -92,21 +158,22 @@ export async function buildSort(executor: any, node: any): Promise<any> {
 
       graph.addDependency(currentPipelineId, childPipelineId);
 
-      graph.setSource(currentPipelineId, async function* () {
+      const source: SourceGenerator = async function* () {
         const resultChunks = await sortOp.finalize();
         for (const chunk of resultChunks) {
           await currentSink.consume(chunk);
           yield chunk;
         }
         if (currentSink.finalize) await currentSink.finalize();
-      });
+      };
+      graph.setSource(currentPipelineId, source);
     }
   };
 }
 
-export async function buildTopN(executor: any, node: any): Promise<any> {
+export async function buildTopN(executor: ExecutorLike, node: LogicalTopNNode): Promise<CompiledPipeline> {
   const child = await executor.buildPipeline(node.children[0]);
-  const keyExtractors = node.orderKeys.map((ok: any) => ({
+  const keyExtractors: KeyExtractor[] = node.orderKeys.map((ok: LogicalOrderKey) => ({
     eval: compileExpression(ok.expr, child.columnMapping),
     direction: ok.direction || 'ASC',
   }));
@@ -114,11 +181,11 @@ export async function buildTopN(executor: any, node: any): Promise<any> {
   return {
     schema: child.schema,
     columnMapping: child.columnMapping,
-    register: (graph: any, currentPipelineId: any, currentSink: any) => {
+    register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       const spillHandle = executor.tempManager.allocate('spill', 'topn');
       const sortOp = new SortOperator(keyExtractors, node.count, node.offset || 0, executor.storageBackend.createSpillManager(spillHandle));
-      const sortSink = {
-        async consume(chunk: any) { await sortOp.consume(chunk); },
+      const sortSink: Sink = {
+        async consume(chunk: DataChunk) { await sortOp.consume(chunk); },
         async finalize() {}
       };
       const childPipelineId = graph.createPipeline(sortSink);
@@ -126,19 +193,20 @@ export async function buildTopN(executor: any, node: any): Promise<any> {
 
       graph.addDependency(currentPipelineId, childPipelineId);
 
-      graph.setSource(currentPipelineId, async function* () {
+      const source: SourceGenerator = async function* () {
         const resultChunks = await sortOp.finalize();
         for (const chunk of resultChunks) {
           await currentSink.consume(chunk);
           yield chunk;
         }
         if (currentSink.finalize) await currentSink.finalize();
-      });
+      };
+      graph.setSource(currentPipelineId, source);
     }
   };
 }
 
-export async function buildLimit(executor: any, node: any): Promise<any> {
+export async function buildLimit(executor: ExecutorLike, node: LogicalLimitNode): Promise<CompiledPipeline> {
   const child = await executor.buildPipeline(node.children[0]);
   const limit = node.count;
   const offset = node.offset || 0;
@@ -146,11 +214,11 @@ export async function buildLimit(executor: any, node: any): Promise<any> {
   return {
     schema: child.schema,
     columnMapping: child.columnMapping,
-    register: (graph: any, currentPipelineId: any, currentSink: any) => {
+    register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       const limitOp = new LimitOperator(limit, offset);
       const cancelToken = new CancelToken();
-      const childSink = {
-        async consume(chunk: any) {
+      const childSink: Sink = {
+        async consume(chunk: DataChunk) {
           if (cancelToken.isCancelled) return;
           await limitOp.consume(chunk);
           const resultChunks = await limitOp.finalize();
@@ -176,16 +244,16 @@ export async function buildLimit(executor: any, node: any): Promise<any> {
   };
 }
 
-export async function buildDistinct(executor: any, node: any): Promise<any> {
+export async function buildDistinct(executor: ExecutorLike, node: LogicalDistinctNode): Promise<CompiledPipeline> {
   const child = await executor.buildPipeline(node.children[0]);
 
   return {
     schema: child.schema,
     columnMapping: child.columnMapping,
-    register: (graph: any, currentPipelineId: any, currentSink: any) => {
+    register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       const distinctOp = new DistinctOperator();
-      const childSink = {
-        async consume(chunk: any) {
+      const childSink: Sink = {
+        async consume(chunk: DataChunk) {
           const result = await distinctOp.process(chunk);
           if (result && result.size > 0) {
             await currentSink.consume(result);
@@ -200,18 +268,18 @@ export async function buildDistinct(executor: any, node: any): Promise<any> {
   };
 }
 
-export async function buildUnion(executor: any, node: any): Promise<any> {
+export async function buildUnion(executor: ExecutorLike, node: LogicalUnionNode): Promise<CompiledPipeline> {
   const left = await executor.buildPipeline(node.children[0]);
   const right = await executor.buildPipeline(node.children[1]);
 
   return {
     schema: left.schema,
     columnMapping: left.columnMapping,
-    register: (graph: any, currentPipelineId: any, currentSink: any) => {
+    register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       if (!node.all) {
         const unionOp = new UnionOperator(false);
-        const dedupSink = {
-          async consume(chunk: any) {
+        const dedupSink: Sink = {
+          async consume(chunk: DataChunk) {
             const result = await unionOp.process(chunk);
             if (result && result.size > 0) {
               await currentSink.consume(result);
@@ -229,9 +297,10 @@ export async function buildUnion(executor: any, node: any): Promise<any> {
         graph.addDependency(rightPipelineId, leftPipelineId);
         graph.addDependency(currentPipelineId, rightPipelineId);
 
-        graph.setSource(currentPipelineId, async function* () {
+        const source: SourceGenerator = async function* () {
           if (currentSink.finalize) await currentSink.finalize();
-        });
+        };
+        graph.setSource(currentPipelineId, source);
       } else {
         const leftPipelineId = graph.createPipeline(currentSink);
         const rightPipelineId = graph.createPipeline(currentSink);
@@ -242,26 +311,27 @@ export async function buildUnion(executor: any, node: any): Promise<any> {
         graph.addDependency(currentPipelineId, leftPipelineId);
         graph.addDependency(currentPipelineId, rightPipelineId);
 
-        graph.setSource(currentPipelineId, async function* () {
-        });
+        const source: SourceGenerator = async function* () {
+        };
+        graph.setSource(currentPipelineId, source);
       }
     }
   };
 }
 
-export async function buildWindow(executor: any, node: any): Promise<any> {
+export async function buildWindow(executor: ExecutorLike, node: LogicalWindowNode): Promise<CompiledPipeline> {
   const child = await executor.buildPipeline(node.children[0]);
-  const windowExprs = node.windowExprs;
+  const windowExprs = node.windowExprs as BoundWindowNode[];
 
-  const windowSchema = [
+  const windowSchema: ExecSchema = [
     ...child.schema,
-    ...windowExprs.map((w: any, i: any) => ({
+    ...windowExprs.map((w: BoundWindowNode, i: number): ExecColumn => ({
       name: `__window_${i}`,
       dataType: executor.normalizeExecType(w.resultType || 'FLOAT64'),
       tableAlias: '',
     })),
   ];
-  const windowMapping = new Map<string, any>();
+  const windowMapping: ColumnMapping = new Map<string, number>();
   let idx = 0;
   for (const col of windowSchema) {
     const key = col.tableAlias ? `${col.tableAlias}.${col.name}`.toUpperCase() : col.name.toUpperCase();
@@ -279,10 +349,10 @@ export async function buildWindow(executor: any, node: any): Promise<any> {
   return {
     schema: windowSchema,
     columnMapping: windowMapping,
-    register: (graph: any, currentPipelineId: any, currentSink: any) => {
+    register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       const childChunks = registerBufferedChild(graph, currentPipelineId, child);
 
-      graph.setSource(currentPipelineId, async function* () {
+      const source: SourceGenerator = async function* () {
         const windowOp = new WindowOperator(windowExprs, child.schema, child.columnMapping, compileExpression);
         const resultChunks = await windowOp.execute(childChunks);
         for (const chunk of resultChunks) {
@@ -290,18 +360,19 @@ export async function buildWindow(executor: any, node: any): Promise<any> {
           yield chunk;
         }
         if (currentSink.finalize) await currentSink.finalize();
-      });
+      };
+      graph.setSource(currentPipelineId, source);
     }
   };
 }
 
-function windowExprKey(expr: any): string {
+function windowExprKey(expr: BoundWindowNode): string {
   const name = expr.name?.toUpperCase() || 'WIN';
-  const argKey = (expr.args || []).map((a: any) => {
+  const argKey = (expr.args || []).map((a: BoundExpr) => {
     if (a.kind === BoundExprKind.COLUMN_REF) return `${a.tableAlias}.${a.columnName}`.toUpperCase();
     return JSON.stringify(a).slice(0, 30);
   }).join(',');
-  const partKey = (expr.partitionBy || []).map((p: any) => {
+  const partKey = (expr.partitionBy || []).map((p: BoundExpr) => {
     if (p.kind === BoundExprKind.COLUMN_REF) return `${p.tableAlias}.${p.columnName}`.toUpperCase();
     return '';
   }).join(',');

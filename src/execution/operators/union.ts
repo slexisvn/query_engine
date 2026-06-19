@@ -1,13 +1,14 @@
 import { Column } from '../../storage/column.js';
 import { DataChunk } from '../../storage/chunk.js';
+import type { DataType } from '../../storage/data-type.js';
 
 export class UnionOperator {
-  isAll: any;
-  seen: any;
-  schema: any;
-  _legacyChunks!: any[];
+  isAll: boolean;
+  seen: Set<string> | null;
+  schema: DataType[] | null;
+  _legacyChunks!: DataChunk[];
 
-  constructor(isAll: any) {
+  constructor(isAll: boolean) {
     this.isAll = isAll;
     this.seen = isAll ? null : new Set();
     this.schema = null;
@@ -15,10 +16,10 @@ export class UnionOperator {
 
   async init(): Promise<void> {}
 
-  async process(chunk: any): Promise<any> {
+  async process(chunk: DataChunk): Promise<DataChunk> {
     if (this.isAll) return chunk;
     if (!this.schema) {
-      this.schema = chunk.columns.map((c: any) => c.dataType);
+      this.schema = chunk.columns.map((c) => c.dataType);
     }
 
     const sv = new Uint32Array(chunk.size);
@@ -31,8 +32,8 @@ export class UnionOperator {
         if (c > 0) key += '|';
         key += String(chunk.columns[c].get(rowIdx));
       }
-      if (!this.seen.has(key)) {
-        this.seen.add(key);
+      if (!this.seen!.has(key)) {
+        this.seen!.add(key);
         sv[count++] = rowIdx;
       }
     }
@@ -45,7 +46,7 @@ export class UnionOperator {
     return result;
   }
 
-  async consume(chunk: any): Promise<void> {
+  async consume(chunk: DataChunk): Promise<void> {
     if (!this._legacyChunks) this._legacyChunks = [];
     const result = await this.process(chunk);
     if (result.size > 0) {
@@ -53,7 +54,7 @@ export class UnionOperator {
     }
   }
 
-  async finalize(): Promise<any> {
+  async finalize(): Promise<DataChunk[]> {
     return this._legacyChunks || [];
   }
 }

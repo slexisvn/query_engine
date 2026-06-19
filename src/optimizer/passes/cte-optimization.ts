@@ -1,5 +1,5 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanNodeType, LogicalMaterialize, LogicalCTEScan, getChildren, setChildren, type LogicalPlanNode } from '../../planner/logical-plan.js';
+import { PlanNodeType, LogicalMaterialize, LogicalCTEScan, getChildren, setChildren, type LogicalPlanNode, type LogicalCTEAnchorNode, type LogicalCTEScanNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 
 export class CTEOptimization extends OptimizationPass {
@@ -12,9 +12,9 @@ export class CTEOptimization extends OptimizationPass {
   }
 }
 
-function countCTERefs(node: any): Map<string, number> {
+function countCTERefs(node: LogicalPlanNode): Map<string, number> {
   const counts = new Map<string, number>();
-  _walkPlan(node, (n: any) => {
+  _walkPlan(node, (n: LogicalPlanNode) => {
     if (n.type === PlanNodeType.CTE_SCAN) {
       const key = n.cteName.toUpperCase();
       counts.set(key, (counts.get(key) || 0) + 1);
@@ -25,14 +25,14 @@ function countCTERefs(node: any): Map<string, number> {
 
 class CTERewriter extends PlanRewriter {
   refCounts: Map<string, number>;
-  ctePlans: Map<string, any>;
+  ctePlans: Map<string, LogicalPlanNode>;
   constructor(refCounts: Map<string, number>) {
     super();
     this.refCounts = refCounts;
     this.ctePlans = new Map();
   }
 
-  rewriteCTEAnchor(node: any): any {
+  rewriteCTEAnchor(node: LogicalCTEAnchorNode): LogicalPlanNode {
     const producer = this.rewrite(node.children[0]);
     const consumer = this.rewrite(node.children[1]);
     const key = node.cteName.toUpperCase();
@@ -47,7 +47,7 @@ class CTERewriter extends PlanRewriter {
     return consumer;
   }
 
-  rewriteCTEScan(node: any): any {
+  rewriteCTEScan(node: LogicalCTEScanNode): LogicalPlanNode {
     const key = node.cteName.toUpperCase();
     const plan = this.ctePlans.get(key);
     if (plan) {
@@ -57,7 +57,7 @@ class CTERewriter extends PlanRewriter {
   }
 }
 
-function _walkPlan(node: any, fn: (node: any) => void): void {
+function _walkPlan(node: LogicalPlanNode, fn: (node: LogicalPlanNode) => void): void {
   if (!node) return;
   fn(node);
   for (const child of getChildren(node)) _walkPlan(child, fn);

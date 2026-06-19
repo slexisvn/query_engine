@@ -1,4 +1,5 @@
 import { JoinType, PhysicalStrategy } from '../../planner/logical-plan.js';
+import type { LogicalJoinNode, LogicalPlanNode } from '../../planner/logical-plan.js';
 import { compileExpression } from '../expression-eval.js';
 import { extractJoinKeys } from '../join-utils.js';
 import { HashJoinBuild, HashJoinProbe } from '../operators/hash-join.js';
@@ -11,16 +12,137 @@ import {
   schemasEqual,
   plainSchemaOf,
 } from '../fragment-spec.js';
+import type { Stage, JoinSpec } from '../fragment-spec.js';
 import { Config } from '../../config.js';
 import { combinedMappingOf, registerBufferedChild } from './builder-utils.js';
+import { DataType } from '../../storage/data-type.js';
+import type { BoundExpr } from '../../binder/expression-binder.js';
+import type { ColumnInfo } from '../../binder/scope.js';
+import type { DataChunk } from '../../storage/chunk.js';
+import type { PipelineGraph } from '../pipeline.js';
+import type {
+  ColumnMapping,
+  CompiledExpr,
+  CompiledPipeline,
+  ExecColumn,
+  ExecSchema,
+  Sink,
+} from '../execution-types.js';
 
-export async function buildJoin(executor: any, node: any): Promise<any> {
+type SpillManagerLike = ConstructorParameters<typeof HashJoinBuild>[3];
+export type MakeBuildSide = () => HashJoinBuild;
+export type MakeProbeOp = (buildSide: HashJoinBuild) => HashJoinProbe;
+
+type LogicalMarkJoinNode = LogicalJoinNode & { markColumn?: string };
+
+interface JoinSideSpec {
+  schema: ExecSchema;
+  baseSchema: ExecSchema;
+  stages: Stage[];
+}
+
+export interface JoinSide {
+  spec: JoinSideSpec;
+  storage: TableStorageLike | null;
+  columnIndexes: number[] | null;
+}
+
+export interface ParallelJoinPrep {
+  spec: JoinSpec;
+  buildSide: JoinSide;
+  probeSide: JoinSide;
+}
+
+interface JoinOutputTypes {
+  build: DataType[];
+  probe: DataType[];
+}
+
+interface JoinStreamSide {
+  chunks: DataChunk[];
+  columnIndexes: number[] | null;
+}
+
+export interface FragmentPoolLike {
+  runJoinStream(
+    spec: JoinSpec,
+    buildSide: JoinStreamSide,
+    probeSide: JoinStreamSide,
+    outputTypes: JoinOutputTypes,
+  ): AsyncGenerator<DataChunk>;
+}
+
+interface TempManagerLike {
+  allocate(category: string, label: string): string;
+}
+
+interface StorageBackendLike {
+  createSpillManager(handle: string): SpillManagerLike;
+}
+
+interface TableStorageLike {
+  scan(): AsyncGenerator<DataChunk>;
+  getSchema(): ExecSchema;
+}
+
+interface CatalogLike {
+  getTableStorage(table: string): TableStorageLike | null;
+}
+
+interface ExecutorLike {
+  buildPipeline(node: LogicalPlanNode): Promise<CompiledPipeline>;
+  buildSchemaMapping(schema: ExecSchema, alias: string): ColumnMapping;
+  resolveProjectedColumnIndexes(storageSchema: ExecSchema, planColumns: ColumnInfo[] | null): number[] | null;
+  catalog: CatalogLike;
+  tempManager: TempManagerLike;
+  storageBackend: StorageBackendLike;
+  fragmentPool: FragmentPoolLike | null;
+  _estimatePlanRows(node: LogicalPlanNode): number;
+  _prepareParallelJoin(
+    node: LogicalJoinNode,
+    buildInput: CompiledPipeline,
+    probeInput: CompiledPipeline,
+    buildNode: LogicalPlanNode,
+    probeNode: LogicalPlanNode,
+    buildKeys: BoundExpr[],
+    probeKeys: BoundExpr[],
+    residualCondition: BoundExpr | null,
+    combinedMapping: ColumnMapping,
+  ): ParallelJoinPrep | null;
+  _runBufferedSerialJoin(
+    makeBuildSide: MakeBuildSide,
+    makeProbeOp: MakeProbeOp,
+    buildChunks: DataChunk[],
+    probeChunks: DataChunk[],
+    node: LogicalJoinNode,
+    probeColCount: number,
+  ): Promise<DataChunk[]>;
+  _executeSubPipeline(compiled: CompiledPipeline): Promise<DataChunk[]>;
+}
+
+interface JoinBuildCtx {
+  left: CompiledPipeline;
+  right: CompiledPipeline;
+  buildInput: CompiledPipeline;
+  probeInput: CompiledPipeline;
+  buildKeys: BoundExpr[];
+  probeKeys: BoundExpr[];
+  conditionEvaluator: CompiledExpr | null;
+  resultSchema: ExecSchema;
+  resultMapping: ColumnMapping;
+  isSemiAnti?: boolean;
+  isMark?: boolean;
+  markSchema?: ExecSchema | null;
+}
+
+export async function buildJoin(executor: ExecutorLike, node: LogicalJoinNode): Promise<CompiledPipeline> {
   const left = await executor.buildPipeline(node.children[0]);
   const right = await executor.buildPipeline(node.children[1]);
 
   const isSemiAnti = node.joinType === JoinType.SEMI || node.joinType === JoinType.ANTI;
   const isMark = node.joinType === JoinType.MARK;
-  let buildInput: any, probeInput: any, buildNode: any, probeNode: any;
+  let buildInput: CompiledPipeline, probeInput: CompiledPipeline;
+  let buildNode: LogicalPlanNode, probeNode: LogicalPlanNode;
   if (isSemiAnti || isMark || node._buildSide === 'right') {
     buildInput = right;
     probeInput = left;
@@ -47,14 +169,14 @@ export async function buildJoin(executor: any, node: any): Promise<any> {
     ? compileExpression(residualCondition, combinedMapping)
     : null;
 
-  const markSchema = isMark
-    ? [...left.schema, { name: node.markColumn || '__mark', dataType: 'BOOLEAN', tableAlias: '' }]
+  const markSchema: ExecSchema | null = isMark
+    ? [...left.schema, { name: (node as LogicalMarkJoinNode).markColumn || '__mark', dataType: DataType.BOOLEAN, tableAlias: '' }]
     : null;
-  const resultSchema = isSemiAnti ? left.schema : isMark ? markSchema : combinedSchema;
+  const resultSchema = isSemiAnti ? left.schema : isMark ? markSchema! : combinedSchema;
   const resultMapping = isSemiAnti
     ? left.columnMapping
     : isMark
-      ? executor.buildSchemaMapping(markSchema, '')
+      ? executor.buildSchemaMapping(markSchema!, '')
       : combinedMapping;
 
   if (node.physicalStrategy === PhysicalStrategy.MERGE) {
@@ -68,35 +190,37 @@ export async function buildJoin(executor: any, node: any): Promise<any> {
   if (node.physicalStrategy === PhysicalStrategy.NESTED_LOOP) {
     return buildNestedLoopJoin(node, {
       left, right, buildInput, probeInput,
+      buildKeys, probeKeys, conditionEvaluator,
+      resultSchema, resultMapping,
       isSemiAnti, isMark, markSchema,
     });
   }
 
   const joinSpillHandle = executor.tempManager.allocate('spill', 'join');
-  const makeBuildSide = () => new HashJoinBuild(
-    buildKeys.map((k: any) => compileExpression(k, buildInput.columnMapping)),
+  const makeBuildSide: MakeBuildSide = () => new HashJoinBuild(
+    buildKeys.map((k: BoundExpr) => compileExpression(k, buildInput.columnMapping)),
     node.joinType,
     !!node._dedupeBuild && !conditionEvaluator,
     executor.storageBackend.createSpillManager(joinSpillHandle),
     buildPreserved,
   );
-  const makeProbeOp = (buildSide: any) => new HashJoinProbe(
+  const makeProbeOp: MakeProbeOp = (buildSide: HashJoinBuild) => new HashJoinProbe(
     buildSide,
-    probeKeys.map((k: any) => compileExpression(k, probeInput.columnMapping)),
+    probeKeys.map((k: BoundExpr) => compileExpression(k, probeInput.columnMapping)),
     buildInput.schema.length,
     probeInput.schema.length,
     node.joinType,
     conditionEvaluator
   );
 
-  const serialCompiled = {
+  const serialCompiled: CompiledPipeline = {
     schema: resultSchema,
     columnMapping: resultMapping,
-    register: (graph: any, currentPipelineId: any, currentSink: any) => {
+    register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       const buildSide = makeBuildSide();
 
-      const buildSink = {
-        async consume(chunk: any) { await buildSide.consume(chunk); },
+      const buildSink: Sink = {
+        async consume(chunk: DataChunk) { await buildSide.consume(chunk); },
         async finalize() { await buildSide.finalize(); }
       };
       const buildPipelineId = graph.createPipeline(buildSink);
@@ -104,9 +228,9 @@ export async function buildJoin(executor: any, node: any): Promise<any> {
 
       const probeOp = makeProbeOp(buildSide);
 
-      const probeSink = {
+      const probeSink: Sink = {
         get cancelToken() { return currentSink.cancelToken; },
-        async consume(chunk: any) {
+        async consume(chunk: DataChunk) {
           if (this.cancelToken?.isCancelled) return;
           const result = await probeOp.process(chunk);
           if (result && result.size > 0) {
@@ -141,29 +265,29 @@ export async function buildJoin(executor: any, node: any): Promise<any> {
   return {
     schema: resultSchema,
     columnMapping: resultMapping,
-    register: (graph: any, currentPipelineId: any, currentSink: any) => {
-      const registerSide = (side: any, input: any) =>
+    register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
+      const registerSide = (side: JoinSide, input: CompiledPipeline): DataChunk[] | null =>
         side.storage ? null : registerBufferedChild(graph, currentPipelineId, input);
       const bufferedBuild = registerSide(parallelJoin.buildSide, buildInput);
       const bufferedProbe = registerSide(parallelJoin.probeSide, probeInput);
 
-      graph.setSource(currentPipelineId, async function* () {
-        const collect = async (side: any, buffered: any) => {
-          if (!side.storage) return buffered;
-          const chunks: any[] = [];
+      graph.setSource(currentPipelineId, async function* (): AsyncGenerator<DataChunk> {
+        const collect = async (side: JoinSide, buffered: DataChunk[] | null): Promise<DataChunk[]> => {
+          if (!side.storage) return buffered!;
+          const chunks: DataChunk[] = [];
           for await (const chunk of side.storage.scan()) chunks.push(chunk);
           return chunks;
         };
         const buildChunks = await collect(parallelJoin.buildSide, bufferedBuild);
         const probeChunks = await collect(parallelJoin.probeSide, bufferedProbe);
 
-        const countRows = (chunks: any) => chunks.reduce((sum: any, c: any) => sum + c.size, 0);
+        const countRows = (chunks: DataChunk[]): number => chunks.reduce((sum: number, c: DataChunk) => sum + c.size, 0);
         const buildRows = countRows(buildChunks);
         const probeRows = countRows(probeChunks);
         const eligible = buildRows + probeRows >= Config.parallelJoinThreshold
           && buildRows <= Config.memoryLimit;
 
-        const emitSerial = async function* () {
+        const emitSerial = async function* (): AsyncGenerator<DataChunk> {
           const bothBuffered = bufferedBuild !== null && bufferedProbe !== null;
           const resultChunks = bothBuffered
             ? await executor._runBufferedSerialJoin(makeBuildSide, makeProbeOp, buildChunks, probeChunks, node, probeInput.schema.length)
@@ -181,20 +305,20 @@ export async function buildJoin(executor: any, node: any): Promise<any> {
           return;
         }
 
-        const typesOf = (side: any, chunks: any) => {
-          if (side.storage) return side.spec.schema.map((col: any) => col.dataType);
-          const first = chunks.find((c: any) => c.size > 0);
-          if (first) return first.columns.map((col: any) => col.dataType);
-          return side.spec.schema.map((col: any) => col.dataType);
+        const typesOf = (side: JoinSide, chunks: DataChunk[]): DataType[] => {
+          if (side.storage) return side.spec.schema.map((col: ExecColumn) => col.dataType);
+          const first = chunks.find((c: DataChunk) => c.size > 0);
+          if (first) return first.columns.map((col) => col.dataType);
+          return side.spec.schema.map((col: ExecColumn) => col.dataType);
         };
-        const outputTypes = {
+        const outputTypes: JoinOutputTypes = {
           build: typesOf(parallelJoin.buildSide, buildChunks),
           probe: typesOf(parallelJoin.probeSide, probeChunks),
         };
 
         let emitted = false;
         try {
-          const stream = executor.fragmentPool.runJoinStream(
+          const stream = executor.fragmentPool!.runJoinStream(
             parallelJoin.spec,
             { chunks: buildChunks, columnIndexes: parallelJoin.buildSide.columnIndexes },
             { chunks: probeChunks, columnIndexes: parallelJoin.probeSide.columnIndexes },
@@ -216,7 +340,7 @@ export async function buildJoin(executor: any, node: any): Promise<any> {
   };
 }
 
-function buildMergeJoin(node: any, ctx: any): any {
+function buildMergeJoin(node: LogicalJoinNode, ctx: JoinBuildCtx): CompiledPipeline {
   const { left, right, buildInput, probeInput, conditionEvaluator } = ctx;
   let mergeBuild = buildInput;
   let mergeProbe = probeInput;
@@ -242,16 +366,16 @@ function buildMergeJoin(node: any, ctx: any): any {
   return {
     schema: mergeSchema,
     columnMapping: mergeMapping,
-    register: (graph: any, currentPipelineId: any, currentSink: any) => {
+    register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       const leftChunks = registerBufferedChild(graph, currentPipelineId, left);
       const rightChunks = registerBufferedChild(graph, currentPipelineId, right);
 
-      graph.setSource(currentPipelineId, async function* () {
+      graph.setSource(currentPipelineId, async function* (): AsyncGenerator<DataChunk> {
         const mergeJoin = new MergeJoinOperator(
           mergeBuild === left ? leftChunks : rightChunks,
           mergeProbe === left ? leftChunks : rightChunks,
-          mergeBuildKeys.map((k: any) => compileExpression(k, mergeBuild.columnMapping)),
-          mergeProbeKeys.map((k: any) => compileExpression(k, mergeProbe.columnMapping)),
+          mergeBuildKeys.map((k: BoundExpr) => compileExpression(k, mergeBuild.columnMapping)),
+          mergeProbeKeys.map((k: BoundExpr) => compileExpression(k, mergeProbe.columnMapping)),
           mergeBuild.schema.length,
           mergeProbe.schema.length,
           node.joinType,
@@ -269,7 +393,7 @@ function buildMergeJoin(node: any, ctx: any): any {
   };
 }
 
-function buildNestedLoopJoin(node: any, ctx: any): any {
+function buildNestedLoopJoin(node: LogicalJoinNode, ctx: JoinBuildCtx): CompiledPipeline {
   const { left, right, buildInput, probeInput, isSemiAnti, isMark, markSchema } = ctx;
   const nlOuter = buildInput === left ? buildInput : probeInput;
   const nlInner = buildInput === left ? probeInput : buildInput;
@@ -279,15 +403,15 @@ function buildNestedLoopJoin(node: any, ctx: any): any {
     : null;
   const nlSchema = [...nlOuter.schema, ...nlInner.schema];
   const nlResultMapping = isSemiAnti ? left.columnMapping : nlMapping;
-  const nlResultSchema = isSemiAnti ? left.schema : isMark ? markSchema : nlSchema;
+  const nlResultSchema = isSemiAnti ? left.schema : isMark ? markSchema! : nlSchema;
   return {
     schema: nlResultSchema,
     columnMapping: nlResultMapping,
-    register: (graph: any, currentPipelineId: any, currentSink: any) => {
+    register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       const leftChunks = registerBufferedChild(graph, currentPipelineId, left);
       const rightChunks = registerBufferedChild(graph, currentPipelineId, right);
 
-      graph.setSource(currentPipelineId, async function* () {
+      graph.setSource(currentPipelineId, async function* (): AsyncGenerator<DataChunk> {
         const nlJoin = new NestedLoopJoinOperator(
           nlOuter === left ? leftChunks : rightChunks,
           nlInner === left ? leftChunks : rightChunks,
@@ -307,7 +431,18 @@ function buildNestedLoopJoin(node: any, ctx: any): any {
   };
 }
 
-export function prepareParallelJoin(executor: any, node: any, buildInput: any, probeInput: any, buildNode: any, probeNode: any, buildKeys: any, probeKeys: any, residualCondition: any, combinedMapping: any): any {
+export function prepareParallelJoin(
+  executor: ExecutorLike,
+  node: LogicalJoinNode,
+  buildInput: CompiledPipeline,
+  probeInput: CompiledPipeline,
+  buildNode: LogicalPlanNode,
+  probeNode: LogicalPlanNode,
+  buildKeys: BoundExpr[],
+  probeKeys: BoundExpr[],
+  residualCondition: BoundExpr | null,
+  combinedMapping: ColumnMapping,
+): ParallelJoinPrep | null {
   if (!executor.fragmentPool) return null;
   if (buildKeys.length === 0 || node.joinType === JoinType.CROSS) return null;
   if (executor._estimatePlanRows(node) < Config.parallelJoinThreshold) return null;
@@ -335,9 +470,9 @@ export function prepareParallelJoin(executor: any, node: any, buildInput: any, p
   return { spec, buildSide, probeSide };
 }
 
-function prepareJoinSide(executor: any, planNode: any, input: any): any {
+function prepareJoinSide(executor: ExecutorLike, planNode: LogicalPlanNode | null, input: CompiledPipeline): JoinSide {
   const sideSchema = plainSchemaOf(input.schema);
-  const buffered = {
+  const buffered: JoinSide = {
     spec: { schema: sideSchema, baseSchema: sideSchema, stages: [] },
     storage: null,
     columnIndexes: null,
@@ -350,8 +485,8 @@ function prepareJoinSide(executor: any, planNode: any, input: any): any {
 
   const storageSchema = storage.getSchema();
   const projected = executor.resolveProjectedColumnIndexes(storageSchema, fragment.scanColumns);
-  const columnIndexes = projected || storageSchema.map((_: any, i: any) => i);
-  const baseSchema = columnIndexes.map((i: any) => ({
+  const columnIndexes = projected || storageSchema.map((_: ExecColumn, i: number) => i);
+  const baseSchema: ExecSchema = columnIndexes.map((i: number) => ({
     name: storageSchema[i].name,
     dataType: storageSchema[i].dataType,
     tableAlias: fragment.alias,
@@ -365,13 +500,20 @@ function prepareJoinSide(executor: any, planNode: any, input: any): any {
   };
 }
 
-export async function runBufferedSerialJoin(makeBuildSide: any, makeProbeOp: any, buildChunks: any, probeChunks: any, node: any, probeColCount: any): Promise<any> {
+export async function runBufferedSerialJoin(
+  makeBuildSide: MakeBuildSide,
+  makeProbeOp: MakeProbeOp,
+  buildChunks: DataChunk[],
+  probeChunks: DataChunk[],
+  node: LogicalJoinNode,
+  probeColCount: number,
+): Promise<DataChunk[]> {
   const buildSide = makeBuildSide();
   for (const chunk of buildChunks) await buildSide.consume(chunk);
   await buildSide.finalize();
 
   const probeOp = makeProbeOp(buildSide);
-  const out: any[] = [];
+  const out: DataChunk[] = [];
   for (const chunk of probeChunks) {
     const result = await probeOp.process(chunk);
     if (result && result.size > 0) out.push(result);
@@ -381,7 +523,7 @@ export async function runBufferedSerialJoin(makeBuildSide: any, makeProbeOp: any
     if (unmatchedRows.length > 0) out.push(probeOp.buildOutputChunk(unmatchedRows));
   }
   if (probeOp.finalize) {
-    await probeOp.finalize({ consume: async (chunk: any) => { out.push(chunk); } });
+    await probeOp.finalize({ consume: async (chunk: DataChunk) => { out.push(chunk); } });
   }
   return out;
 }

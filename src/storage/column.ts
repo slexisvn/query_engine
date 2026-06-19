@@ -1,12 +1,35 @@
-import { DataType, isFixedWidth, typedArrayCtorFor } from './data-type.js';
+import { DataType, isFixedWidth, typedArrayCtorFor, type AnyTypedArray, type ColumnValue } from './data-type.js';
 import { bitmapWordCount, setBit, clearBit, testBit } from '../utils/bitmap.js';
-import { heapAllocator } from './sab-arena.js';
+import { heapAllocator, type Allocator } from './sab-arena.js';
 
 const DEFAULT_CAPACITY = 2048;
 const STRING_INITIAL_BYTES = 4096;
 
+export interface ColumnParts {
+  dataType: DataType;
+  data?: AnyTypedArray;
+  offsets?: Uint32Array;
+  stringBytes?: Uint8Array;
+  stringBytesUsed?: number;
+  nullBitmap: Uint32Array;
+  length: number;
+  hasNulls: boolean;
+  allocator?: Allocator;
+}
+
 export class Column {
-  constructor(dataType, capacity = DEFAULT_CAPACITY, allocator = heapAllocator) {
+  dataType: DataType;
+  capacity: number;
+  length: number;
+  allocator: Allocator;
+  data?: AnyTypedArray;
+  offsets?: Uint32Array;
+  stringBytes?: Uint8Array;
+  stringBytesUsed?: number;
+  nullBitmap: Uint32Array;
+  hasNulls: boolean;
+
+  constructor(dataType: DataType, capacity: number = DEFAULT_CAPACITY, allocator: Allocator = heapAllocator) {
     this.dataType = dataType;
     this.capacity = capacity;
     this.length = 0;
@@ -24,8 +47,8 @@ export class Column {
     this.hasNulls = false;
   }
 
-  static fromParts({ dataType, data, offsets, stringBytes, stringBytesUsed, nullBitmap, length, hasNulls, allocator }) {
-    const col = Object.create(Column.prototype);
+  static fromParts({ dataType, data, offsets, stringBytes, stringBytesUsed, nullBitmap, length, hasNulls, allocator }: ColumnParts): Column {
+    const col = Object.create(Column.prototype) as Column;
     col.dataType = dataType;
     col.capacity = length;
     col.length = length;
@@ -41,7 +64,7 @@ export class Column {
     return col;
   }
 
-  get(index) {
+  get(index: number): ColumnValue {
     if (this.hasNulls && !testBit(this.nullBitmap, index)) {
       return null;
     }
@@ -50,14 +73,14 @@ export class Column {
       return this._getString(index);
     }
 
-    const val = this.data[index];
+    const val = this.data![index];
     if (this.dataType === DataType.BOOLEAN) {
       return val !== 0;
     }
     return val;
   }
 
-  set(index, value) {
+  set(index: number, value: ColumnValue): void {
     if (value === null || value === undefined) {
       this._setNull(index);
       return;
@@ -66,11 +89,11 @@ export class Column {
     setBit(this.nullBitmap, index);
 
     if (this.dataType === DataType.VARCHAR) {
-      this._setString(index, value);
+      this._setString(index, value as string);
     } else if (this.dataType === DataType.BOOLEAN) {
-      this.data[index] = value ? 1 : 0;
+      (this.data! as Uint8Array)[index] = value ? 1 : 0;
     } else {
-      this.data[index] = value;
+      (this.data! as Float64Array)[index] = value as number;
     }
 
     if (index >= this.length) {
@@ -78,24 +101,24 @@ export class Column {
     }
   }
 
-  append(value) {
+  append(value: ColumnValue): void {
     if (this.length >= this.capacity) {
       this._grow();
     }
     this.set(this.length, value);
   }
 
-  appendBatch(values) {
+  appendBatch(values: ColumnValue[]): void {
     for (let i = 0; i < values.length; i++) {
       this.append(values[i]);
     }
   }
 
-  isNull(index) {
+  isNull(index: number): boolean {
     return this.hasNulls && !testBit(this.nullBitmap, index);
   }
 
-  slice(start, end) {
+  slice(start: number, end: number): Column {
     const len = end - start;
     const col = new Column(this.dataType, len, this.allocator);
 
@@ -106,7 +129,7 @@ export class Column {
     } else {
       if (this.data) {
         const srcSlice = this.data.subarray(start, end);
-        col.data.set(srcSlice);
+        (col.data! as Float64Array).set(srcSlice as Float64Array);
       }
       for (let i = 0; i < len; i++) {
         if (testBit(this.nullBitmap, start + i)) {
@@ -120,47 +143,47 @@ export class Column {
     return col;
   }
 
-  _setNull(index) {
+  _setNull(index: number): void {
     this.hasNulls = true;
     clearBit(this.nullBitmap, index);
     if (this.dataType === DataType.VARCHAR) {
-      this.offsets[index + 1] = this.offsets[index];
+      this.offsets![index + 1] = this.offsets![index];
     }
     if (index >= this.length) {
       this.length = index + 1;
     }
   }
 
-  _getString(index) {
-    const start = this.offsets[index];
-    const end = this.offsets[index + 1];
+  _getString(index: number): string {
+    const start = this.offsets![index];
+    const end = this.offsets![index + 1];
     if (start === end) return '';
-    const bytes = this.stringBytes.subarray(start, end);
+    const bytes = this.stringBytes!.subarray(start, end);
     return new TextDecoder().decode(bytes);
   }
 
-  _setString(index, value) {
+  _setString(index: number, value: string): void {
     const encoded = new TextEncoder().encode(value);
-    while (this.stringBytesUsed + encoded.length > this.stringBytes.length) {
+    while (this.stringBytesUsed! + encoded.length > this.stringBytes!.length) {
       this._growStringBuffer();
     }
 
-    this.offsets[index] = this.stringBytesUsed;
-    this.stringBytes.set(encoded, this.stringBytesUsed);
-    this.stringBytesUsed += encoded.length;
-    this.offsets[index + 1] = this.stringBytesUsed;
+    this.offsets![index] = this.stringBytesUsed!;
+    this.stringBytes!.set(encoded, this.stringBytesUsed!);
+    this.stringBytesUsed! += encoded.length;
+    this.offsets![index + 1] = this.stringBytesUsed!;
   }
 
-  _grow() {
+  _grow(): void {
     const newCapacity = this.capacity * 2;
 
     if (isFixedWidth(this.dataType)) {
       const newData = this.allocator.acquire(typedArrayCtorFor(this.dataType), newCapacity);
-      newData.set(this.data);
+      (newData as Float64Array).set(this.data! as Float64Array);
       this.data = newData;
     } else {
       const newOffsets = this.allocator.acquire(Uint32Array, newCapacity + 1);
-      newOffsets.set(this.offsets);
+      newOffsets.set(this.offsets!);
       this.offsets = newOffsets;
     }
 
@@ -171,9 +194,9 @@ export class Column {
     this.capacity = newCapacity;
   }
 
-  _growStringBuffer() {
-    const newBuffer = this.allocator.acquire(Uint8Array, this.stringBytes.length * 2);
-    newBuffer.set(this.stringBytes);
+  _growStringBuffer(): void {
+    const newBuffer = this.allocator.acquire(Uint8Array, this.stringBytes!.length * 2);
+    newBuffer.set(this.stringBytes!);
     this.stringBytes = newBuffer;
   }
 }
