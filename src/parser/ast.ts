@@ -141,7 +141,7 @@ export interface WindowSpecNode { kind: NodeKind.WINDOW_SPEC; partitionBy: Expr[
 
 export interface WindowCallNode { kind: NodeKind.WINDOW_CALL; name: string; args: Expr[]; windowSpec: WindowSpecNode; }
 
-export interface CreateTableStmtNode { kind: NodeKind.CREATE_TABLE_STMT; name: string; columns: ColumnDefNode[]; ifNotExists: boolean; }
+export interface CreateTableStmtNode { kind: NodeKind.CREATE_TABLE_STMT; name: string; columns: ColumnDefNode[] | null; ifNotExists: boolean; as: QueryStmt | null; }
 
 export interface DropTableStmtNode { kind: NodeKind.DROP_TABLE_STMT; name: string; ifExists: boolean; }
 
@@ -303,8 +303,8 @@ export function WindowCall(name: string, args: Expr[], windowSpec: WindowSpecNod
   return { kind: NodeKind.WINDOW_CALL, name, args, windowSpec };
 }
 
-export function CreateTableStmt(name: string, columns: ColumnDefNode[], ifNotExists: boolean = false): CreateTableStmtNode {
-  return { kind: NodeKind.CREATE_TABLE_STMT, name, columns, ifNotExists };
+export function CreateTableStmt(name: string, columns: ColumnDefNode[] | null, ifNotExists: boolean = false, as: QueryStmt | null = null): CreateTableStmtNode {
+  return { kind: NodeKind.CREATE_TABLE_STMT, name, columns, ifNotExists, as };
 }
 
 export function DropTableStmt(name: string, ifExists: boolean = false): DropTableStmtNode {

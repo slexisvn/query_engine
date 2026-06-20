@@ -635,8 +635,13 @@ export class Binder {
         return DataType.INT32;
       case 'ABS': case 'ROUND': case 'SQRT':
         return args[0] ? BE.getExprType(args[0]) : DataType.FLOAT64;
-      case 'COALESCE': case 'NULLIF':
-        return args[0] ? BE.getExprType(args[0]) : null;
+      case 'COALESCE': case 'NULLIF': {
+        for (const arg of args) {
+          const argType = BE.getExprType(arg);
+          if (argType) return argType;
+        }
+        return null;
+      }
       default:
         return DataType.VARCHAR;
     }

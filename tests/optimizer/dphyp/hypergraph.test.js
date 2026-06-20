@@ -274,20 +274,36 @@ describe('buildHyperGraph', () => {
     expect(graph.edges).toHaveLength(0);
   });
 
-  it('handles three-way join predicates by creating pairwise edges', () => {
+  it('builds a single hyperedge from a multi-table equality (no all-pairs clique)', () => {
     const relations = [
       { name: 'A', plan: {} },
       { name: 'B', plan: {} },
       { name: 'C', plan: {} },
     ];
-    const threeWayPred = {
+    // (A.x + B.x) = C.y  →  one edge connecting {A,B} to {C}, NOT a 3-clique.
+    const pred = {
       kind: BoundExprKind.BINARY,
-      op: 'AND',
-      left: makeEqPred('A', 'id', 'B', 'a_id'),
-      right: makeColRef('C', 'x'),
+      op: '=',
+      left: {
+        kind: BoundExprKind.BINARY,
+        op: '+',
+        left: makeColRef('A', 'x'),
+        right: makeColRef('B', 'x'),
+      },
+      right: makeColRef('C', 'y'),
     };
     const estimator = { estimateScan: () => 100 };
-    const graph = buildHyperGraph(relations, [threeWayPred], estimator);
-    expect(graph.edges.length).toBeGreaterThanOrEqual(3);
+    const graph = buildHyperGraph(relations, [pred], estimator);
+
+    const a = 1 << graph.relationIndex.get('A');
+    const b = 1 << graph.relationIndex.get('B');
+    const c = 1 << graph.relationIndex.get('C');
+
+    expect(graph.edges).toHaveLength(1);
+    const edge = graph.edges[0];
+    expect(edge.leftMask | edge.rightMask).toBe(a | b | c);
+    // one side is exactly {A,B}, the other exactly {C}
+    expect([edge.leftMask, edge.rightMask]).toContain(a | b);
+    expect([edge.leftMask, edge.rightMask]).toContain(c);
   });
 });

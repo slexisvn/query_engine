@@ -155,6 +155,18 @@ export function setDefaultStorageBackend(factory: StorageBackendFactory): void {
   _defaultBackendFactory = factory;
 }
 
+function coerceForStorage(value: ColumnValue, dataType: DataType): ColumnValue {
+  if (value === null || value === undefined) return null;
+  const wantsBigInt = dataType === DataType.INT64 || dataType === DataType.DECIMAL || dataType === DataType.TIMESTAMP;
+  if (wantsBigInt) {
+    return typeof value === 'bigint' ? value : BigInt(Math.round(Number(value)));
+  }
+  if (typeof value === 'bigint') {
+    return dataType === DataType.VARCHAR ? value.toString() : Number(value);
+  }
+  return value;
+}
+
 export class QueryEngine {
   catalog: Catalog;
   functionRegistry: typeof defaultFunctionRegistry;
@@ -414,7 +426,7 @@ export class QueryEngine {
     }
   }
 
-  executeDDL(ddl: DDLStmt): DDLResult {
+  async executeDDL(ddl: DDLStmt): Promise<DDLResult> {
     if (ddl.kind === 'CreateTableStmt') {
       return this.executeCreateTable(ddl);
     }
@@ -424,7 +436,20 @@ export class QueryEngine {
     throw new Error(`Unknown DDL: ${(ddl as DDLStmt).kind}`);
   }
 
-  executeCreateTable(stmt: CreateTableStmtNode): DDLResult {
+  async executeCreateTable(stmt: CreateTableStmtNode): Promise<DDLResult> {
+    const tableName = stmt.name.toUpperCase();
+
+    if (this.catalog.getTable(tableName)) {
+      if (stmt.ifNotExists) {
+        return { rows: [], columns: [], message: `Table ${tableName} already exists` };
+      }
+      throw new Error(`Table ${tableName} already exists`);
+    }
+
+    if (stmt.as) {
+      return this.createTableAsSelect(tableName, stmt.as);
+    }
+
     const resolveType = (typeName: TypeNameNode): DataType => {
       const map: Record<string, DataType> = {
         'INTEGER': DataType.INT32, 'INT': DataType.INT32, 'INT32': DataType.INT32,
@@ -439,16 +464,7 @@ export class QueryEngine {
       return map[typeName.name.toUpperCase()] || DataType.VARCHAR;
     };
 
-    const tableName = stmt.name.toUpperCase();
-
-    if (this.catalog.getTable(tableName)) {
-      if (stmt.ifNotExists) {
-        return { rows: [], columns: [], message: `Table ${tableName} already exists` };
-      }
-      throw new Error(`Table ${tableName} already exists`);
-    }
-
-    const columns: ColumnSchema[] = stmt.columns.map((col: ColumnDefNode) => ({
+    const columns: ColumnSchema[] = (stmt.columns ?? []).map((col: ColumnDefNode) => ({
       name: col.name.toUpperCase(),
       dataType: resolveType(col.typeName),
     }));
@@ -459,6 +475,69 @@ export class QueryEngine {
     this.catalog.registerTableStorage(tableName, table);
 
     return { rows: [], columns: [], message: `Table ${tableName} created` };
+  }
+
+  async createTableAsSelect(tableName: string, query: QueryStmt): Promise<DDLResult> {
+    const bound = this.bind(query);
+    const logicalPlan = this.plan(bound);
+    const cteMap = logicalPlan._cteMap || new Map<string, LogicalPlanNode>();
+    const result = await this._runPlan(logicalPlan, bound.outputColumns, false, cteMap);
+    const columnNames = result.columns;
+
+    const seen = new Set<string>();
+    for (const name of columnNames) {
+      const upper = name.toUpperCase();
+      if (seen.has(upper)) {
+        throw new Error(`Duplicate column name "${name}" in CREATE TABLE ... AS — use an explicit alias`);
+      }
+      seen.add(upper);
+    }
+
+    // Derive the column types from the executor's actual output columns so the
+    // new table's storage representation matches the values produced (the
+    // binder's static type can disagree with the runtime physical type, e.g.
+    // COUNT(*) or pass-through INT64). Fall back to the bound types only when
+    // the result yields no chunks to inspect.
+    const fallbackTypes = (): ColumnSchema[] =>
+      columnNames.map((name: string, i: number) => ({
+        name: name.toUpperCase(),
+        dataType: (bound.outputColumns[i]?.dataType ?? DataType.VARCHAR) as DataType,
+      }));
+
+    const pageStore = this.storageBackend.createPageStore(this.tempManager.allocate('buffer', tableName));
+    let table: Table | null = null;
+    let columns: ColumnSchema[] | null = null;
+    let rowCount = 0;
+
+    for await (const chunk of result.chunks()) {
+      if (!table) {
+        columns = columnNames.map((name: string, j: number) => ({
+          name: name.toUpperCase(),
+          dataType: chunk.columns[j].dataType,
+        }));
+        table = new Table(tableName, columns, pageStore);
+      }
+      if (chunk.size === 0) continue;
+      const rows = chunk.toRows();
+      for (const row of rows) {
+        for (let j = 0; j < row.length; j++) {
+          row[j] = coerceForStorage(row[j], columns![j].dataType);
+        }
+      }
+      await table.insertRows(rows);
+      rowCount += chunk.size;
+    }
+
+    if (!table) {
+      columns = fallbackTypes();
+      table = new Table(tableName, columns, pageStore);
+    }
+    await table.flush();
+
+    this.catalog.registerTable(tableName, columns!);
+    this.catalog.registerTableStorage(tableName, table);
+
+    return { rows: [], columns: [], message: `Table ${tableName} created with ${rowCount} rows` };
   }
 
   executeDropTable(stmt: DropTableStmtNode): DDLResult {

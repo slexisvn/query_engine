@@ -649,6 +649,24 @@ describe('Parser', () => {
       const cte = ast.withClause.ctes[0];
       expect(cte.columnAliases).toEqual(['dept', 'total']);
     });
+
+    it('attaches the WITH clause to a parenthesized SELECT body (does not drop it)', () => {
+      const ast = parse('WITH c AS (SELECT 1 AS x) (SELECT * FROM c)');
+      expect(ast.kind).toBe(NodeKind.SELECT_STMT);
+      expect(ast.withClause).not.toBeNull();
+      expect(ast.withClause.ctes[0].name).toBe('c');
+    });
+
+    it('attaches the WITH clause to a parenthesized FROM-first body', () => {
+      const ast = parse('WITH c AS (SELECT 1 AS x) (FROM c)');
+      expect(ast.kind).toBe(NodeKind.SELECT_STMT);
+      expect(ast.withClause).not.toBeNull();
+      expect(ast.withClause.ctes[0].name).toBe('c');
+    });
+
+    it('rejects a WITH clause before a parenthesized set operation', () => {
+      expect(() => parse('WITH c AS (SELECT 1) (SELECT 1 UNION SELECT 2)')).toThrow(/set operation/);
+    });
   });
 
   describe('set operations', () => {

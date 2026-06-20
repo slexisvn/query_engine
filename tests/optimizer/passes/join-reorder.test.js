@@ -283,7 +283,67 @@ describe('JoinReorder', () => {
       });
     }
   });
+
+  describe('multi-table bridge predicate does not create cross products', () => {
+    it('keeps every join condition within its own subtree (no fabricated leaf joins)', () => {
+      const stats = makeStats({ a: 100, b: 100, c: 100, d: 100 });
+      const pass = new JoinReorder(stats);
+
+      // Two local equi-joins (A-B, C-D) plus one bridge spanning all four:
+      // (A.fk + B.fk) = (C.fk + D.fk). The bridge must NOT be decomposed into an
+      // all-pairs clique (which would let the planner pick e.g. A⋈C at a leaf and
+      // attach the bridge there, referencing absent tables B,D).
+      const bridge = bin(
+        bin(colRef('a', 'fk'), '+', colRef('b', 'fk')),
+        '=',
+        bin(colRef('c', 'fk'), '+', colRef('d', 'fk')),
+      );
+      const cond = bin(bin(eqJoin('a', 'id', 'b', 'id'), 'AND', eqJoin('c', 'id', 'd', 'id')), 'AND', bridge);
+      const crossABC = LogicalJoin(
+        JoinType.CROSS, null,
+        LogicalJoin(JoinType.CROSS, null, scan('a'), scan('b')),
+        scan('c'),
+      );
+      const plan = LogicalJoin(JoinType.INNER, cond, crossABC, scan('d'));
+
+      const result = pass.apply(plan);
+
+      // Invariant the clique bug violated: a join's condition may only reference
+      // tables that exist beneath that join.
+      const violations = [];
+      walkJoins(result, (join) => {
+        const available = new Set(collectScanTables(join).map((t) => t.toUpperCase()));
+        for (const ref of condRefs(join.condition)) {
+          if (!available.has(ref)) violations.push(`${ref} not in [${[...available].sort()}]`);
+        }
+      });
+      expect(violations).toEqual([]);
+      expect(collectScanTables(result).sort()).toEqual(['a', 'b', 'c', 'd']);
+    });
+  });
 });
+
+function walkJoins(node, fn) {
+  if (!node) return;
+  if (node.type === PlanNodeType.JOIN) fn(node);
+  for (const c of node.children || []) walkJoins(c, fn);
+  if (node.buildSide) walkJoins(node.buildSide, fn);
+  if (node.probeSide) walkJoins(node.probeSide, fn);
+}
+
+function condRefs(expr) {
+  const refs = new Set();
+  function walk(e) {
+    if (!e) return;
+    if (e.kind === BoundExprKind.COLUMN_REF && e.tableAlias) refs.add(e.tableAlias.toUpperCase());
+    if (e.left) walk(e.left);
+    if (e.right) walk(e.right);
+    if (e.operand) walk(e.operand);
+    if (e.args) for (const a of e.args) walk(a);
+  }
+  walk(expr);
+  return refs;
+}
 
 function collectScanTables(node) {
   const tables = [];

@@ -12,6 +12,14 @@ export class Parser {
   }
 
   parse(): AST.Statement {
+    const stmt = this.parseStatement();
+    if (!this.isAt(TokenType.EOF) && !this.isAt(TokenType.SEMICOLON)) {
+      this.error(`Unexpected token ${this.peek().type}`);
+    }
+    return stmt;
+  }
+
+  parseStatement(): AST.Statement {
     if (this.isAt(TokenType.CREATE)) {
       return this.parseCreateTable();
     }
@@ -31,10 +39,6 @@ export class Parser {
     }
 
     const stmt = this.parseQueryExpr();
-    if (!this.isAt(TokenType.EOF) && !this.isAt(TokenType.SEMICOLON)) {
-      this.error(`Unexpected token ${this.peek().type}`);
-    }
-
     if (isAnalyze) return AST.ExplainAnalyzeStmt(stmt);
     return isExplain ? AST.ExplainStmt(stmt) : stmt;
   }
@@ -50,6 +54,10 @@ export class Parser {
       ifNotExists = true;
     }
     const name = this.expectIdent();
+    if (this.tryConsume(TokenType.AS)) {
+      const query = this.parseQueryExpr();
+      return AST.CreateTableStmt(name, null, ifNotExists, query);
+    }
     this.expect(TokenType.LPAREN);
     const columns: AST.ColumnDefNode[] = [];
     do {
@@ -98,15 +106,27 @@ export class Parser {
       this.advance();
       const inner = this.parseQueryExpr();
       this.expect(TokenType.RPAREN);
+      if (withClause) {
+        if (inner.kind === AST.NodeKind.SELECT_STMT) {
+          if (inner.withClause) this.error('Multiple WITH clauses are not allowed');
+          inner.withClause = withClause;
+        } else {
+          this.error('WITH clause cannot precede a parenthesized set operation');
+        }
+      }
       return inner;
     }
 
-    this.expect(TokenType.SELECT);
-
-    const distinct = this.tryConsume(TokenType.DISTINCT);
-    if (!distinct) this.tryConsume(TokenType.ALL);
-
-    const selectItems = this.parseSelectItems();
+    let distinct = false;
+    let selectItems: AST.SelectItemNode[];
+    if (this.isAt(TokenType.FROM)) {
+      selectItems = [AST.SelectItem(AST.AllColumns())];
+    } else {
+      this.expect(TokenType.SELECT);
+      distinct = this.tryConsume(TokenType.DISTINCT);
+      if (!distinct) this.tryConsume(TokenType.ALL);
+      selectItems = this.parseSelectItems();
+    }
 
     let from: AST.FromItem | null = null;
     if (this.tryConsume(TokenType.FROM)) {
@@ -419,7 +439,7 @@ export class Parser {
     this.advance();
     this.expect(TokenType.LPAREN);
 
-    if (this.isAt(TokenType.SELECT) || this.isAt(TokenType.WITH)) {
+    if (this.isAt(TokenType.SELECT) || this.isAt(TokenType.WITH) || this.isAt(TokenType.FROM)) {
       const query = this.parseQueryExpr();
       this.expect(TokenType.RPAREN);
       return AST.InExpr(left, AST.SubqueryExpr(query), negated);
@@ -905,7 +925,7 @@ export class Parser {
       if (this.tokens[i].type === TokenType.LPAREN) depth++;
       if (this.tokens[i].type === TokenType.RPAREN) depth--;
       if (depth === 0 && i > this.pos) break;
-      if (depth === 1 && (this.tokens[i].type === TokenType.SELECT || this.tokens[i].type === TokenType.WITH)) {
+      if (depth === 1 && (this.tokens[i].type === TokenType.SELECT || this.tokens[i].type === TokenType.WITH || this.tokens[i].type === TokenType.FROM)) {
         return true;
       }
     }

@@ -97,6 +97,28 @@ describe('Binder', () => {
     });
   });
 
+  describe('COALESCE / NULLIF type inference', () => {
+    it('infers COALESCE type from the first non-null-typed argument', () => {
+      const bound = bind('SELECT COALESCE(NULL, id) AS y FROM users');
+      expect(bound.outputColumns[0].dataType).toBe(DataType.INT32);
+    });
+
+    it('infers COALESCE type from a leading typed argument', () => {
+      const bound = bind('SELECT COALESCE(id, 0) AS y FROM users');
+      expect(bound.outputColumns[0].dataType).toBe(DataType.INT32);
+    });
+
+    it('infers NULLIF type past a leading NULL literal', () => {
+      const bound = bind('SELECT NULLIF(NULL, age) AS y FROM users');
+      expect(bound.outputColumns[0].dataType).toBe(DataType.INT32);
+    });
+
+    it('leaves COALESCE of all-untyped NULLs as a null type', () => {
+      const bound = bind('SELECT COALESCE(NULL, NULL) AS y FROM users');
+      expect(bound.outputColumns[0].dataType).toBeNull();
+    });
+  });
+
   describe('table references', () => {
     it('binds simple table ref', () => {
       const bound = bind('SELECT id FROM users');

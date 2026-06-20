@@ -145,14 +145,21 @@ export function buildHyperGraph(relations: Relation[], joinPredicates: BoundExpr
   }
 
   for (const pred of joinPredicates) {
-    const refs = collectColumnTableRefs(pred);
-    if (refs.size < 2) continue;
+    const allRefs = collectColumnTableRefs(pred);
+    if (allRefs.size < 2) continue;
 
-    const refsArray = [...refs];
-    for (let i = 0; i < refsArray.length; i++) {
-      for (let j = i + 1; j < refsArray.length; j++) {
-        graph.addEdge([refsArray[i]], [refsArray[j]], pred);
-      }
+    let leftRefs: string[] = [];
+    let rightRefs: string[] = [];
+    if (pred.kind === BoundExprKind.BINARY) {
+      leftRefs = [...collectColumnTableRefs(pred.left)];
+      rightRefs = [...collectColumnTableRefs(pred.right)];
+    }
+
+    if (leftRefs.length > 0 && rightRefs.length > 0) {
+      graph.addEdge(leftRefs, rightRefs, pred);
+    } else {
+      const refsArray = [...allRefs];
+      graph.addEdge([refsArray[0]], refsArray.slice(1), pred);
     }
   }
 
