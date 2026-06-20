@@ -5,16 +5,16 @@ import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js
 import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
 
 export class PredicateDedup extends OptimizationPass {
-  get name() { return 'PredicateDedup'; }
+  override get name() { return 'PredicateDedup'; }
 
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new DedupRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class DedupRewriter extends PlanRewriter {
-  rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
+  override rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
     const child = this.rewrite(node.children[0]);
     const preds = splitConjuncts(node.condition);
     const unique = dedup(preds);
@@ -24,7 +24,7 @@ class DedupRewriter extends PlanRewriter {
     return LogicalFilter(combineConjuncts(unique), child);
   }
 
-  rewriteJoin(node: LogicalJoinNode): LogicalPlanNode {
+  override rewriteJoin(node: LogicalJoinNode): LogicalPlanNode {
     const newNode = this.rewriteChildren(node);
     if (!newNode.condition) return newNode;
 

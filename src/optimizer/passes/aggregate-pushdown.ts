@@ -38,16 +38,16 @@ const DECOMPOSABLE_FUNCTIONS = new Map<string, { partial: string; final: string 
 ]);
 
 export class AggregatePushdown extends OptimizationPass {
-  get name() { return 'AggregatePushdown'; }
+  override get name() { return 'AggregatePushdown'; }
 
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new AggregatePushdownRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class AggregatePushdownRewriter extends PlanRewriter {
-  rewriteAggregate(node: LogicalAggregateNode): LogicalPlanNode {
+  override rewriteAggregate(node: LogicalAggregateNode): LogicalPlanNode {
     const rewritten = this.rewriteChildren(node);
     const child = rewritten.children[0];
 

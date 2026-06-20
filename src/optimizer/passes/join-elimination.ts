@@ -12,9 +12,9 @@ interface NamedExpr {
 }
 
 export class JoinElimination extends OptimizationPass {
-  get name() { return 'JoinElimination'; }
+  override get name() { return 'JoinElimination'; }
 
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new JoinEliminationRewriter();
     return rewriter.rewrite(plan);
   }
@@ -23,7 +23,7 @@ export class JoinElimination extends OptimizationPass {
 const COLUMN_RESTRICTING_PARENTS = new Set<PlanNodeType>([PlanNodeType.PROJECT, PlanNodeType.AGGREGATE]);
 
 class JoinEliminationRewriter extends PlanRewriter {
-  rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
+  override rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
     const newNode = this.rewriteChildren(node);
 
     if (COLUMN_RESTRICTING_PARENTS.has(newNode.type) && hasLeftJoinChild(newNode)) {

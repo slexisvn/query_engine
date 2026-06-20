@@ -52,8 +52,8 @@ export class IndexSelection extends OptimizationPass {
     this.catalog = catalog;
     this.statistics = statistics;
   }
-  get name() { return 'IndexSelection'; }
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override get name() { return 'IndexSelection'; }
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new IndexSelectionRewriter(this.catalog, this.statistics);
     return rewriter.rewrite(plan);
   }
@@ -68,7 +68,7 @@ class IndexSelectionRewriter extends PlanRewriter {
     this.statistics = statistics;
   }
 
-  rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
+  override rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
     const child = this.rewrite(node.children[0]);
     if (child.type !== PlanNodeType.SCAN) {
       const newNode = { ...node, children: [child] };

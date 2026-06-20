@@ -9,12 +9,12 @@ export interface PageStore {
 
 export class BufferPoolManager {
   maxPages: number;
-  cache: LRUCache;
+  cache: LRUCache<string, DataChunk | null>;
   pageStore: PageStore;
 
   constructor(maxPages: number, pageStore: PageStore) {
     this.maxPages = maxPages;
-    this.cache = new LRUCache(maxPages);
+    this.cache = new LRUCache<string, DataChunk | null>(maxPages);
     this.pageStore = pageStore;
   }
 

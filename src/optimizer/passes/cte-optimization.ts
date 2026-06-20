@@ -3,9 +3,9 @@ import { PlanNodeType, LogicalMaterialize, LogicalCTEScan, getChildren, setChild
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 
 export class CTEOptimization extends OptimizationPass {
-  get name() { return 'CTEOptimization'; }
+  override get name() { return 'CTEOptimization'; }
 
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     const refCounts = countCTERefs(plan);
     const rewriter = new CTERewriter(refCounts);
     return rewriter.rewrite(plan);
@@ -32,7 +32,7 @@ class CTERewriter extends PlanRewriter {
     this.ctePlans = new Map();
   }
 
-  rewriteCTEAnchor(node: LogicalCTEAnchorNode): LogicalPlanNode {
+  override rewriteCTEAnchor(node: LogicalCTEAnchorNode): LogicalPlanNode {
     const producer = this.rewrite(node.children[0]);
     const consumer = this.rewrite(node.children[1]);
     const key = node.cteName.toUpperCase();
@@ -47,7 +47,7 @@ class CTERewriter extends PlanRewriter {
     return consumer;
   }
 
-  rewriteCTEScan(node: LogicalCTEScanNode): LogicalPlanNode {
+  override rewriteCTEScan(node: LogicalCTEScanNode): LogicalPlanNode {
     const key = node.cteName.toUpperCase();
     const plan = this.ctePlans.get(key);
     if (plan) {

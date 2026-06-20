@@ -15,9 +15,9 @@ export class FilterOrdering extends OptimizationPass {
     this.cardEstimator = new DefaultCardinalityEstimator(statisticsMap);
   }
 
-  get name() { return 'FilterOrdering'; }
+  override get name() { return 'FilterOrdering'; }
 
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new FilterOrderingRewriter(this.cardEstimator);
     return rewriter.rewrite(plan);
   }
@@ -30,7 +30,7 @@ class FilterOrderingRewriter extends PlanRewriter {
     this.cardEstimator = cardEstimator;
   }
 
-  rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
+  override rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
     const rewritten = this.rewriteChildren(node);
     const conjuncts = splitConjuncts(rewritten.condition);
     if (conjuncts.length < 2) return rewritten;

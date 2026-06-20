@@ -26,9 +26,9 @@ export class JoinReorder extends OptimizationPass {
     this.cardEstimator = cardEstimator || new DefaultCardinalityEstimator(this.statisticsMap);
   }
 
-  get name() { return 'JoinReorder'; }
+  override get name() { return 'JoinReorder'; }
 
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new JoinReorderRewriter(this.costModel, this.cardEstimator);
     return rewriter.rewrite(plan);
   }
@@ -44,7 +44,7 @@ class JoinReorderRewriter extends PlanRewriter {
     this.cardEstimator = cardEstimator;
   }
 
-  rewriteJoin(node: LogicalPlanNode): LogicalPlanNode {
+  override rewriteJoin(node: LogicalPlanNode): LogicalPlanNode {
     const rewritten = this.rewriteChildren(node);
     if (this.isInnerJoinTree(rewritten)) {
       return this.reorderJoinTree(rewritten);
@@ -55,7 +55,7 @@ class JoinReorderRewriter extends PlanRewriter {
     return rewritten;
   }
 
-  rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
+  override rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
     const rewritten = this.rewriteChildren(node);
     if (this.isInnerJoinTree(rewritten)) {
       return this.reorderJoinTree(rewritten);

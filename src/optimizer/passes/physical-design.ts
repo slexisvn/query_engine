@@ -19,9 +19,9 @@ export class PhysicalDesign extends OptimizationPass {
     this.cardEstimator = cardEstimator || new DefaultCardinalityEstimator(this.statisticsMap);
   }
 
-  get name() { return 'PhysicalDesign'; }
+  override get name() { return 'PhysicalDesign'; }
 
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new PhysicalDesignRewriter(this.costModel, this.cardEstimator);
     return rewriter.rewrite(plan);
   }
@@ -39,12 +39,12 @@ class PhysicalDesignRewriter extends PlanRewriter {
     this.parentMap = null;
   }
 
-  rewrite(plan: LogicalPlanNode): LogicalPlanNode {
+  override rewrite(plan: LogicalPlanNode): LogicalPlanNode {
     this.parentMap = buildParentMap(plan);
     return super.rewrite(plan);
   }
 
-  rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
+  override rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
     const newNode = this.rewriteChildren(node);
     newNode._cardinality = this.estimateNodeCardinality(newNode);
     newNode._sortedBy = this.inferSortOrder(newNode);
@@ -52,7 +52,7 @@ class PhysicalDesignRewriter extends PlanRewriter {
     return newNode;
   }
 
-  rewriteJoin(node: LogicalJoinNode): LogicalPlanNode {
+  override rewriteJoin(node: LogicalJoinNode): LogicalPlanNode {
     const originalNode = node;
     const newNode = this.rewriteChildren(node);
     newNode._cardinality = this.estimateNodeCardinality(newNode);
@@ -130,7 +130,7 @@ class PhysicalDesignRewriter extends PlanRewriter {
       || joinType === JoinType.MARK;
   }
 
-  rewriteAggregate(node: LogicalAggregateNode): LogicalPlanNode {
+  override rewriteAggregate(node: LogicalAggregateNode): LogicalPlanNode {
     const newNode = this.rewriteChildren(node);
     newNode._cardinality = this.estimateNodeCardinality(newNode);
 
@@ -169,7 +169,7 @@ class PhysicalDesignRewriter extends PlanRewriter {
     return newNode;
   }
 
-  rewriteSort(node: LogicalSortNode): LogicalPlanNode {
+  override rewriteSort(node: LogicalSortNode): LogicalPlanNode {
     const newNode = this.rewriteChildren(node);
     const childCard = newNode.children[0]._cardinality || DEFAULT_CARDINALITY;
 

@@ -121,7 +121,7 @@ export class SortOperator {
       iterators.push(this.spillManager.readChunks(`run_${i}`));
     }
 
-    const pq = new PriorityQueue((a: { item: SortRow }, b: { item: SortRow }) => this.compareRows(a.item, b.item));
+    const pq = new PriorityQueue<{ item: SortRow; runIndex: number }>((a, b) => this.compareRows(a.item, b.item));
     const states: MergeState[] = new Array(this.runCount);
 
     for (let i = 0; i < this.runCount; i++) {

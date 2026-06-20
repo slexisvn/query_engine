@@ -3,16 +3,16 @@ import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { PlanNodeType, type LogicalPlanNode, type LogicalLimitNode, type LogicalTopNNode, type LogicalSortNode } from '../../planner/logical-plan.js';
 
 export class TopNFusion extends OptimizationPass {
-  get name() { return 'TopNFusion'; }
+  override get name() { return 'TopNFusion'; }
 
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new TopNFusionRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class TopNFusionRewriter extends PlanRewriter {
-  rewriteLimit(node: LogicalLimitNode): LogicalPlanNode {
+  override rewriteLimit(node: LogicalLimitNode): LogicalPlanNode {
     const child: LogicalPlanNode = this.rewrite(node.children[0]);
 
     if (child.type === PlanNodeType.SORT) {

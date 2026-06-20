@@ -10,9 +10,9 @@ interface NamedExpr { outputName?: string; alias?: string; name?: string; column
 type ExprChild = BoundExpr | BoundExpr[] | string | number | boolean | bigint | null | undefined | object;
 
 export class ProjectionPushdown extends OptimizationPass {
-  get name() { return 'ProjectionPushdown'; }
+  override get name() { return 'ProjectionPushdown'; }
 
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     return pruneColumns(plan, null);
   }
 }

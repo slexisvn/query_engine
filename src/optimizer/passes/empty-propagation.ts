@@ -4,16 +4,16 @@ import { PlanNodeType, JoinType, type LogicalPlanNode, type LogicalFilterNode, t
 import { BoundExprKind } from '../../binder/expression-binder.js';
 
 export class EmptyPropagation extends OptimizationPass {
-  get name() { return 'EmptyPropagation'; }
+  override get name() { return 'EmptyPropagation'; }
 
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new EmptyPropagationRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class EmptyPropagationRewriter extends PlanRewriter {
-  rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
+  override rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
     const newNode = this.rewriteChildren(node);
     const children = newNode.children;
 
@@ -27,7 +27,7 @@ class EmptyPropagationRewriter extends PlanRewriter {
         return newNode;
   }
 
-  rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
+  override rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
     const newNode = this.rewriteChildren(node);
     if (newNode.children[0].type === PlanNodeType.EMPTY) {
       return newNode.children[0];
@@ -41,7 +41,7 @@ class EmptyPropagationRewriter extends PlanRewriter {
         return newNode;
   }
 
-    rewriteLimit(node: LogicalLimitNode): LogicalPlanNode {
+    override rewriteLimit(node: LogicalLimitNode): LogicalPlanNode {
     const newNode = this.rewriteChildren(node);
     if (newNode.children[0].type === PlanNodeType.EMPTY) {
       return newNode.children[0];
@@ -55,7 +55,7 @@ class EmptyPropagationRewriter extends PlanRewriter {
         return newNode;
   }
 
-  rewriteJoin(node: LogicalJoinNode): LogicalPlanNode {
+  override rewriteJoin(node: LogicalJoinNode): LogicalPlanNode {
     const newNode = this.rewriteChildren(node);
     const left = newNode.children[0];
     const right = newNode.children[1];
@@ -86,7 +86,7 @@ class EmptyPropagationRewriter extends PlanRewriter {
         return newNode;
   }
 
-  rewriteUnion(node: LogicalUnionNode): LogicalPlanNode {
+  override rewriteUnion(node: LogicalUnionNode): LogicalPlanNode {
     const newNode = this.rewriteChildren(node);
     const left = newNode.children[0];
     const right = newNode.children[1];

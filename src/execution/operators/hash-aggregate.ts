@@ -51,6 +51,9 @@ interface ResolvedKernel {
   kind: string;
 }
 
+type ScalarReduceKernel = (data: Float64Array | Int32Array) => number | Promise<number>;
+type BitmapCountKernel = (bitmap: Uint32Array, count: number) => number | Promise<number>;
+
 interface CountContribution { kind: 'count'; n: number; }
 interface AvgContribution { kind: 'avg'; sum: number; n: number; }
 interface ValueContribution { kind: 'value'; result: ColumnValue; }
@@ -283,7 +286,7 @@ export class HashAggregateOperator {
         if (!column.hasNulls) {
           contributions[a] = { kind: 'count', n: size };
         } else {
-          const kernel = globalDispatch.lookup('countBits', 'UINT8');
+          const kernel = globalDispatch.lookup('countBits', 'UINT8') as BitmapCountKernel | null;
           if (!kernel) return false;
           contributions[a] = { kind: 'count', n: await kernel(column.nullBitmap, size) };
         }
@@ -298,7 +301,7 @@ export class HashAggregateOperator {
         || (resolved.dataType === 'INT32' && (colType === 'INT32' || colType === 'DATE'));
       if (!matches) return false;
 
-      const kernel = globalDispatch.lookup(resolved.kernelKey, resolved.dataType);
+      const kernel = globalDispatch.lookup(resolved.kernelKey as string, resolved.dataType as string) as ScalarReduceKernel | null;
       if (!kernel) return false;
       const result = await kernel((column.data as Float64Array).subarray(0, size));
 

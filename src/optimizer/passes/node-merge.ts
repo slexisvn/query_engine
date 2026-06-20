@@ -6,16 +6,16 @@ import { BoundExprKind, type BoundBinaryNode } from '../../binder/expression-bin
 type EqualityValue = string | number | boolean | bigint | null | undefined | object;
 
 export class NodeMerge extends OptimizationPass {
-  get name() { return 'NodeMerge'; }
+  override get name() { return 'NodeMerge'; }
 
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new NodeMergeRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class NodeMergeRewriter extends PlanRewriter {
-  rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
+  override rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
     let child: LogicalPlanNode = this.rewrite(node.children[0]);
 
     if (child.type === PlanNodeType.FILTER) {
@@ -37,7 +37,7 @@ class NodeMergeRewriter extends PlanRewriter {
     return node;
   }
 
-  rewriteProject(node: LogicalProjectNode): LogicalPlanNode {
+  override rewriteProject(node: LogicalProjectNode): LogicalPlanNode {
     const child: LogicalPlanNode = this.rewrite(node.children[0]);
 
     if (child.type === PlanNodeType.PROJECT && sameProjectExpressions(node.expressions, child.expressions)) {
@@ -50,7 +50,7 @@ class NodeMergeRewriter extends PlanRewriter {
     return node;
   }
 
-  rewriteLimit(node: LogicalLimitNode): LogicalPlanNode {
+  override rewriteLimit(node: LogicalLimitNode): LogicalPlanNode {
     const child: LogicalPlanNode = this.rewrite(node.children[0]);
 
     if (child.type === PlanNodeType.LIMIT) {

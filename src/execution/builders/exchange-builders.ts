@@ -8,24 +8,19 @@ import type {
   LogicalMergeExchangeNode,
   LogicalExchangeReceiveNode,
 } from '../../planner/logical-plan.js';
-import type { CompiledExpr, CompiledPipeline, ColumnMapping, ExecColumn, ExecSchema, Sink } from '../execution-types.js';
-
-type EncodedChunk = Uint8Array;
-
-interface TransportLike {
-  sendChunk(nodeId: string, channelId: string, encoded: EncodedChunk): Promise<void>;
-  onChunkReceived(channelId: string, handler: (sourceNodeId: string, encodedChunk: EncodedChunk) => void): void;
-}
+import type { CompiledPipeline, ColumnMapping, ExecColumn, ExecSchema, Sink } from '../execution-types.js';
+import type { Transport } from '../../distributed/transport/transport.js';
+import type { ExchangeType as ExchangeTypeEnum, KeyExtractor } from '../../distributed/distributed-types.js';
 
 interface ExchangeConfig {
-  transport: TransportLike;
+  transport: Transport;
   sourceNodes: string[];
   channelId: string;
   exchangeType?: string;
 }
 
 interface MergeExchangeConfig {
-  transport: TransportLike;
+  transport: Transport;
   sourceNodes: string[];
   channelId: string;
 }
@@ -51,12 +46,12 @@ interface ExecutorLike {
   _exchangeReceivers: Map<number, ChunkReceiverLike> | null;
 }
 
-function buildKeyExtractors(partitionKeys: BoundExpr[] | null, columnMapping: ColumnMapping): CompiledExpr[] {
+function buildKeyExtractors(partitionKeys: BoundExpr[] | null, columnMapping: ColumnMapping): KeyExtractor[] {
   if (!partitionKeys || partitionKeys.length === 0) return [];
   return partitionKeys.map((key: BoundExpr) => {
     const evalFn = compileExpression(key, columnMapping);
     return (chunk: DataChunk, rowIdx: number) => evalFn(chunk, rowIdx);
-  });
+  }) as KeyExtractor[];
 }
 
 export async function buildExchange(executor: ExecutorLike, node: LogicalExchangeNode): Promise<CompiledPipeline> {
@@ -89,7 +84,7 @@ export async function buildExchange(executor: ExecutorLike, node: LogicalExchang
 
     const { ExchangeSender } = await import('../../distributed/execution/exchange-operator.js');
     const sender = new ExchangeSender(transport, (node as DistributedExchangeNode)._targetNodes || [], {
-      exchangeType: exchangeType || node.exchangeType,
+      exchangeType: (exchangeType || node.exchangeType) as ExchangeTypeEnum,
       channelId,
       partitionCount: node.partitionCount,
       keyExtractors: buildKeyExtractors(node.partitionKeys, child.columnMapping),

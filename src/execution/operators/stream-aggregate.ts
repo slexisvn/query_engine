@@ -33,6 +33,9 @@ interface ResolvedKernel {
   kind: string;
 }
 
+type ScalarReduceKernel = (data: Float64Array | Int32Array) => number | Promise<number>;
+type BitmapCountKernel = (bitmap: Uint32Array, count: number) => number | Promise<number>;
+
 export class StreamAggregateOperator {
   groupByExtractors: CompiledExpr[];
   groupByTypes: DataType[];
@@ -104,7 +107,7 @@ export class StreamAggregateOperator {
           if (!column.hasNulls) {
             acc.count += chunk.size;
           } else {
-            const kernel = globalDispatch.lookup('countBits', 'UINT8');
+            const kernel = globalDispatch.lookup('countBits', 'UINT8') as BitmapCountKernel | null;
             if (!kernel) return null;
             const nonNullCount = await kernel(column.nullBitmap, chunk.size);
             acc.count += nonNullCount;
@@ -119,7 +122,7 @@ export class StreamAggregateOperator {
           if (column.dataType !== 'FLOAT64') return null;
 
           const rawData = (column.data as Float64Array).subarray(0, chunk.size);
-          const kernel = globalDispatch.lookup(resolved.kernelKey, resolved.dataType);
+          const kernel = globalDispatch.lookup(resolved.kernelKey as string, resolved.dataType as string) as ScalarReduceKernel | null;
           if (!kernel) return null;
           const sum = await kernel(rawData);
 
@@ -127,7 +130,7 @@ export class StreamAggregateOperator {
           if (!column.hasNulls) {
             nonNullCount = chunk.size;
           } else {
-            const countKernel = globalDispatch.lookup('countBits', 'UINT8');
+            const countKernel = globalDispatch.lookup('countBits', 'UINT8') as BitmapCountKernel | null;
             if (!countKernel) return null;
             nonNullCount = await countKernel(column.nullBitmap, chunk.size);
           }
@@ -158,7 +161,7 @@ export class StreamAggregateOperator {
 
         if (!rawData) return null;
 
-        const kernel = globalDispatch.lookup(resolved.kernelKey, resolved.dataType);
+        const kernel = globalDispatch.lookup(resolved.kernelKey as string, resolved.dataType as string) as ScalarReduceKernel | null;
         if (!kernel) return null;
         acc.add(await kernel(rawData));
       }

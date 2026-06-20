@@ -8,8 +8,8 @@ const ROOT = resolve(__dirname, '..');
 const SRC = join(ROOT, 'src');
 const DIST = join(ROOT, 'dist');
 
-const NODE_ENTRY = join(SRC, 'index.js');
-const BROWSER_ENTRY = join(SRC, 'browser.js');
+const NODE_ENTRY = join(SRC, 'index.ts');
+const BROWSER_ENTRY = join(SRC, 'browser.ts');
 const BUFFER_SHIM = join(__dirname, 'buffer-shim.js');
 
 const WASM_SOURCE = join(ROOT, 'build', 'wasm', 'core.wasm');

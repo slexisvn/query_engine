@@ -4,16 +4,16 @@ import { PlanNodeType, type LogicalPlanNode, type LogicalFilterNode } from '../.
 import { BoundExprKind, type BoundExpr, type BoundBinaryNode } from '../../binder/expression-binder.js';
 
 export class HavingPushdown extends OptimizationPass {
-  get name() { return 'HavingPushdown'; }
+  override get name() { return 'HavingPushdown'; }
 
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new HavingPushdownRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class HavingPushdownRewriter extends PlanRewriter {
-  rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
+  override rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
     let child: LogicalPlanNode = this.rewrite(node.children[0]);
 
     if (child.type === PlanNodeType.AGGREGATE) {

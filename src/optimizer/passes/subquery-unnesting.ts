@@ -18,9 +18,9 @@ interface PartitionedPredicates {
 type ExprRecordValue = BoundExpr | BoundExpr[] | string | number | boolean | bigint | null | undefined | object;
 
 export class SubqueryUnnesting extends OptimizationPass {
-  get name() { return 'SubqueryUnnesting'; }
+  override get name() { return 'SubqueryUnnesting'; }
 
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     let current = plan;
     let changed = true;
     while (changed) {
@@ -43,7 +43,7 @@ class UnnestingRewriter extends PlanRewriter {
     this.markId = 0;
   }
 
-  rewriteDependentJoin(node: LogicalDependentJoinNode): LogicalPlanNode {
+  override rewriteDependentJoin(node: LogicalDependentJoinNode): LogicalPlanNode {
     this.didChange = true;
     const left = this.rewrite(node.children[0]);
     const subquery = this.rewrite(node.children[1]);

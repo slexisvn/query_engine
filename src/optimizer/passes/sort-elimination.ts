@@ -6,16 +6,16 @@ import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js
 interface RequiredKey { key: string | null; direction: string; }
 
 export class SortElimination extends OptimizationPass {
-  get name() { return 'SortElimination'; }
+  override get name() { return 'SortElimination'; }
 
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new SortEliminationRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class SortEliminationRewriter extends PlanRewriter {
-  rewriteSort(node: LogicalSortNode): LogicalPlanNode {
+  override rewriteSort(node: LogicalSortNode): LogicalPlanNode {
     const child: LogicalPlanNode = this.rewrite(node.children[0]);
 
     if (!child._sortedBy || child._sortedBy.length === 0) {

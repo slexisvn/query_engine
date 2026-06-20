@@ -4,16 +4,16 @@ import { PlanNodeType, setChildren, type LogicalPlanNode, type LogicalFilterNode
 import { BoundExprKind, BoundLiteral, type BoundExpr, type BoundBinaryNode, type LiteralValue } from '../../binder/expression-binder.js';
 
 export class ExpressionSimplifier extends OptimizationPass {
-  get name() { return 'ExpressionSimplifier'; }
+  override get name() { return 'ExpressionSimplifier'; }
 
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new SimplifierRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class SimplifierRewriter extends PlanRewriter {
-  rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
+  override rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
     const child = this.rewrite(node.children[0]);
     const simplifiedCond = simplifyExpression(node.condition);
 
@@ -32,7 +32,7 @@ class SimplifierRewriter extends PlanRewriter {
     return node;
   }
 
-  rewriteProject(node: LogicalProjectNode): LogicalPlanNode {
+  override rewriteProject(node: LogicalProjectNode): LogicalPlanNode {
     const child = this.rewrite(node.children[0]);
     let changed = false;
     const newExprs = node.expressions.map((expr): ProjectedExpr => {
@@ -47,7 +47,7 @@ class SimplifierRewriter extends PlanRewriter {
     return node;
   }
 
-  rewriteJoin(node: LogicalJoinNode): LogicalPlanNode {
+  override rewriteJoin(node: LogicalJoinNode): LogicalPlanNode {
     const newChildren = node.children.map((c) => this.rewrite(c));
     let changed = newChildren.some((c, i) => c !== node.children[i]);
 

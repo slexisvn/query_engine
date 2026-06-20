@@ -28,16 +28,16 @@ type ExprLike = BoundExpr & {
 };
 
 export class JoinResidualSplit extends OptimizationPass {
-  get name() { return 'JoinResidualSplit'; }
+  override get name() { return 'JoinResidualSplit'; }
 
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new JoinResidualSplitRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class JoinResidualSplitRewriter extends PlanRewriter {
-  rewriteJoin(node: LogicalJoinNode): LogicalPlanNode {
+  override rewriteJoin(node: LogicalJoinNode): LogicalPlanNode {
     const rewritten = this.rewriteChildren(node);
     if (rewritten.joinType !== JoinType.INNER || !rewritten.condition) return rewritten;
 

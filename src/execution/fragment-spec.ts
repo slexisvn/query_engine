@@ -62,7 +62,7 @@ interface StageChain {
   stages: Stage[];
 }
 
-interface FragmentSpec {
+export interface FragmentSpec {
   baseSchema: ExecSchema;
   stages: Stage[];
   groupBy: BoundExpr[];

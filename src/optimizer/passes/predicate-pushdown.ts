@@ -14,27 +14,27 @@ interface NamedExpr { outputName?: string; alias?: string; name?: string; column
 type JoinWithMark = LogicalJoinNode & { markColumn?: string };
 
 export class PredicatePushdown extends OptimizationPass {
-  get name() { return 'PredicatePushdown'; }
+  override get name() { return 'PredicatePushdown'; }
 
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new PushdownRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class PushdownRewriter extends PlanRewriter {
-  rewriteJoin(node: LogicalJoinNode): LogicalPlanNode {
+  override rewriteJoin(node: LogicalJoinNode): LogicalPlanNode {
     const rewritten = this.rewriteChildren(node);
     return pushJoinConditionPredicates(rewritten);
   }
 
-  rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
+  override rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
     const child = this.rewrite(node.children[0]);
     const predicates = splitConjuncts(node.condition);
     return pushPredicates(predicates, child);
   }
 
-  rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
+  override rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
     return this.rewriteChildren(node);
   }
 }

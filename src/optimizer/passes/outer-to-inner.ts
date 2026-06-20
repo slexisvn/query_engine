@@ -10,16 +10,16 @@ interface NamedExpr { outputName?: string; alias?: string; name?: string; column
 type EvalResult = LiteralValue | undefined;
 
 export class OuterToInnerJoin extends OptimizationPass {
-  get name() { return 'OuterToInnerJoin'; }
+  override get name() { return 'OuterToInnerJoin'; }
 
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new OuterToInnerRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class OuterToInnerRewriter extends PlanRewriter {
-  rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
+  override rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
     let child: LogicalPlanNode = this.rewrite(node.children[0]);
 
         if (child.type === PlanNodeType.JOIN && (child.joinType === JoinType.LEFT || child.joinType === JoinType.FULL || child.joinType === JoinType.RIGHT || child.joinType === JoinType.SINGLE)) {

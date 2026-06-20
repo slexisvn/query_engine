@@ -31,16 +31,16 @@ type ExprLike = BoundExpr & {
 };
 
 export class PredicateInference extends OptimizationPass {
-  get name() { return 'PredicateInference'; }
+  override get name() { return 'PredicateInference'; }
 
-  apply(plan: LogicalPlanNode): LogicalPlanNode {
+  override apply(plan: LogicalPlanNode): LogicalPlanNode {
     const rewriter = new InferenceRewriter();
     return rewriter.rewrite(plan);
   }
 }
 
 class InferenceRewriter extends PlanRewriter {
-  rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
+  override rewriteFilter(node: LogicalFilterNode): LogicalPlanNode {
     const child = this.rewrite(node.children[0]);
     const preds = splitConjuncts(node.condition);
     const inferred = inferNewPredicates(preds);
@@ -54,7 +54,7 @@ class InferenceRewriter extends PlanRewriter {
     return LogicalFilter(combineConjuncts(allPreds), child);
   }
 
-  rewriteJoin(node: LogicalJoinNode): LogicalPlanNode {
+  override rewriteJoin(node: LogicalJoinNode): LogicalPlanNode {
     const newNode = this.rewriteChildren(node);
     if (newNode.joinType !== JoinType.INNER || !newNode.condition) return newNode;
 
