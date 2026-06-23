@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build:js": "tsc -p tsconfig.build.json && node scripts/copy-wasm.js",
-    "build": "node scripts/build.js",
+    "build:js": "tsc -p tsconfig.build.json",
+    "build": "npm run build:wasm && node scripts/build.js",
     "build:wasm": "asc --config src/wasm/assembly/asconfig.json --target release",
     "pretest": "npm run build:js",
     "test": "vitest run",
