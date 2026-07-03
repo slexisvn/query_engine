@@ -2,7 +2,8 @@ import { OptimizationPass } from '../pass.js';
 import { PlanNodeType, type LogicalPlanNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { DefaultCardinalityEstimator } from '../dphyp/cardinality.js';
-import { BoundExprKind, type BoundExpr, type BoundBinaryNode } from '../../binder/expression-binder.js';
+import { type BoundExpr } from '../../binder/expression-binder.js';
+import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
 
 interface TableStatistics { rowCount: number; }
 
@@ -45,24 +46,4 @@ class FilterOrderingRewriter extends PlanRewriter {
     const reordered = combineConjuncts(scored.map((s) => s.pred));
     return { ...rewritten, condition: reordered };
   }
-}
-
-function splitConjuncts(expr: BoundExpr | null): BoundExpr[] {
-  if (!expr) return [];
-  if (expr.kind === BoundExprKind.BINARY && expr.op === 'AND') {
-    return [...splitConjuncts(expr.left), ...splitConjuncts(expr.right)];
-  }
-  return [expr];
-}
-
-function combineConjuncts(preds: BoundExpr[]): BoundExpr | null {
-  if (preds.length === 0) return null;
-  if (preds.length === 1) return preds[0];
-  return preds.reduce((acc, p) => ({
-    kind: BoundExprKind.BINARY,
-    op: 'AND',
-    left: acc,
-    right: p,
-    resultType: 'BOOLEAN',
-  } as BoundBinaryNode));
 }

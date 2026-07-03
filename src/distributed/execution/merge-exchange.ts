@@ -153,10 +153,14 @@ export class MergeExchangeOperator {
   }
 
   _compareRowAgainst(chunk: ReadableChunk, rowIdx: number, entry: HeapEntry): number {
+    return this._compareRows(chunk, rowIdx, entry.chunk, entry.rowIdx);
+  }
+
+  _compareRows(chunkA: ReadableChunk, rowA: number, chunkB: ReadableChunk, rowB: number): number {
     for (const key of this._orderKeys) {
       const colIdx = key.columnIndex !== undefined ? key.columnIndex : 0;
-      const valA = chunk.columns[colIdx]?.get(rowIdx);
-      const valB = entry.chunk.columns[colIdx]?.get(entry.rowIdx);
+      const valA = chunkA.columns[colIdx]?.get(rowA);
+      const valB = chunkB.columns[colIdx]?.get(rowB);
 
       if (valA === null && valB === null) continue;
       if (valA === null) return key.direction === 'DESC' ? -1 : 1;
@@ -273,19 +277,7 @@ export class MergeExchangeOperator {
   }
 
   _compareEntries(a: HeapEntry, b: HeapEntry): number {
-    for (const key of this._orderKeys) {
-      const colIdx = key.columnIndex !== undefined ? key.columnIndex : 0;
-      const valA = a.chunk.columns[colIdx]?.get(a.rowIdx);
-      const valB = b.chunk.columns[colIdx]?.get(b.rowIdx);
-
-      if (valA === null && valB === null) continue;
-      if (valA === null) return key.direction === 'DESC' ? -1 : 1;
-      if (valB === null) return key.direction === 'DESC' ? 1 : -1;
-
-      if ((valA as number) < (valB as number)) return key.direction === 'DESC' ? 1 : -1;
-      if ((valA as number) > (valB as number)) return key.direction === 'DESC' ? -1 : 1;
-    }
-    return 0;
+    return this._compareRows(a.chunk, a.rowIdx, b.chunk, b.rowIdx);
   }
 }
 

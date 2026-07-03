@@ -25,7 +25,7 @@ export function setBitRange(bitmap: Uint32Array, start: number, end: number): vo
 }
 
 export function andBitmaps(a: Uint32Array, b: Uint32Array, length: number): Uint32Array {
-  const words = Math.ceil(length / 32);
+  const words = bitmapWordCount(length);
   const result = new Uint32Array(words);
   for (let i = 0; i < words; i++) {
     result[i] = a[i] & b[i];
@@ -34,7 +34,7 @@ export function andBitmaps(a: Uint32Array, b: Uint32Array, length: number): Uint
 }
 
 export function orBitmaps(a: Uint32Array, b: Uint32Array, length: number): Uint32Array {
-  const words = Math.ceil(length / 32);
+  const words = bitmapWordCount(length);
   const result = new Uint32Array(words);
   for (let i = 0; i < words; i++) {
     result[i] = a[i] | b[i];
@@ -43,7 +43,7 @@ export function orBitmaps(a: Uint32Array, b: Uint32Array, length: number): Uint3
 }
 
 export function notBitmap(bitmap: Uint32Array, length: number): Uint32Array {
-  const words = Math.ceil(length / 32);
+  const words = bitmapWordCount(length);
   const result = new Uint32Array(words);
   for (let i = 0; i < words; i++) {
     result[i] = ~bitmap[i];
@@ -61,7 +61,7 @@ for (let i = 0; i < 256; i++) {
 }
 
 export function popcount(bitmap: Uint32Array, length: number): number {
-  const words = Math.ceil(length / 32);
+  const words = bitmapWordCount(length);
   let count = 0;
   for (let i = 0; i < words; i++) {
     let v = bitmap[i];

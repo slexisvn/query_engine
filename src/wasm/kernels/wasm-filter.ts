@@ -1,21 +1,5 @@
-import { getGlobalLoader } from '../loader.js';
-import type { WasmExports, WasmLoaderLike, WasmModuleName } from '../wasm-types.js';
-
-interface CoreInstance {
-  loader: WasmLoaderLike;
-  instance: WebAssembly.Instance;
-}
-
-let _coreInstance: CoreInstance | null = null;
-
-async function getCoreInstance(): Promise<CoreInstance> {
-  if (_coreInstance) return _coreInstance;
-  const getLoader = getGlobalLoader as () => Promise<WasmLoaderLike>;
-  const loader = await getLoader();
-  const coreName: WasmModuleName = 'core';
-  _coreInstance = { loader, instance: await loader.loadModule(coreName) };
-  return _coreInstance;
-}
+import { getCoreInstance } from './core-instance.js';
+import type { WasmExports } from '../wasm-types.js';
 
 export async function wasmFilterEqI32(data: Int32Array, value: number): Promise<Uint32Array> {
   const { loader, instance } = await getCoreInstance();

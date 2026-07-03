@@ -5,6 +5,7 @@ import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 import type { BoundExpr, BoundColumnRefNode } from '../../binder/expression-binder.js';
 import { Config } from '../../config.js';
+import { splitAnd } from '../planner/expr-utils.js';
 
 interface TableStatisticsLike {
   rowCount: number;
@@ -147,7 +148,7 @@ class DistributionAwareJoinRewriter extends PlanRewriter {
     const rightKeys: string[] = [];
     if (!condition) return { leftKeys, rightKeys };
 
-    const preds = this._splitAnd(condition);
+    const preds = splitAnd(condition);
     for (const pred of preds) {
       if (pred.kind === BoundExprKind.BINARY && pred.op === '='
         && pred.left?.kind === BoundExprKind.COLUMN_REF
@@ -158,14 +159,6 @@ class DistributionAwareJoinRewriter extends PlanRewriter {
     }
 
     return { leftKeys, rightKeys };
-  }
-
-  _splitAnd(expr: BoundExpr | null): BoundExpr[] {
-    if (!expr) return [];
-    if (expr.kind === BoundExprKind.BINARY && expr.op === 'AND') {
-      return [...this._splitAnd(expr.left), ...this._splitAnd(expr.right)];
-    }
-    return [expr];
   }
 
   _findScanTable(node: LogicalPlanNode): string | null {

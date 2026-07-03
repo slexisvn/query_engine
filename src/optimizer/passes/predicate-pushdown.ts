@@ -2,6 +2,7 @@ import { OptimizationPass } from '../pass.js';
 import { PlanNodeType, JoinType, LogicalFilter, LogicalJoin, getChildren, setChildren, type LogicalPlanNode, type LogicalJoinNode, type LogicalProjectNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { BoundExprKind, type BoundExpr, type BoundBinaryNode } from '../../binder/expression-binder.js';
+import { walkExpr } from './expr-walk.js';
 
 type MetadataValue = string | number | boolean | object | null | undefined;
 
@@ -146,7 +147,7 @@ function pushPredicates(predicates: BoundExpr[], target: LogicalPlanNode): Logic
 
 function canPushThroughProject(pred: BoundExpr, projectNode: LogicalProjectNode): boolean {
   const predRefs = new Set<ExprRef>();
-  _walkExpr(pred, (e) => {
+  walkExpr(pred, (e) => {
     if (e.kind === BoundExprKind.COLUMN_REF) {
       predRefs.add({
         tableAlias: (e.tableAlias || '').toUpperCase(),
@@ -237,7 +238,7 @@ function rejectsNulls(pred: BoundExpr): boolean {
 
 export function splitConjuncts(expr: BoundExpr | null): BoundExpr[] {
   if (!expr) return [];
-  if (expr.kind === BoundExprKind.BINARY && expr.op === 'AND') {
+  if (expr.kind === BoundExprKind.BINARY && expr.op?.toUpperCase() === 'AND') {
     return [...splitConjuncts(expr.left), ...splitConjuncts(expr.right)];
   }
   return [expr];
@@ -308,13 +309,13 @@ function refBelongsToPlan(ref: ExprRef, planRefs: PlanRefs): boolean {
 
 function containsAggregate(expr: BoundExpr): boolean {
   let found = false;
-  _walkExpr(expr, (e) => { if (e.kind === BoundExprKind.AGGREGATE) found = true; });
+  walkExpr(expr, (e) => { if (e.kind === BoundExprKind.AGGREGATE) found = true; });
   return found;
 }
 
 function collectTableRefs(expr: BoundExpr): ExprRef[] {
   const keys = new Set<string>();
-  _walkExpr(expr, (e) => {
+  walkExpr(expr, (e) => {
     if (e.kind === BoundExprKind.COLUMN_REF) {
       keys.add(`${(e.tableAlias || '').toUpperCase()}.${(e.columnName || '').toUpperCase()}`);
     }
@@ -325,35 +326,3 @@ function collectTableRefs(expr: BoundExpr): ExprRef[] {
   });
 }
 
-function _walkExpr(expr: BoundExpr | null, fn: (e: BoundExpr) => void): void {
-  if (!expr || typeof expr !== 'object') return;
-  fn(expr);
-  const e = expr as ExprLike;
-  if (e.left) _walkExpr(e.left, fn);
-  if (e.right) _walkExpr(e.right, fn);
-  if (e.operand) _walkExpr(e.operand, fn);
-  if (e.expr) _walkExpr(e.expr, fn);
-  if (e.low) _walkExpr(e.low, fn);
-  if (e.high) _walkExpr(e.high, fn);
-  if (e.args) for (const a of e.args) _walkExpr(a, fn);
-  if (e.whenClauses) for (const wc of e.whenClauses) { _walkExpr(wc.condition, fn); _walkExpr(wc.result, fn); }
-  if (e.elseExpr) _walkExpr(e.elseExpr, fn);
-  if (e.list && Array.isArray(e.list)) for (const item of e.list) _walkExpr(item, fn);
-  if (e.pattern) _walkExpr(e.pattern, fn);
-  if (e.source) _walkExpr(e.source, fn);
-}
-
-type ExprLike = BoundExpr & {
-  left?: BoundExpr;
-  right?: BoundExpr;
-  operand?: BoundExpr;
-  expr?: BoundExpr;
-  low?: BoundExpr;
-  high?: BoundExpr;
-  args?: BoundExpr[];
-  whenClauses?: Array<{ condition: BoundExpr; result: BoundExpr }>;
-  elseExpr?: BoundExpr;
-  list?: BoundExpr | BoundExpr[];
-  pattern?: BoundExpr;
-  source?: BoundExpr;
-};

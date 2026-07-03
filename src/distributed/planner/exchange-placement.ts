@@ -1,6 +1,7 @@
 import { ExchangeType } from './fragment.js';
 import { DistributionStrategy } from '../optimizer/distribution-aware-join.js';
 import { Config } from '../../config.js';
+import { splitAnd } from './expr-utils.js';
 import type {
   LogicalJoinNode,
   LogicalAggregateNode,
@@ -33,12 +34,6 @@ interface ShuffleOperand {
   op: string;
   left: ShuffleSide;
   right: ShuffleSide;
-}
-
-interface AndOperand {
-  op: string;
-  left: BoundExpr;
-  right: BoundExpr;
 }
 
 export class ExchangePlacement {
@@ -118,7 +113,7 @@ export class ExchangePlacement {
     const condition = joinNode.condition;
     if (!condition) return { leftKeys, rightKeys };
 
-    const preds = this._splitAnd(condition);
+    const preds = splitAnd(condition);
     for (const pred of preds) {
       if ((pred as ShuffleOperand).op === '=' && (pred as ShuffleOperand).left?.kind === 'ColumnRef' && (pred as ShuffleOperand).right?.kind === 'ColumnRef') {
         leftKeys.push((pred as ShuffleOperand).left as BoundExpr);
@@ -127,13 +122,5 @@ export class ExchangePlacement {
     }
 
     return { leftKeys, rightKeys };
-  }
-
-  _splitAnd(expr: BoundExpr | null): BoundExpr[] {
-    if (!expr) return [];
-    if ((expr as AndOperand).op === 'AND') {
-      return [...this._splitAnd((expr as AndOperand).left), ...this._splitAnd((expr as AndOperand).right)];
-    }
-    return [expr];
   }
 }

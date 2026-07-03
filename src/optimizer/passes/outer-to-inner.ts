@@ -2,6 +2,7 @@ import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { PlanNodeType, JoinType, getChildren, type LogicalPlanNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
 import { BoundExprKind, type BoundExpr, type LiteralValue } from '../../binder/expression-binder.js';
+import { splitConjuncts } from './predicate-pushdown.js';
 
 interface PlanRefs { aliases: Set<string>; columns: Set<string>; }
 
@@ -110,14 +111,6 @@ function addOutputRefs(node: LogicalPlanNode, refs: PlanRefs): void {
     return;
   }
   if (node.children?.[0]) addOutputRefs(node.children[0], refs);
-}
-
-function splitConjuncts(expr: BoundExpr | null): BoundExpr[] {
-  if (!expr) return [];
-  if (expr.kind === BoundExprKind.BINARY && expr.op.toUpperCase() === 'AND') {
-    return [...splitConjuncts(expr.left), ...splitConjuncts(expr.right)];
-  }
-  return [expr];
 }
 
 function isNullRejecting(expr: BoundExpr, nullSupplyingRefs: PlanRefs): boolean {

@@ -3,6 +3,7 @@ import { PlanNodeType, JoinType, LogicalFilter, LogicalJoin, getChildren, type L
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
 import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
+import { walkExpr } from './expr-walk.js';
 
 type MetadataValue = string | number | boolean | object | null | undefined;
 
@@ -11,21 +12,6 @@ interface PlanRefs { aliases: Set<string>; columns: Set<string>; }
 interface ExprRef { tableAlias: string; columnName: string; }
 
 interface NamedExpr { outputName?: string; alias?: string; name?: string; columnName?: string; }
-
-type ExprLike = BoundExpr & {
-  left?: BoundExpr;
-  right?: BoundExpr;
-  operand?: BoundExpr;
-  expr?: BoundExpr;
-  low?: BoundExpr;
-  high?: BoundExpr;
-  args?: BoundExpr[];
-  whenClauses?: Array<{ condition: BoundExpr; result: BoundExpr }>;
-  elseExpr?: BoundExpr;
-  list?: BoundExpr | BoundExpr[];
-  pattern?: BoundExpr;
-  source?: BoundExpr;
-};
 
 export class JoinResidualSplit extends OptimizationPass {
   override get name() { return 'JoinResidualSplit'; }
@@ -135,27 +121,4 @@ function outputName(expr: NamedExpr): string {
 function refBelongsToPlan(ref: ExprRef, planRefs: PlanRefs): boolean {
   if (ref.tableAlias) return planRefs.aliases.has(ref.tableAlias);
   return planRefs.columns.has(ref.columnName);
-}
-
-function walkExpr(expr: BoundExpr | null | undefined, fn: (expr: BoundExpr) => void): void {
-  if (!expr || typeof expr !== 'object') return;
-  fn(expr);
-  const e = expr as ExprLike;
-  if (e.left) walkExpr(e.left, fn);
-  if (e.right) walkExpr(e.right, fn);
-  if (e.operand) walkExpr(e.operand, fn);
-  if (e.expr) walkExpr(e.expr, fn);
-  if (e.low) walkExpr(e.low, fn);
-  if (e.high) walkExpr(e.high, fn);
-  if (e.args) for (const arg of e.args) walkExpr(arg, fn);
-  if (e.whenClauses) {
-    for (const wc of e.whenClauses) {
-      walkExpr(wc.condition, fn);
-      walkExpr(wc.result, fn);
-    }
-  }
-  if (e.elseExpr) walkExpr(e.elseExpr, fn);
-  if (e.list && Array.isArray(e.list)) for (const item of e.list) walkExpr(item, fn);
-  if (e.pattern) walkExpr(e.pattern, fn);
-  if (e.source) walkExpr(e.source, fn);
 }

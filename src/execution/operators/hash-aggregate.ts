@@ -3,6 +3,7 @@ import { DataChunk, DEFAULT_CHUNK_SIZE } from '../../storage/chunk.js';
 import { DataType, type ColumnValue } from '../../storage/data-type.js';
 import { globalDispatch } from '../../wasm/dispatch.js';
 import { hashValue } from '../../utils/hash.js';
+import { resolveWasmAggKernel, type ScalarReduceKernel, type BitmapCountKernel } from './agg-wasm.js';
 import type { BoundExpr } from '../../binder/expression-binder.js';
 import type { CompiledExpr, ColumnMapping, EvalValue } from '../execution-types.js';
 
@@ -44,15 +45,6 @@ interface PartialGroup {
   groupValues: ColumnValue[];
   states: AccumulatorState[];
 }
-
-interface ResolvedKernel {
-  kernelKey: string | null;
-  dataType: string | null;
-  kind: string;
-}
-
-type ScalarReduceKernel = (data: Float64Array | Int32Array) => number | Promise<number>;
-type BitmapCountKernel = (bitmap: Uint32Array, count: number) => number | Promise<number>;
 
 interface CountContribution { kind: 'count'; n: number; }
 interface AvgContribution { kind: 'avg'; sum: number; n: number; }
@@ -237,41 +229,13 @@ export class HashAggregateOperator {
     }
   }
 
-  _resolveWasmAggKernel(def: AggregateDef): ResolvedKernel | null {
-    const name = def.name?.toUpperCase();
-    if (!name) return null;
-
-    if (name === 'SUM' && def.resultType === 'FLOAT64') {
-      if (globalDispatch.has('sumF64', 'FLOAT64')) return { kernelKey: 'sumF64', dataType: 'FLOAT64', kind: 'SUM' };
-      if (globalDispatch.has('sumI32', 'INT32')) return { kernelKey: 'sumI32', dataType: 'INT32', kind: 'SUM' };
-    }
-    if (name === 'MIN') {
-      if (def.resultType === 'FLOAT64' && globalDispatch.has('minF64', 'FLOAT64')) return { kernelKey: 'minF64', dataType: 'FLOAT64', kind: 'MIN' };
-      if (def.resultType === 'INT32' && globalDispatch.has('minI32', 'INT32')) return { kernelKey: 'minI32', dataType: 'INT32', kind: 'MIN' };
-    }
-    if (name === 'MAX') {
-      if (def.resultType === 'FLOAT64' && globalDispatch.has('maxF64', 'FLOAT64')) return { kernelKey: 'maxF64', dataType: 'FLOAT64', kind: 'MAX' };
-      if (def.resultType === 'INT32' && globalDispatch.has('maxI32', 'INT32')) return { kernelKey: 'maxI32', dataType: 'INT32', kind: 'MAX' };
-    }
-    if (name === 'COUNT') {
-      return { kernelKey: 'countBits', dataType: 'UINT8', kind: 'COUNT' };
-    }
-    if (name === 'COUNT_STAR') {
-      return { kernelKey: null, dataType: null, kind: 'COUNT_STAR' };
-    }
-    if (name === 'AVG' && def.resultType === 'FLOAT64') {
-      if (globalDispatch.has('sumF64', 'FLOAT64')) return { kernelKey: 'sumF64', dataType: 'FLOAT64', kind: 'AVG' };
-    }
-    return null;
-  }
-
   async _tryWasmUngrouped(chunk: DataChunk): Promise<boolean> {
     const size = chunk.size;
     const contributions: Contribution[] = new Array(this.aggregateDefs.length);
 
     for (let a = 0; a < this.aggregateDefs.length; a++) {
       const def = this.aggregateDefs[a];
-      const resolved = this._resolveWasmAggKernel(def);
+      const resolved = resolveWasmAggKernel(def, globalDispatch);
       if (!resolved) return false;
 
       if (resolved.kind === 'COUNT_STAR') {

@@ -28,6 +28,7 @@ import type {
 } from '../distributed-types.js';
 import type { BoundExpr, BoundBinaryNode } from '../../binder/expression-binder.js';
 import type { ColumnInfo } from '../../binder/scope.js';
+import { splitAnd } from './expr-utils.js';
 
 interface OutputPartitioningLocal {
   exchangeType: string;
@@ -367,7 +368,7 @@ export class DistributedPlanner {
     if (!condition) return null;
     const leftIdx: number[] = [];
     const rightIdx: number[] = [];
-    const preds = this._splitAnd(condition);
+    const preds = splitAnd(condition);
     for (const pred of preds) {
       if ((pred as BoundBinaryNode).op !== '=') continue;
       const a = (pred as BoundBinaryNode).left, b = (pred as BoundBinaryNode).right;
@@ -383,12 +384,6 @@ export class DistributedPlanner {
       rightIdx.push(ri);
     }
     return leftIdx.length > 0 ? { leftIdx, rightIdx } : null;
-  }
-
-  _splitAnd(expr: BoundExpr | null): BoundExpr[] {
-    if (!expr) return [];
-    if ((expr as BoundBinaryNode).op === 'AND') return [...this._splitAnd((expr as BoundBinaryNode).left), ...this._splitAnd((expr as BoundBinaryNode).right)];
-    return [expr];
   }
 
   _colIndexInSchema(ref: ColumnRefLike, schema: DistributedScanSchemaColumn[]): number {

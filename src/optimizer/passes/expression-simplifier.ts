@@ -2,6 +2,7 @@ import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { PlanNodeType, setChildren, type LogicalPlanNode, type LogicalFilterNode, type LogicalProjectNode, type LogicalJoinNode, type LogicalEmptyNode, type ProjectedExpr } from '../../planner/logical-plan.js';
 import { BoundExprKind, BoundLiteral, type BoundExpr, type BoundBinaryNode, type LiteralValue } from '../../binder/expression-binder.js';
+import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
 
 export class ExpressionSimplifier extends OptimizationPass {
   override get name() { return 'ExpressionSimplifier'; }
@@ -246,25 +247,6 @@ function factorCommonConjuncts(left: BoundExpr, right: BoundExpr): BoundExpr | n
   };
 
   return combineConjuncts([...common, residualOr]);
-}
-
-function splitConjuncts(expr: BoundExpr | null): BoundExpr[] {
-  if (!expr) return [];
-  if (expr.kind === BoundExprKind.BINARY && expr.op.toUpperCase() === 'AND') {
-    return [...splitConjuncts(expr.left), ...splitConjuncts(expr.right)];
-  }
-  return [expr];
-}
-
-function combineConjuncts(exprs: BoundExpr[]): BoundExpr | null {
-  if (exprs.length === 0) return null;
-  return exprs.reduce((acc: BoundExpr | null, expr): BoundExpr => acc ? ({
-    kind: BoundExprKind.BINARY,
-    op: 'AND',
-    left: acc,
-    right: expr,
-    resultType: 'BOOLEAN',
-  }) : expr, null);
 }
 
 function foldCast(value: LiteralValue, targetType: string | null): LiteralValue | undefined {

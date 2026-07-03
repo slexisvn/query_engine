@@ -1,7 +1,8 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { PlanNodeType, type LogicalPlanNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
-import { BoundExprKind, type BoundExpr, type BoundBinaryNode } from '../../binder/expression-binder.js';
+import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
+import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
 
 export class HavingPushdown extends OptimizationPass {
   override get name() { return 'HavingPushdown'; }
@@ -55,29 +56,6 @@ class HavingPushdownRewriter extends PlanRewriter {
     }
     return node;
   }
-}
-
-function splitConjuncts(expr: BoundExpr | null): BoundExpr[] {
-  if (!expr) return [];
-  if (expr.kind === BoundExprKind.BINARY && expr.op?.toUpperCase() === 'AND') {
-    return [...splitConjuncts(expr.left), ...splitConjuncts(expr.right)];
-  }
-  return [expr];
-}
-
-function combineConjuncts(exprs: BoundExpr[]): BoundExpr | null {
-  if (!exprs || exprs.length === 0) return null;
-  let result = exprs[0];
-  for (let i = 1; i < exprs.length; i++) {
-    result = {
-      kind: BoundExprKind.BINARY,
-      op: 'AND',
-      left: result,
-      right: exprs[i],
-      resultType: 'BOOLEAN'
-    } as BoundBinaryNode;
-  }
-  return result;
 }
 
 function containsAggregate(expr: BoundExpr | null): boolean {

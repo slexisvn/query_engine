@@ -1,19 +1,5 @@
-import { getGlobalLoader } from '../loader.js';
-import type { WasmExports, WasmLoaderLike } from '../wasm-types.js';
-
-interface CoreInstance {
-  loader: WasmLoaderLike;
-  instance: WebAssembly.Instance;
-}
-
-let _coreInstance: CoreInstance | null = null;
-
-async function getCoreInstance(): Promise<CoreInstance> {
-  if (_coreInstance) return _coreInstance;
-  const loader = await getGlobalLoader();
-  _coreInstance = { loader, instance: await loader.loadModule('core') };
-  return _coreInstance;
-}
+import { getCoreInstance } from './core-instance.js';
+import type { WasmExports } from '../wasm-types.js';
 
 export async function wasmVecAddF64(a: Float64Array, b: Float64Array): Promise<Float64Array> {
   const { loader, instance } = await getCoreInstance();

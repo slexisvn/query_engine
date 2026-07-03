@@ -308,6 +308,12 @@ export class QueryEngine {
     return optimized;
   }
 
+  _applyDistributedPasses(optimizer: Optimizer, passes: DistributedPassEntry[]): void {
+    for (const { method, args } of passes) {
+      (optimizer[method] as (...passArgs: DistributedPassEntry['args']) => Optimizer)(...args);
+    }
+  }
+
   async _ensureStatistics(): Promise<void> {
     if (!this.precomputedStats && !this._statsCollected) {
       const collected = await this.collectStatistics();
@@ -315,9 +321,7 @@ export class QueryEngine {
         this.optimizer = this.createOptimizer(collected);
         this._statsCollected = true;
         if (this._distributedPasses) {
-          for (const { method, args } of this._distributedPasses) {
-            (this.optimizer[method] as (...passArgs: DistributedPassEntry['args']) => Optimizer)(...args);
-          }
+          this._applyDistributedPasses(this.optimizer, this._distributedPasses);
         }
       }
     }
@@ -373,6 +377,16 @@ export class QueryEngine {
     return new DataFrame(this, logicalPlan, schema, cteMap as ConstructorParameters<typeof DataFrame>[3]);
   }
 
+  async _formatPlan(plan: LogicalPlanNode): Promise<string> {
+    const { formatPlan } = await import('../planner/plan-formatter.js');
+    return formatPlan(plan);
+  }
+
+  async _explainPlanResult(plan: LogicalPlanNode): Promise<RunRowsResult> {
+    const planStr = await this._formatPlan(plan);
+    return { rows: [{ 'EXPLAIN_PLAN': planStr }], columns: ['EXPLAIN_PLAN'] };
+  }
+
   async _runPlan(plan: LogicalPlanNode, outputColumns: OutputColumn[], streaming: boolean = false, cteMap: Map<string, LogicalPlanNode> | null = null): Promise<QueryResult> {
     await this._ensureStatistics();
     const optimized = this.optimize(plan);
@@ -391,14 +405,11 @@ export class QueryEngine {
     const { plan, outputColumns, cteMap, isExplain, isAnalyze } = compiled;
 
     if (isExplain && !isAnalyze) {
-      const { formatPlan } = await import('../planner/plan-formatter.js');
-      const planStr = formatPlan(plan);
-      return { rows: [{ 'EXPLAIN_PLAN': planStr }], columns: ['EXPLAIN_PLAN'] };
+      return this._explainPlanResult(plan);
     }
 
     if (isAnalyze) {
-      const { formatPlan } = await import('../planner/plan-formatter.js');
-      const planStr = formatPlan(plan);
+      const planStr = await this._formatPlan(plan);
       const startTime = performance.now();
       this.executor.cteDefinitions = cteMap;
       const { sink, columnNames } = await this.executor.execute(plan, outputColumns as ExecutorColumns);
@@ -559,9 +570,7 @@ export class QueryEngine {
     const { plan, outputColumns, cteMap, isExplain, isAnalyze } = compiled;
 
     if (isExplain && !isAnalyze) {
-      const { formatPlan } = await import('../planner/plan-formatter.js');
-      const planStr = formatPlan(plan);
-      return { rows: [{ 'EXPLAIN_PLAN': planStr }], columns: ['EXPLAIN_PLAN'] };
+      return this._explainPlanResult(plan);
     }
 
     this.executor.cteDefinitions = cteMap;
@@ -679,15 +688,14 @@ export class QueryEngine {
     const partitionMap = new PartitionMap();
     const statsMap = this.precomputedStats || new Map();
 
-    this.optimizer.insertPassAfter('PhysicalDesign', new DistributionAwareJoin(partitionMap, statsMap));
-    this.optimizer.registerPass(new PartialAggregatePass());
-    this.optimizer.registerPass(new DistributedSortPass());
-
-    this._distributedPasses = [
+    const makeDistributedPasses = (): DistributedPassEntry[] => [
       { method: 'insertPassAfter', args: ['PhysicalDesign', new DistributionAwareJoin(partitionMap, statsMap)] },
       { method: 'registerPass', args: [new PartialAggregatePass()] },
       { method: 'registerPass', args: [new DistributedSortPass()] },
     ];
+
+    this._applyDistributedPasses(this.optimizer, makeDistributedPasses());
+    this._distributedPasses = makeDistributedPasses();
 
     let transport = clusterConfig.transport || null;
     if (!transport) {

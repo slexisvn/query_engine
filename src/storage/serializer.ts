@@ -40,9 +40,9 @@ export class ChunkSerializer {
       buf.writeUInt8(col.hasNulls ? 1 : 0, offset); offset += 1;
 
       if (col.hasNulls) {
-        const bitmapWordCount = Math.ceil(col.length / 32);
-        buf.writeUInt32LE(bitmapWordCount, offset); offset += 4;
-        const bitmapBytes = bitmapWordCount * 4;
+        const wordCount = bitmapWordCount(col.length);
+        buf.writeUInt32LE(wordCount, offset); offset += 4;
+        const bitmapBytes = wordCount * 4;
         Buffer.from(col.nullBitmap.buffer, col.nullBitmap.byteOffset, bitmapBytes).copy(buf, offset);
         offset += bitmapBytes;
       }
@@ -148,8 +148,7 @@ function computeSize(chunk: DataChunk): number {
     total += 1 + 1 + 4 + 1;
 
     if (col.hasNulls) {
-      const bitmapWordCount = Math.ceil(col.length / 32);
-      total += 4 + bitmapWordCount * 4;
+      total += 4 + bitmapWordCount(col.length) * 4;
     }
 
     if (isDictionary) {
