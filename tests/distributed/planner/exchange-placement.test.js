@@ -20,8 +20,8 @@ function makeEquiCondition() {
   return {
     kind: BoundExprKind.BINARY,
     op: '=',
-    left: { kind: 'ColumnRef', tableAlias: 'A', columnName: 'K' },
-    right: { kind: 'ColumnRef', tableAlias: 'B', columnName: 'K' },
+    left: { kind: BoundExprKind.COLUMN_REF, tableAlias: 'A', columnName: 'K' },
+    right: { kind: BoundExprKind.COLUMN_REF, tableAlias: 'B', columnName: 'K' },
   };
 }
 
@@ -60,6 +60,16 @@ describe('ExchangePlacement', () => {
 
       expect(result.left.type).toBe(ExchangeType.HASH_SHUFFLE);
       expect(result.right.type).toBe(ExchangeType.HASH_SHUFFLE);
+    });
+
+    it('extracts equi-join column refs as shuffle keys', () => {
+      const node = makeJoinNode(DistributionStrategy.SHUFFLE, makeEquiCondition());
+      const result = ep.determineJoinExchange(node);
+
+      expect(result.left.keys).toHaveLength(1);
+      expect(result.right.keys).toHaveLength(1);
+      expect(result.left.keys[0]).toMatchObject({ tableAlias: 'A', columnName: 'K' });
+      expect(result.right.keys[0]).toMatchObject({ tableAlias: 'B', columnName: 'K' });
     });
   });
 

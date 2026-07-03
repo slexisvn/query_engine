@@ -20,6 +20,7 @@ import type {
   ExecSchema,
   EvalValue,
 } from './execution-types.js';
+import { resolveColumnIndex } from './column-resolve.js';
 
 export enum StageKind {
   FILTER = 'filter',
@@ -434,11 +435,7 @@ export function instantiateAggregate(spec: FragmentSpec): HashAggregateOperator 
 }
 
 function execResolvedIndex(ref: BoundColumnRefNode, mapping: ColumnMapping): number | undefined {
-  const qualified = `${ref.tableAlias}.${ref.columnName}`.toUpperCase();
-  if (mapping.has(qualified)) return mapping.get(qualified);
-  const bare = `${ref.columnName}`.toUpperCase();
-  if (mapping.has(bare)) return mapping.get(bare);
-  return ref.columnIndex;
+  return resolveColumnIndex(ref, mapping);
 }
 
 function refsResolveIdentically(

@@ -8,19 +8,10 @@ import { isVectorizableExpr, evalVectorized } from '../wasm-expr-eval.js';
 import { Config } from '../../config.js';
 import { setBit, clearBit } from '../../utils/bitmap.js';
 import type { CompiledExpr, ColumnMapping } from '../execution-types.js';
+import { resolveColumnIndex } from '../column-resolve.js';
 
 interface ParallelDispatchLike {
   canParallelize(op: string, dt: DataType, n: number): boolean;
-}
-
-function resolveColumnIndex(expr: BoundColumnRefNode, columnMapping: ColumnMapping | null): number {
-  if (columnMapping) {
-    const key = `${expr.tableAlias}.${expr.columnName}`.toUpperCase();
-    if (columnMapping.has(key)) return columnMapping.get(key)!;
-    const byName = `${expr.columnName}`.toUpperCase();
-    if (columnMapping.has(byName)) return columnMapping.get(byName)!;
-  }
-  return expr.columnIndex;
 }
 
 function collectNullableColumns(expr: BoundExpr | null, chunk: DataChunk, columnMapping: ColumnMapping | null, acc: AnyColumn[]): void {
@@ -137,12 +128,6 @@ export class ProjectionOperator {
   }
 
   _resolveColIdx(expr: BoundColumnRefNode): number {
-    if (this.columnMapping) {
-      const key = `${expr.tableAlias}.${expr.columnName}`.toUpperCase();
-      if (this.columnMapping.has(key)) return this.columnMapping.get(key)!;
-      const byName = expr.columnName.toUpperCase();
-      if (this.columnMapping.has(byName)) return this.columnMapping.get(byName)!;
-    }
-    return expr.columnIndex >= 0 ? expr.columnIndex : -1;
+    return resolveColumnIndex(expr, this.columnMapping, { clampNegative: true });
   }
 }

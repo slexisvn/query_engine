@@ -1,123 +1,20 @@
 import { getCoreInstance } from './core-instance.js';
 import type { WasmExports } from '../wasm-types.js';
+import { makeVecOpF64, makeScalarOpF64, makeScalarOpRevF64, makeUnaryOpF64 } from './kernel-factory.js';
 
-export async function wasmVecAddF64(a: Float64Array, b: Float64Array): Promise<Float64Array> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-  const count = a.length;
-  const aPtr = loader.alloc(count * 8);
-  const bPtr = loader.alloc(count * 8);
-  const outPtr = loader.alloc(count * 8);
-  loader.writeF64Array(a, aPtr);
-  loader.writeF64Array(b, bPtr);
-  (instance.exports as WasmExports).vecAddF64(aPtr, bPtr, outPtr, count);
-  return loader.readF64Array(outPtr, count);
-}
+export const wasmVecAddF64 = makeVecOpF64('vecAddF64');
+export const wasmVecSubF64 = makeVecOpF64('vecSubF64');
+export const wasmVecMulF64 = makeVecOpF64('vecMulF64');
+export const wasmVecDivF64 = makeVecOpF64('vecDivF64');
 
-export async function wasmVecSubF64(a: Float64Array, b: Float64Array): Promise<Float64Array> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-  const count = a.length;
-  const aPtr = loader.alloc(count * 8);
-  const bPtr = loader.alloc(count * 8);
-  const outPtr = loader.alloc(count * 8);
-  loader.writeF64Array(a, aPtr);
-  loader.writeF64Array(b, bPtr);
-  (instance.exports as WasmExports).vecSubF64(aPtr, bPtr, outPtr, count);
-  return loader.readF64Array(outPtr, count);
-}
+export const wasmScalarAddF64 = makeScalarOpF64('scalarAddF64');
+export const wasmScalarSubF64 = makeScalarOpF64('scalarSubF64');
+export const wasmScalarMulF64 = makeScalarOpF64('scalarMulF64');
+export const wasmScalarDivF64 = makeScalarOpF64('scalarDivF64');
+export const wasmScalarSubRevF64 = makeScalarOpRevF64('scalarSubRevF64');
+export const wasmScalarDivRevF64 = makeScalarOpRevF64('scalarDivRevF64');
 
-export async function wasmVecMulF64(a: Float64Array, b: Float64Array): Promise<Float64Array> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-  const count = a.length;
-  const aPtr = loader.alloc(count * 8);
-  const bPtr = loader.alloc(count * 8);
-  const outPtr = loader.alloc(count * 8);
-  loader.writeF64Array(a, aPtr);
-  loader.writeF64Array(b, bPtr);
-  (instance.exports as WasmExports).vecMulF64(aPtr, bPtr, outPtr, count);
-  return loader.readF64Array(outPtr, count);
-}
-
-export async function wasmVecDivF64(a: Float64Array, b: Float64Array): Promise<Float64Array> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-  const count = a.length;
-  const aPtr = loader.alloc(count * 8);
-  const bPtr = loader.alloc(count * 8);
-  const outPtr = loader.alloc(count * 8);
-  loader.writeF64Array(a, aPtr);
-  loader.writeF64Array(b, bPtr);
-  (instance.exports as WasmExports).vecDivF64(aPtr, bPtr, outPtr, count);
-  return loader.readF64Array(outPtr, count);
-}
-
-export async function wasmScalarAddF64(data: Float64Array, scalar: number): Promise<Float64Array> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-  const count = data.length;
-  const dataPtr = loader.alloc(count * 8);
-  const outPtr = loader.alloc(count * 8);
-  loader.writeF64Array(data, dataPtr);
-  (instance.exports as WasmExports).scalarAddF64(dataPtr, scalar, outPtr, count);
-  return loader.readF64Array(outPtr, count);
-}
-
-export async function wasmScalarSubF64(data: Float64Array, scalar: number): Promise<Float64Array> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-  const count = data.length;
-  const dataPtr = loader.alloc(count * 8);
-  const outPtr = loader.alloc(count * 8);
-  loader.writeF64Array(data, dataPtr);
-  (instance.exports as WasmExports).scalarSubF64(dataPtr, scalar, outPtr, count);
-  return loader.readF64Array(outPtr, count);
-}
-
-export async function wasmScalarMulF64(data: Float64Array, scalar: number): Promise<Float64Array> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-  const count = data.length;
-  const dataPtr = loader.alloc(count * 8);
-  const outPtr = loader.alloc(count * 8);
-  loader.writeF64Array(data, dataPtr);
-  (instance.exports as WasmExports).scalarMulF64(dataPtr, scalar, outPtr, count);
-  return loader.readF64Array(outPtr, count);
-}
-
-export async function wasmScalarDivF64(data: Float64Array, scalar: number): Promise<Float64Array> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-  const count = data.length;
-  const dataPtr = loader.alloc(count * 8);
-  const outPtr = loader.alloc(count * 8);
-  loader.writeF64Array(data, dataPtr);
-  (instance.exports as WasmExports).scalarDivF64(dataPtr, scalar, outPtr, count);
-  return loader.readF64Array(outPtr, count);
-}
-
-export async function wasmScalarSubRevF64(scalar: number, data: Float64Array): Promise<Float64Array> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-  const count = data.length;
-  const dataPtr = loader.alloc(count * 8);
-  const outPtr = loader.alloc(count * 8);
-  loader.writeF64Array(data, dataPtr);
-  (instance.exports as WasmExports).scalarSubRevF64(scalar, dataPtr, outPtr, count);
-  return loader.readF64Array(outPtr, count);
-}
-
-export async function wasmScalarDivRevF64(scalar: number, data: Float64Array): Promise<Float64Array> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-  const count = data.length;
-  const dataPtr = loader.alloc(count * 8);
-  const outPtr = loader.alloc(count * 8);
-  loader.writeF64Array(data, dataPtr);
-  (instance.exports as WasmExports).scalarDivRevF64(scalar, dataPtr, outPtr, count);
-  return loader.readF64Array(outPtr, count);
-}
+export const wasmNegF64 = makeUnaryOpF64('negF64');
 
 export async function wasmWidenI32ToF64(data: Int32Array): Promise<Float64Array> {
   const { loader, instance } = await getCoreInstance();
@@ -127,17 +24,6 @@ export async function wasmWidenI32ToF64(data: Int32Array): Promise<Float64Array>
   const outPtr = loader.alloc(count * 8);
   loader.writeI32Array(data, dataPtr);
   (instance.exports as WasmExports).widenI32ToF64(dataPtr, outPtr, count);
-  return loader.readF64Array(outPtr, count);
-}
-
-export async function wasmNegF64(data: Float64Array): Promise<Float64Array> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-  const count = data.length;
-  const dataPtr = loader.alloc(count * 8);
-  const outPtr = loader.alloc(count * 8);
-  loader.writeF64Array(data, dataPtr);
-  (instance.exports as WasmExports).negF64(dataPtr, outPtr, count);
   return loader.readF64Array(outPtr, count);
 }
 

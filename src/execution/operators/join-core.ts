@@ -207,3 +207,7 @@ export function materializeRow(chunk: DataChunk, rowIdx: number): JoinRow {
   }
   return row;
 }
+
+export function materializeActiveRow(chunk: DataChunk, i: number): JoinRow {
+  return materializeRow(chunk, chunk.activeRowIndex(i));
+}

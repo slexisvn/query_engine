@@ -1,16 +1,11 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanNodeType, JoinType, LogicalFilter, LogicalJoin, getChildren, setChildren, type LogicalPlanNode, type LogicalJoinNode, type LogicalProjectNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
+import { PlanNodeType, JoinType, LogicalFilter, LogicalJoin, setChildren, type LogicalPlanNode, type LogicalJoinNode, type LogicalProjectNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { BoundExprKind, type BoundExpr, type BoundBinaryNode } from '../../binder/expression-binder.js';
-import { walkExpr } from './expr-walk.js';
+import { walkExpr, containsAggregate } from './expr-walk.js';
+import { collectPlanRefs, refBelongsToPlan, type ExprRef } from './plan-refs.js';
 
 type MetadataValue = string | number | boolean | object | null | undefined;
-
-interface PlanRefs { aliases: Set<string>; columns: Set<string>; }
-
-interface ExprRef { tableAlias: string; columnName: string; }
-
-interface NamedExpr { outputName?: string; alias?: string; name?: string; columnName?: string; }
 
 type JoinWithMark = LogicalJoinNode & { markColumn?: string };
 
@@ -254,63 +249,6 @@ export function combineConjuncts(preds: BoundExpr[]): BoundExpr | null {
     right: p,
     resultType: 'BOOLEAN',
   }));
-}
-
-function collectPlanRefs(node: LogicalPlanNode): PlanRefs {
-  const refs: PlanRefs = { aliases: new Set<string>(), columns: new Set<string>() };
-  addOutputRefs(node, refs);
-  refs.aliases.delete('');
-  refs.columns.delete('');
-  return refs;
-}
-
-function addOutputRefs(node: LogicalPlanNode, refs: PlanRefs): void {
-  if (!node) return;
-  if (node.type === PlanNodeType.SCAN) {
-    refs.aliases.add(node.alias?.toUpperCase() || node.table?.toUpperCase());
-    for (const col of node.columns || []) {
-      refs.columns.add((col.name || (col as { columnName?: string }).columnName || '').toUpperCase());
-    }
-    return;
-  }
-  if (node.type === PlanNodeType.CTE_SCAN) {
-    refs.aliases.add(((node as { alias?: string }).alias || node.cteName || '').toUpperCase());
-    return;
-  }
-  if (node.type === PlanNodeType.PROJECT) {
-    for (const expr of node.expressions || []) {
-      const named = expr as NamedExpr;
-      refs.columns.add((named.outputName || named.alias || named.name || named.columnName || '').toUpperCase());
-    }
-    return;
-  }
-  if (node.type === PlanNodeType.AGGREGATE) {
-    for (const expr of node.groupBy || []) {
-      const named = expr as NamedExpr;
-      refs.columns.add((named.outputName || named.alias || named.name || named.columnName || '').toUpperCase());
-    }
-    for (const agg of node.aggregates || []) {
-      const named = agg as NamedExpr;
-      refs.columns.add((named.outputName || named.alias || named.name || '').toUpperCase());
-    }
-    return;
-  }
-  if (node.type === PlanNodeType.JOIN || node.type === PlanNodeType.UNION) {
-    for (const child of getChildren(node)) addOutputRefs(child, refs);
-    return;
-  }
-  if (node.children?.[0]) addOutputRefs(node.children[0], refs);
-}
-
-function refBelongsToPlan(ref: ExprRef, planRefs: PlanRefs): boolean {
-  if (ref.tableAlias) return planRefs.aliases.has(ref.tableAlias);
-  return planRefs.columns.has(ref.columnName);
-}
-
-function containsAggregate(expr: BoundExpr): boolean {
-  let found = false;
-  walkExpr(expr, (e) => { if (e.kind === BoundExprKind.AGGREGATE) found = true; });
-  return found;
 }
 
 function collectTableRefs(expr: BoundExpr): ExprRef[] {

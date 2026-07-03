@@ -3,6 +3,7 @@ import { Column } from '../../storage/column.js';
 import type { DataType, ColumnValue } from '../../storage/data-type.js';
 import { JoinType } from '../../planner/logical-plan.js';
 import type { CompiledExpr } from '../execution-types.js';
+import { materializeActiveRow } from './join-core.js';
 
 type JoinRow = ColumnValue[];
 
@@ -94,12 +95,7 @@ export class NestedLoopJoinOperator {
     const rows: JoinRow[] = [];
     for (const chunk of chunks) {
       for (let i = 0; i < chunk.size; i++) {
-        const idx = chunk.activeRowIndex(i);
-        const row = new Array(chunk.columns.length);
-        for (let c = 0; c < chunk.columns.length; c++) {
-          row[c] = chunk.columns[c].get(idx);
-        }
-        rows.push(row);
+        rows.push(materializeActiveRow(chunk, i));
       }
     }
     return rows;

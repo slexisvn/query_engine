@@ -1,6 +1,6 @@
-import { Column } from '../../storage/column.js';
 import { DataChunk } from '../../storage/chunk.js';
 import type { DataType } from '../../storage/data-type.js';
+import { dedupProcess, dedupConsume, dedupFinalize, type DedupTarget } from './dedup-core.js';
 
 export class UnionOperator {
   isAll: boolean;
@@ -18,43 +18,14 @@ export class UnionOperator {
 
   async process(chunk: DataChunk): Promise<DataChunk> {
     if (this.isAll) return chunk;
-    if (!this.schema) {
-      this.schema = chunk.columns.map((c) => c.dataType);
-    }
-
-    const sv = new Uint32Array(chunk.size);
-    let count = 0;
-
-    for (let i = 0; i < chunk.size; i++) {
-      const rowIdx = chunk.activeRowIndex(i);
-      let key = '';
-      for (let c = 0; c < chunk.columns.length; c++) {
-        if (c > 0) key += '|';
-        key += String(chunk.columns[c].get(rowIdx));
-      }
-      if (!this.seen!.has(key)) {
-        this.seen!.add(key);
-        sv[count++] = rowIdx;
-      }
-    }
-
-    if (count === 0) return new DataChunk(chunk.columns, 0);
-    if (count === chunk.size) return chunk;
-
-    const result = new DataChunk(chunk.columns, count);
-    result.setSelectionVector(sv.slice(0, count), count);
-    return result;
+    return dedupProcess(this as unknown as DedupTarget, chunk);
   }
 
   async consume(chunk: DataChunk): Promise<void> {
-    if (!this._legacyChunks) this._legacyChunks = [];
-    const result = await this.process(chunk);
-    if (result.size > 0) {
-      this._legacyChunks.push(result.selectionVector ? result.flatten() : result);
-    }
+    await dedupConsume(this as unknown as DedupTarget, await this.process(chunk));
   }
 
   async finalize(): Promise<DataChunk[]> {
-    return this._legacyChunks || [];
+    return dedupFinalize(this as unknown as DedupTarget);
   }
 }

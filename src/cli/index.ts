@@ -1,4 +1,3 @@
-import fs from 'fs';
 import path from 'path';
 import { fork } from 'child_process';
 import type { ChildProcess } from 'child_process';
@@ -6,7 +5,7 @@ import { availableParallelism } from 'os';
 import { fileURLToPath } from 'url';
 import { Catalog } from '../catalog/catalog.js';
 import { QueryEngine } from '../index.js';
-import { LoaderFactory } from './loaders/loader-factory.js';
+import { loadDataFiles } from './cli-common.js';
 import { startREPL } from './repl.js';
 import { Config } from '../config.js';
 import type { NodeRegistration, NodeId, PartitionId } from '../distributed/distributed-types.js';
@@ -15,10 +14,6 @@ import type { QueryCoordinator } from '../distributed/execution/coordinator.js';
 interface LoadOptions {
   partitionIndex?: number;
   partitionCount?: number;
-}
-
-interface LoaderLike {
-  load(engine: QueryEngine, filePath: string, options?: LoadOptions): Promise<string>;
 }
 
 interface WorkerPoolWithCount {
@@ -118,18 +113,7 @@ async function main(): Promise<void> {
       ? { partitionIndex: -1, partitionCount: 1 }
       : {};
 
-    for (const dp of dataPaths) {
-      const resolvedPath = path.resolve(process.cwd(), dp);
-      if (!fs.existsSync(resolvedPath)) {
-        console.error(`File not found: ${resolvedPath}`);
-        process.exit(1);
-      }
-      const loader = LoaderFactory.getLoader(resolvedPath) as LoaderLike;
-      const tableName = await loader.load(engine, resolvedPath, coordLoadOptions);
-      const storage = catalog.getTableStorage(tableName);
-      const rowCount = storage ? storage.rowCount() : 0;
-      console.log(`[load] ${tableName} (${rowCount} rows) from ${dp}`);
-    }
+    await loadDataFiles(engine, catalog, dataPaths, { loadOptions: coordLoadOptions });
 
     let coordinator: QueryCoordinator | null = null;
     const childProcesses: ChildProcess[] = [];

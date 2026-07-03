@@ -4,6 +4,7 @@ import { PriorityQueue } from '../../utils/priority-queue.js';
 import { Config } from '../../config.js';
 import type { ColumnValue, DataType } from '../../storage/data-type.js';
 import type { CompiledExpr } from '../execution-types.js';
+import { materializeActiveRow } from './join-core.js';
 
 interface SortKey {
   eval: CompiledExpr;
@@ -60,10 +61,7 @@ export class SortOperator {
     const chunkRows: SortRow[] = new Array(chunk.size);
     for (let i = 0; i < chunk.size; i++) {
       const rowIdx = chunk.activeRowIndex(i);
-      const row: ColumnValue[] = new Array(chunk.columns.length);
-      for (let c = 0; c < chunk.columns.length; c++) {
-        row[c] = chunk.columns[c].get(rowIdx);
-      }
+      const row = materializeActiveRow(chunk, i);
       const sortKeys: ColumnValue[] = new Array(this.keyExtractors.length);
       for (let k = 0; k < this.keyExtractors.length; k++) {
         sortKeys[k] = this.keyExtractors[k].eval(chunk, rowIdx) as ColumnValue;
@@ -189,10 +187,7 @@ export class SortOperator {
     const items: SortRow[] = new Array(chunk.size);
     for (let i = 0; i < chunk.size; i++) {
       const rowIdx = chunk.activeRowIndex(i);
-      const row: ColumnValue[] = new Array(chunk.columns.length);
-      for (let c = 0; c < chunk.columns.length; c++) {
-        row[c] = chunk.columns[c].get(rowIdx);
-      }
+      const row = materializeActiveRow(chunk, i);
       const sortKeys: ColumnValue[] = new Array(this.keyExtractors.length);
       for (let k = 0; k < this.keyExtractors.length; k++) {
         sortKeys[k] = this.keyExtractors[k].eval(chunk, rowIdx) as ColumnValue;

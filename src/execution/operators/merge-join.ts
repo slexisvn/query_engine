@@ -3,6 +3,7 @@ import { Column } from '../../storage/column.js';
 import { JoinType } from '../../planner/logical-plan.js';
 import { DataType, type ColumnValue } from '../../storage/data-type.js';
 import type { CompiledExpr, EvalValue } from '../execution-types.js';
+import { materializeRow } from './join-core.js';
 
 type JoinKey = EvalValue | EvalValue[];
 
@@ -219,38 +220,22 @@ export class MergeJoinOperator {
   }
 
   _combineRow(bRow: JoinRow, pRow: JoinRow): ColumnValue[] {
-    const row: ColumnValue[] = [];
-    for (let c = 0; c < bRow.chunk.columns.length; c++) {
-      row.push(bRow.chunk.columns[c].get(bRow.idx));
-    }
-    for (let c = 0; c < pRow.chunk.columns.length; c++) {
-      row.push(pRow.chunk.columns[c].get(pRow.idx));
-    }
-    return row;
+    return materializeRow(bRow.chunk, bRow.idx).concat(materializeRow(pRow.chunk, pRow.idx));
   }
 
   _extractProbeRow(rowObj: JoinRow): ColumnValue[] {
-    const row: ColumnValue[] = [];
-    for (let c = 0; c < rowObj.chunk.columns.length; c++) {
-      row.push(rowObj.chunk.columns[c].get(rowObj.idx));
-    }
-    return row;
+    return materializeRow(rowObj.chunk, rowObj.idx);
   }
 
   _combineRowWithNulls(rowObj: JoinRow, isBuild: boolean): ColumnValue[] {
-    const row: ColumnValue[] = [];
     if (isBuild) {
-      for (let c = 0; c < rowObj.chunk.columns.length; c++) {
-        row.push(rowObj.chunk.columns[c].get(rowObj.idx));
-      }
+      const row = materializeRow(rowObj.chunk, rowObj.idx);
       for (let c = 0; c < this.probeColCount; c++) row.push(null);
-    } else {
-      for (let c = 0; c < this.buildColCount; c++) row.push(null);
-      for (let c = 0; c < rowObj.chunk.columns.length; c++) {
-        row.push(rowObj.chunk.columns[c].get(rowObj.idx));
-      }
+      return row;
     }
-    return row;
+    const row: ColumnValue[] = [];
+    for (let c = 0; c < this.buildColCount; c++) row.push(null);
+    return row.concat(materializeRow(rowObj.chunk, rowObj.idx));
   }
 
   _buildOutputChunk(outputRows: ColumnValue[][]): DataChunk | null {

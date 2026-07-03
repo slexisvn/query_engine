@@ -113,8 +113,7 @@ export class CSVLoader extends DataLoader {
   }
 
   inferSchema(firstRow: CSVRow): ColumnSchema[] {
-    const schema: ColumnSchema[] = [];
-    for (const [key, value] of Object.entries(firstRow)) {
+    return this.buildSchema(firstRow, (value: string) => {
       let type = DataType.VARCHAR;
       if (value && value.trim() !== '') {
         const trimmed = value.trim();
@@ -124,9 +123,8 @@ export class CSVLoader extends DataLoader {
           type = Number.isInteger(Number(trimmed)) ? DataType.INT32 : DataType.FLOAT64;
         }
       }
-      schema.push({ name: key, dataType: type });
-    }
-    return schema;
+      return type;
+    });
   }
 
   convertRow(rowObj: CSVRow, schema: ColumnSchema[]): ColumnValue[] {

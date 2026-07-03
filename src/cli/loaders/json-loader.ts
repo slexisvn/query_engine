@@ -52,17 +52,15 @@ export class JSONLoader extends DataLoader {
   }
 
   inferSchema(firstRow: JsonObject): ColumnSchema[] {
-    const schema: ColumnSchema[] = [];
-    for (const [key, value] of Object.entries(firstRow)) {
+    return this.buildSchema(firstRow, (value: JsonValue) => {
       let type = DataType.VARCHAR;
       if (typeof value === 'boolean') {
         type = DataType.BOOLEAN;
       } else if (typeof value === 'number') {
         type = Number.isInteger(value) ? DataType.INT32 : DataType.FLOAT64;
       }
-      schema.push({ name: key, dataType: type });
-    }
-    return schema;
+      return type;
+    });
   }
 }
 

@@ -174,7 +174,7 @@ export function getExprType(expr: { kind?: BoundExprKind; resultType?: string | 
 
 export function collectCorrelatedColumns(expr: BoundExpr): BoundColumnRefNode[] {
   const refs: BoundColumnRefNode[] = [];
-  _walkExpr(expr, node => {
+  walkExpr(expr, node => {
     if (node.kind === BoundExprKind.COLUMN_REF && node.isCorrelated) {
       refs.push(node);
     }
@@ -182,57 +182,57 @@ export function collectCorrelatedColumns(expr: BoundExpr): BoundColumnRefNode[] 
   return refs;
 }
 
-function _walkExpr(expr: BoundExpr | null | undefined, fn: (node: BoundExpr) => void): void {
+export function walkExpr(expr: BoundExpr | null | undefined, fn: (node: BoundExpr) => void): void {
   if (!expr) return;
   fn(expr);
   switch (expr.kind) {
     case BoundExprKind.BINARY:
-      _walkExpr(expr.left, fn);
-      _walkExpr(expr.right, fn);
+      walkExpr(expr.left, fn);
+      walkExpr(expr.right, fn);
       break;
     case BoundExprKind.UNARY:
-      _walkExpr(expr.operand, fn);
+      walkExpr(expr.operand, fn);
       break;
     case BoundExprKind.FUNCTION:
     case BoundExprKind.AGGREGATE:
-      for (const arg of expr.args) _walkExpr(arg, fn);
+      for (const arg of expr.args) walkExpr(arg, fn);
       break;
     case BoundExprKind.CASE:
-      if (expr.operand) _walkExpr(expr.operand, fn);
+      if (expr.operand) walkExpr(expr.operand, fn);
       for (const wc of expr.whenClauses) {
-        _walkExpr(wc.condition, fn);
-        _walkExpr(wc.result, fn);
+        walkExpr(wc.condition, fn);
+        walkExpr(wc.result, fn);
       }
-      if (expr.elseExpr) _walkExpr(expr.elseExpr, fn);
+      if (expr.elseExpr) walkExpr(expr.elseExpr, fn);
       break;
     case BoundExprKind.CAST:
-      _walkExpr(expr.expr, fn);
+      walkExpr(expr.expr, fn);
       break;
     case BoundExprKind.BETWEEN:
-      _walkExpr(expr.expr, fn);
-      _walkExpr(expr.low, fn);
-      _walkExpr(expr.high, fn);
+      walkExpr(expr.expr, fn);
+      walkExpr(expr.low, fn);
+      walkExpr(expr.high, fn);
       break;
     case BoundExprKind.IN_LIST:
-      _walkExpr(expr.expr, fn);
+      walkExpr(expr.expr, fn);
       if (Array.isArray(expr.list)) {
-        for (const item of expr.list) _walkExpr(item, fn);
+        for (const item of expr.list) walkExpr(item, fn);
       }
       break;
     case BoundExprKind.LIKE:
-      _walkExpr(expr.expr, fn);
-      _walkExpr(expr.pattern, fn);
+      walkExpr(expr.expr, fn);
+      walkExpr(expr.pattern, fn);
       break;
     case BoundExprKind.IS_NULL:
-      _walkExpr(expr.expr, fn);
+      walkExpr(expr.expr, fn);
       break;
     case BoundExprKind.EXTRACT:
-      _walkExpr(expr.source, fn);
+      walkExpr(expr.source, fn);
       break;
     case BoundExprKind.WINDOW:
-      for (const arg of expr.args) _walkExpr(arg, fn);
-      for (const p of expr.partitionBy) _walkExpr(p, fn);
-      for (const o of expr.orderBy) _walkExpr(o.expr, fn);
+      for (const arg of expr.args) walkExpr(arg, fn);
+      for (const p of expr.partitionBy) walkExpr(p, fn);
+      for (const o of expr.orderBy) walkExpr(o.expr, fn);
       break;
   }
 }

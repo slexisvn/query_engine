@@ -1,9 +1,7 @@
-import fs from 'fs';
-import path from 'path';
 import readline from 'readline';
 import { Catalog } from '../catalog/catalog.js';
 import { QueryEngine } from '../index.js';
-import { LoaderFactory } from './loaders/loader-factory.js';
+import { loadDataFiles } from './cli-common.js';
 import { formatResult } from './format.js';
 import { HttpTransport } from '../distributed/transport/http-transport.js';
 import { NodeDescriptor, NodeRole } from '../distributed/cluster/node-descriptor.js';
@@ -12,13 +10,7 @@ import { Config } from '../config.js';
 import type { ClusterManager } from '../distributed/cluster/cluster-manager.js';
 import type { PartitionMap } from '../distributed/partition/partition-map.js';
 import type { QueryCoordinator } from '../distributed/execution/coordinator.js';
-import type { DataLoader } from './loaders/data-loader.js';
-import type { Table } from '../storage/table.js';
 import type { NodeId, NodeRegistration, HeartbeatMessage } from '../distributed/distributed-types.js';
-
-interface LoaderLike {
-  load(engine: QueryEngine, filePath: string, options: { maxRows: number }): Promise<string>;
-}
 
 interface CoordinatorRegistration extends NodeRegistration {
   partitionIndex?: number | null;
@@ -57,17 +49,11 @@ async function main(): Promise<void> {
   const catalog = new Catalog();
   const engine = new QueryEngine(catalog);
 
-  for (const dp of dataPaths) {
-    const resolvedPath = path.resolve(process.cwd(), dp);
-    if (!fs.existsSync(resolvedPath)) {
-      console.error(`File not found: ${resolvedPath}`);
-      process.exit(1);
-    }
-    const loader: DataLoader = LoaderFactory.getLoader(resolvedPath);
-    const tableName = await (loader as LoaderLike).load(engine, resolvedPath, { maxRows: Config.coordinatorSchemaSampleRows });
-    const storage = catalog.getTableStorage(tableName) as Table;
-    console.log(`[load] ${tableName} (schema from ${storage.rowCount()} sample rows; data lives on workers)`);
-  }
+  await loadDataFiles(engine, catalog, dataPaths, {
+    loadOptions: { maxRows: Config.coordinatorSchemaSampleRows },
+    formatLoadLine: ({ tableName, rowCount }) =>
+      `[load] ${tableName} (schema from ${rowCount} sample rows; data lives on workers)`,
+  });
 
   const nodeId = `coordinator-${port}`;
   const transport = new HttpTransport({ port, nodeId });

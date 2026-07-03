@@ -127,13 +127,7 @@ export class Binder {
 
     let groupBy: BE.BoundExpr[] | null = null;
     if (node.groupBy) {
-      groupBy = node.groupBy.map(expr => {
-        if (expr.kind === NodeKind.COLUMN_REF && !expr.table) {
-          const aliasExpr = selectAliasMap.get(expr.name.toUpperCase());
-          if (aliasExpr) return aliasExpr;
-        }
-        return this.bindExpression(expr, fromScope);
-      });
+      groupBy = node.groupBy.map(expr => this.bindKeyWithAlias(expr, fromScope, selectAliasMap));
     }
 
     let having: BE.BoundExpr | null = null;
@@ -146,19 +140,11 @@ export class Binder {
 
     let orderBy: BoundOrderKey[] | null = null;
     if (node.orderBy) {
-      orderBy = node.orderBy.map(ok => {
-        if (ok.expr.kind === NodeKind.COLUMN_REF && !ok.expr.table) {
-          const aliasExpr = selectAliasMap.get(ok.expr.name.toUpperCase());
-          if (aliasExpr) {
-            return { expr: aliasExpr, direction: ok.direction, nullOrder: ok.nullOrder };
-          }
-        }
-        return {
-          expr: this.bindExpression(ok.expr, fromScope),
-          direction: ok.direction,
-          nullOrder: ok.nullOrder,
-        };
-      });
+      orderBy = node.orderBy.map(ok => ({
+        expr: this.bindKeyWithAlias(ok.expr, fromScope, selectAliasMap),
+        direction: ok.direction,
+        nullOrder: ok.nullOrder,
+      }));
     }
 
     let limit: BE.BoundExpr | null = null;
@@ -191,6 +177,14 @@ export class Binder {
       distinct: node.distinct,
       outputColumns,
     };
+  }
+
+  bindKeyWithAlias(expr: AST.Expr, scope: BinderScope, selectAliasMap: Map<string, BE.BoundExpr>): BE.BoundExpr {
+    if (expr.kind === NodeKind.COLUMN_REF && !expr.table) {
+      const aliasExpr = selectAliasMap.get(expr.name.toUpperCase());
+      if (aliasExpr) return aliasExpr;
+    }
+    return this.bindExpression(expr, scope);
   }
 
   bindWithClause(withClause: AST.WithClauseNode, scope: BinderScope): void {

@@ -1,12 +1,9 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { PlanNodeType, JoinType, getChildren, type LogicalPlanNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
+import { PlanNodeType, JoinType, type LogicalPlanNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
 import { BoundExprKind, type BoundExpr, type LiteralValue } from '../../binder/expression-binder.js';
 import { splitConjuncts } from './predicate-pushdown.js';
-
-interface PlanRefs { aliases: Set<string>; columns: Set<string>; }
-
-interface NamedExpr { outputName?: string; alias?: string; name?: string; columnName?: string; }
+import { collectPlanRefs, type PlanRefs } from './plan-refs.js';
 
 type EvalResult = LiteralValue | undefined;
 
@@ -24,8 +21,8 @@ class OuterToInnerRewriter extends PlanRewriter {
     let child: LogicalPlanNode = this.rewrite(node.children[0]);
 
         if (child.type === PlanNodeType.JOIN && (child.joinType === JoinType.LEFT || child.joinType === JoinType.FULL || child.joinType === JoinType.RIGHT || child.joinType === JoinType.SINGLE)) {
-      const leftRefs = getPlanRefs(child.children[0]);
-      const rightRefs = getPlanRefs(child.children[1]);
+      const leftRefs = collectPlanRefs(child.children[0]);
+      const rightRefs = collectPlanRefs(child.children[1]);
 
             const predicates = splitConjuncts(node.condition);
 
@@ -65,52 +62,6 @@ class OuterToInnerRewriter extends PlanRewriter {
     }
     return node;
   }
-}
-
-function getPlanRefs(planNode: LogicalPlanNode): PlanRefs {
-  const refs: PlanRefs = { aliases: new Set<string>(), columns: new Set<string>() };
-  addOutputRefs(planNode, refs);
-  refs.aliases.delete('');
-  refs.columns.delete('');
-  return refs;
-}
-
-function addOutputRefs(node: LogicalPlanNode, refs: PlanRefs): void {
-  if (!node) return;
-  if (node.type === PlanNodeType.SCAN) {
-    refs.aliases.add((node.alias || node.table || '').toUpperCase());
-    for (const col of node.columns || []) {
-      refs.columns.add((col.name || (col as { columnName?: string }).columnName || '').toUpperCase());
-    }
-    return;
-  }
-  if (node.type === PlanNodeType.CTE_SCAN) {
-    refs.aliases.add(((node as { alias?: string }).alias || node.cteName || '').toUpperCase());
-    return;
-  }
-  if (node.type === PlanNodeType.PROJECT) {
-    for (const expr of node.expressions || []) {
-      const e = expr as NamedExpr;
-      refs.columns.add((e.outputName || e.alias || e.name || e.columnName || '').toUpperCase());
-    }
-    return;
-  }
-  if (node.type === PlanNodeType.AGGREGATE) {
-    for (const expr of node.groupBy || []) {
-      const e = expr as NamedExpr;
-      refs.columns.add((e.outputName || e.alias || e.name || e.columnName || '').toUpperCase());
-    }
-    for (const agg of node.aggregates || []) {
-      const a = agg as NamedExpr;
-      refs.columns.add((a.outputName || a.alias || a.name || '').toUpperCase());
-    }
-    return;
-  }
-  if (node.type === PlanNodeType.JOIN || node.type === PlanNodeType.UNION) {
-    for (const child of getChildren(node)) addOutputRefs(child, refs);
-    return;
-  }
-  if (node.children?.[0]) addOutputRefs(node.children[0], refs);
 }
 
 function isNullRejecting(expr: BoundExpr, nullSupplyingRefs: PlanRefs): boolean {

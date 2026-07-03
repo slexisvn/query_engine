@@ -2,10 +2,17 @@ import { OptimizationPass } from '../pass.js';
 import { PlanNodeType, getChildren, setChildren, type LogicalPlanNode, type ProjectedExpr } from '../../planner/logical-plan.js';
 import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
 import type { ColumnInfo } from '../../binder/scope.js';
-
-interface PlanRefs { aliases: Set<string>; columns: Set<string>; }
+import { collectPlanRefs as collectPlanRefsShared, refBelongsToPlan as refBelongsToPlanShared, type PlanRefs } from './plan-refs.js';
 
 interface NamedExpr { outputName?: string; alias?: string; name?: string; columnName?: string; }
+
+function collectPlanRefs(node: LogicalPlanNode): PlanRefs {
+  return collectPlanRefsShared(node, { recurseProject: true });
+}
+
+function refBelongsToPlan(ref: { tableAlias: string; columnName: string }, planRefs: PlanRefs): boolean {
+  return refBelongsToPlanShared(ref, planRefs, { dottedAlias: true });
+}
 
 type ExprChild = BoundExpr | BoundExpr[] | string | number | boolean | bigint | null | undefined | object;
 
@@ -172,42 +179,6 @@ function collectExprColumns(expr: ExprChild, required: Set<string>): void {
   }
 }
 
-function collectPlanRefs(node: LogicalPlanNode): PlanRefs {
-  const refs: PlanRefs = { aliases: new Set<string>(), columns: new Set<string>() };
-  addOutputRefs(node, refs);
-  refs.aliases.delete('');
-  refs.columns.delete('');
-  return refs;
-}
-
-function addOutputRefs(node: LogicalPlanNode, refs: PlanRefs): void {
-  if (!node) return;
-  if (node.type === PlanNodeType.SCAN) {
-    refs.aliases.add((node.alias || node.table || '').toUpperCase());
-    for (const col of node.columns || []) refs.columns.add((col.name || (col as { columnName?: string }).columnName || '').toUpperCase());
-    return;
-  }
-  if (node.type === PlanNodeType.CTE_SCAN) {
-    refs.aliases.add(((node as { alias?: string }).alias || node.cteName || '').toUpperCase());
-    return;
-  }
-  if (node.type === PlanNodeType.PROJECT) {
-    for (const expr of node.expressions || []) refs.columns.add(outputName(expr));
-    for (const child of getChildren(node)) addOutputRefs(child, refs);
-    return;
-  }
-  if (node.type === PlanNodeType.AGGREGATE) {
-    for (const expr of node.groupBy || []) refs.columns.add(outputName(expr));
-    for (const agg of node.aggregates || []) refs.columns.add(outputName(agg));
-    return;
-  }
-  if (node.type === PlanNodeType.JOIN || node.type === PlanNodeType.UNION) {
-    for (const child of getChildren(node)) addOutputRefs(child, refs);
-    return;
-  }
-  if (node.children?.[0]) addOutputRefs(node.children[0], refs);
-}
-
 function outputName(expr: BoundExpr | NamedExpr): string {
   const named = expr as NamedExpr;
   return (named?.outputName || named?.alias || named?.name || named?.columnName || '').toUpperCase();
@@ -241,11 +212,6 @@ function refSetNeedsColumn(required: Set<string>, aliases: Set<string>, columnNa
     if (!parsed.tableAlias || parsed.tableAlias === '.' || aliases.has(parsed.tableAlias)) return true;
   }
   return false;
-}
-
-function refBelongsToPlan(ref: { tableAlias: string; columnName: string }, planRefs: PlanRefs): boolean {
-  if (ref.tableAlias && ref.tableAlias !== '.') return planRefs.aliases.has(ref.tableAlias);
-  return planRefs.columns.has(ref.columnName);
 }
 
 function refKey(tableAlias: string | null, columnName: string | null): string {

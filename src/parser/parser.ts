@@ -213,6 +213,15 @@ export class Parser {
     return items;
   }
 
+  parseOptionalAlias(guard?: () => boolean): string | null {
+    if (this.tryConsume(TokenType.AS)) {
+      return this.expectIdent();
+    } else if (this.isAt(TokenType.IDENT) && (!guard || guard())) {
+      return this.expectIdent();
+    }
+    return null;
+  }
+
   parseSelectItem(): AST.SelectItemNode {
     if (this.isAt(TokenType.STAR)) {
       this.advance();
@@ -227,12 +236,7 @@ export class Parser {
     }
 
     const expr = this.parseExpression();
-    let alias: string | null = null;
-    if (this.tryConsume(TokenType.AS)) {
-      alias = this.expectIdent();
-    } else if (this.isAt(TokenType.IDENT)) {
-      alias = this.expectIdent();
-    }
+    const alias = this.parseOptionalAlias();
     return AST.SelectItem(expr, alias);
   }
 
@@ -263,12 +267,7 @@ export class Parser {
     }
 
     const name = this.expectIdent();
-    let alias = name;
-    if (this.tryConsume(TokenType.AS)) {
-      alias = this.expectIdent();
-    } else if (this.isAt(TokenType.IDENT) && !this.isJoinKeyword() && !this.isClauseKeyword()) {
-      alias = this.expectIdent();
-    }
+    const alias = this.parseOptionalAlias(() => !this.isJoinKeyword() && !this.isClauseKeyword()) ?? name;
     return AST.TableRef(name, alias);
   }
 
@@ -276,12 +275,7 @@ export class Parser {
     this.expect(TokenType.LPAREN);
     const query = this.parseQueryExpr();
     this.expect(TokenType.RPAREN);
-    let alias: string | null = null;
-    if (this.tryConsume(TokenType.AS)) {
-      alias = this.expectIdent();
-    } else if (this.isAt(TokenType.IDENT)) {
-      alias = this.expectIdent();
-    }
+    const alias = this.parseOptionalAlias();
     return AST.SubqueryRef(query, alias);
   }
 

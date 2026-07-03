@@ -3,6 +3,7 @@ import { DataChunk } from '../../storage/chunk.js';
 import { DataType } from '../../storage/data-type.js';
 import type { ColumnValue } from '../../storage/data-type.js';
 import type { ExecColumn, ExecSchema } from '../execution-types.js';
+import { materializeActiveRow } from './join-core.js';
 
 type JoinRow = ColumnValue[];
 
@@ -25,11 +26,7 @@ export class DependentJoinOperator {
     const subRows: JoinRow[] = [];
     for (const chunk of subResultChunks) {
       for (let i = 0; i < chunk.size; i++) {
-        const row: JoinRow = [];
-        for (let c = 0; c < chunk.columns.length; c++) {
-          row.push(chunk.columns[c].get(chunk.activeRowIndex(i)));
-        }
-        subRows.push(row);
+        subRows.push(materializeActiveRow(chunk, i));
       }
     }
 

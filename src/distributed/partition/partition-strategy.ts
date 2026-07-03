@@ -30,118 +30,16 @@ export class PartitionStrategy {
   partitionChunk(_chunk: DataChunk, _keyColumnIndex: number, _partitionCount: number): PartitionChunkResult {
     throw new Error('Subclass must implement partitionChunk()');
   }
-}
 
-export class HashPartitionStrategy extends PartitionStrategy {
-  _seed: number;
-
-  constructor(options: HashPartitionOptions = {}) {
-    super();
-    this._seed = options.seed || 0x9747b28c;
-  }
-
-  override get type(): StrategyTypeValue {
-    return StrategyType.HASH;
-  }
-
-  override partitionFor(key: ColumnValue, partitionCount: number): number {
-    const hash = murmur3(this._normalizeKey(key), this._seed);
-    return hash % partitionCount;
-  }
-
-  override partitionChunk(chunk: DataChunk, keyColumnIndex: number, partitionCount: number): PartitionChunkResult {
-    const col = chunk.columns[keyColumnIndex];
+  protected _scatterByAssignments(
+    chunk: DataChunk,
+    assignments: Uint32Array,
+    partCount: number
+  ): PartitionChunkResult {
     const size = chunk.size;
-
-    const bucketSizes = new Uint32Array(partitionCount);
-    const assignments = new Uint32Array(size);
-
-    for (let i = 0; i < size; i++) {
-      const rowIdx = chunk.selectionVector ? chunk.selectionVector[i] : i;
-      const key = col.get(rowIdx);
-      const pid = key === null ? 0 : this.partitionFor(key, partitionCount);
-      assignments[i] = pid;
-      bucketSizes[pid]++;
-    }
-
-    const result = new Map<number, DataChunk>();
-    const bucketOffsets = new Uint32Array(partitionCount);
-    const bucketIndices = new Array<Uint32Array | undefined>(partitionCount);
-    for (let p = 0; p < partitionCount; p++) {
-      if (bucketSizes[p] > 0) {
-        bucketIndices[p] = new Uint32Array(bucketSizes[p]);
-      }
-    }
-
-    for (let i = 0; i < size; i++) {
-      const pid = assignments[i];
-      if (bucketIndices[pid]) {
-        bucketIndices[pid]![bucketOffsets[pid]++] = i;
-      }
-    }
-
-    for (let p = 0; p < partitionCount; p++) {
-      if (!bucketIndices[p] || bucketSizes[p] === 0) continue;
-
-      const indices = bucketIndices[p]!;
-      const partCols = chunk.columns.map(srcCol => {
-        const newCol = new Column(srcCol.dataType, bucketSizes[p]);
-        for (let j = 0; j < bucketSizes[p]; j++) {
-          const srcRow = chunk.selectionVector ? chunk.selectionVector[indices[j]] : indices[j];
-          newCol.set(j, srcCol.get(srcRow));
-        }
-        newCol.length = bucketSizes[p];
-        return newCol;
-      });
-
-      result.set(p, new DataChunk(partCols, bucketSizes[p]));
-    }
-
-    return result;
-  }
-
-  _normalizeKey(key: ColumnValue): string {
-    if (typeof key === 'bigint') return key.toString();
-    if (key === null || key === undefined) return '\0';
-    return String(key);
-  }
-}
-
-export class RangePartitionStrategy extends PartitionStrategy {
-  _boundaries: ColumnValue[];
-
-  constructor(boundaries: ColumnValue[]) {
-    super();
-    this._boundaries = boundaries;
-  }
-
-  override get type(): StrategyTypeValue {
-    return StrategyType.RANGE;
-  }
-
-  get boundaries(): ColumnValue[] {
-    return this._boundaries;
-  }
-
-  override partitionFor(key: ColumnValue): number {
-    if (key === null || key === undefined) return 0;
-    return this._binarySearch(key);
-  }
-
-  override partitionChunk(chunk: DataChunk, keyColumnIndex: number, _partitionCount: number): PartitionChunkResult {
-    const col = chunk.columns[keyColumnIndex];
-    const size = chunk.size;
-    const partCount = this._boundaries.length + 1;
-
     const bucketSizes = new Uint32Array(partCount);
-    const assignments = new Uint32Array(size);
-
     for (let i = 0; i < size; i++) {
-      const rowIdx = chunk.selectionVector ? chunk.selectionVector[i] : i;
-      const key = col.get(rowIdx);
-      const pid = this.partitionFor(key);
-      assignments[i] = pid;
-      bucketSizes[pid]++;
+      bucketSizes[assignments[i]]++;
     }
 
     const result = new Map<number, DataChunk>();
@@ -179,6 +77,81 @@ export class RangePartitionStrategy extends PartitionStrategy {
 
     return result;
   }
+}
+
+export class HashPartitionStrategy extends PartitionStrategy {
+  _seed: number;
+
+  constructor(options: HashPartitionOptions = {}) {
+    super();
+    this._seed = options.seed || 0x9747b28c;
+  }
+
+  override get type(): StrategyTypeValue {
+    return StrategyType.HASH;
+  }
+
+  override partitionFor(key: ColumnValue, partitionCount: number): number {
+    const hash = murmur3(this._normalizeKey(key), this._seed);
+    return hash % partitionCount;
+  }
+
+  override partitionChunk(chunk: DataChunk, keyColumnIndex: number, partitionCount: number): PartitionChunkResult {
+    const col = chunk.columns[keyColumnIndex];
+    const size = chunk.size;
+
+    const assignments = new Uint32Array(size);
+    for (let i = 0; i < size; i++) {
+      const rowIdx = chunk.selectionVector ? chunk.selectionVector[i] : i;
+      const key = col.get(rowIdx);
+      assignments[i] = key === null ? 0 : this.partitionFor(key, partitionCount);
+    }
+
+    return this._scatterByAssignments(chunk, assignments, partitionCount);
+  }
+
+  _normalizeKey(key: ColumnValue): string {
+    if (typeof key === 'bigint') return key.toString();
+    if (key === null || key === undefined) return '\0';
+    return String(key);
+  }
+}
+
+export class RangePartitionStrategy extends PartitionStrategy {
+  _boundaries: ColumnValue[];
+
+  constructor(boundaries: ColumnValue[]) {
+    super();
+    this._boundaries = boundaries;
+  }
+
+  override get type(): StrategyTypeValue {
+    return StrategyType.RANGE;
+  }
+
+  get boundaries(): ColumnValue[] {
+    return this._boundaries;
+  }
+
+  override partitionFor(key: ColumnValue): number {
+    if (key === null || key === undefined) return 0;
+    return this._binarySearch(key);
+  }
+
+  override partitionChunk(chunk: DataChunk, keyColumnIndex: number, _partitionCount: number): PartitionChunkResult {
+    const col = chunk.columns[keyColumnIndex];
+    const size = chunk.size;
+    const partCount = this._boundaries.length + 1;
+
+    const assignments = new Uint32Array(size);
+    for (let i = 0; i < size; i++) {
+      const rowIdx = chunk.selectionVector ? chunk.selectionVector[i] : i;
+      const key = col.get(rowIdx);
+      assignments[i] = this.partitionFor(key);
+    }
+
+    return this._scatterByAssignments(chunk, assignments, partCount);
+  }
 
   _binarySearch(key: ColumnValue): number {
     let lo = 0;
@@ -213,44 +186,13 @@ export class RoundRobinPartitionStrategy extends PartitionStrategy {
 
   override partitionChunk(chunk: DataChunk, _keyColumnIndex: number, partitionCount: number): PartitionChunkResult {
     const size = chunk.size;
-    const bucketSizes = new Uint32Array(partitionCount);
 
+    const assignments = new Uint32Array(size);
     for (let i = 0; i < size; i++) {
-      bucketSizes[i % partitionCount]++;
+      assignments[i] = i % partitionCount;
     }
 
-    const result = new Map<number, DataChunk>();
-    const bucketOffsets = new Uint32Array(partitionCount);
-    const bucketIndices = new Array<Uint32Array | undefined>(partitionCount);
-    for (let p = 0; p < partitionCount; p++) {
-      if (bucketSizes[p] > 0) {
-        bucketIndices[p] = new Uint32Array(bucketSizes[p]);
-      }
-    }
-
-    for (let i = 0; i < size; i++) {
-      const pid = i % partitionCount;
-      bucketIndices[pid]![bucketOffsets[pid]++] = i;
-    }
-
-    for (let p = 0; p < partitionCount; p++) {
-      if (!bucketIndices[p] || bucketSizes[p] === 0) continue;
-
-      const indices = bucketIndices[p]!;
-      const partCols = chunk.columns.map(srcCol => {
-        const newCol = new Column(srcCol.dataType, bucketSizes[p]);
-        for (let j = 0; j < bucketSizes[p]; j++) {
-          const srcRow = chunk.selectionVector ? chunk.selectionVector[indices[j]] : indices[j];
-          newCol.set(j, srcCol.get(srcRow));
-        }
-        newCol.length = bucketSizes[p];
-        return newCol;
-      });
-
-      result.set(p, new DataChunk(partCols, bucketSizes[p]));
-    }
-
-    return result;
+    return this._scatterByAssignments(chunk, assignments, partitionCount);
   }
 }
 

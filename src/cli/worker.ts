@@ -1,8 +1,6 @@
-import fs from 'fs';
-import path from 'path';
 import { Catalog } from '../catalog/catalog.js';
 import { QueryEngine } from '../index.js';
-import { LoaderFactory } from './loaders/loader-factory.js';
+import { loadDataFiles } from './cli-common.js';
 import { HttpTransport } from '../distributed/transport/http-transport.js';
 import { FragmentExecutor } from '../distributed/execution/fragment-executor.js';
 import { Config } from '../config.js';
@@ -20,10 +18,6 @@ import type {
 type FragmentExecuteFragment = Parameters<FragmentExecutor['execute']>[0];
 
 type FragmentExecutorArgs = ConstructorParameters<typeof FragmentExecutor>;
-
-interface LoaderLike {
-  load(engine: QueryEngine, filePath: string, options?: LoadOptions): Promise<string>;
-}
 
 type BridgeFragment = Omit<Fragment, 'markFailed'> & {
   markFailed(error: string | Error | null): void;
@@ -103,18 +97,13 @@ async function main(): Promise<void> {
   const catalog = new Catalog();
   const engine = new QueryEngine(catalog);
 
-  for (const dp of dataPaths) {
-    const resolvedPath = path.resolve(process.cwd(), dp);
-    if (!fs.existsSync(resolvedPath)) {
-      console.error(`File not found: ${resolvedPath}`);
-      process.exit(1);
-    }
-    const loader = LoaderFactory.getLoader(resolvedPath) as LoaderLike;
-    const tableName: string = await loader.load(engine, resolvedPath, loadOptions);
-    const storage = catalog.getTableStorage(tableName);
-    const suffix = usePartition ? ` (partition ${partitionIndex}/${partitionCount})` : '';
-    console.log(`[load] ${tableName} (${(storage as NonNullable<typeof storage>).rowCount()} rows)${suffix}`);
-  }
+  await loadDataFiles(engine, catalog, dataPaths, {
+    loadOptions,
+    formatLoadLine: ({ tableName, rowCount }) => {
+      const suffix = usePartition ? ` (partition ${partitionIndex}/${partitionCount})` : '';
+      return `[load] ${tableName} (${rowCount} rows)${suffix}`;
+    },
+  });
 
   const nodeId = `worker-${port}`;
   const transport = new HttpTransport({ port, nodeId });

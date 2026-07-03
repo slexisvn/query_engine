@@ -1,50 +1,8 @@
-import { getCoreInstance } from './core-instance.js';
-import type { WasmExports } from '../wasm-types.js';
+import { makeScalarAggKernel } from './kernel-factory.js';
 
-export async function wasmSumI32(data: Int32Array): Promise<number> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-
-  const dataPtr = loader.resolveDataPtr(data, 4);
-  return (instance.exports as WasmExports).sumI32(dataPtr, data.length);
-}
-
-export async function wasmSumF64(data: Float64Array): Promise<number> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-
-  const dataPtr = loader.resolveDataPtr(data, 8);
-  return (instance.exports as WasmExports).sumF64(dataPtr, data.length);
-}
-
-export async function wasmMinI32(data: Int32Array): Promise<number> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-
-  const dataPtr = loader.resolveDataPtr(data, 4);
-  return (instance.exports as WasmExports).minI32(dataPtr, data.length);
-}
-
-export async function wasmMaxI32(data: Int32Array): Promise<number> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-
-  const dataPtr = loader.resolveDataPtr(data, 4);
-  return (instance.exports as WasmExports).maxI32(dataPtr, data.length);
-}
-
-export async function wasmMinF64(data: Float64Array): Promise<number> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-
-  const dataPtr = loader.resolveDataPtr(data, 8);
-  return (instance.exports as WasmExports).minF64(dataPtr, data.length);
-}
-
-export async function wasmMaxF64(data: Float64Array): Promise<number> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-
-  const dataPtr = loader.resolveDataPtr(data, 8);
-  return (instance.exports as WasmExports).maxF64(dataPtr, data.length);
-}
+export const wasmSumI32 = makeScalarAggKernel<Int32Array>('sumI32', 4);
+export const wasmSumF64 = makeScalarAggKernel<Float64Array>('sumF64', 8);
+export const wasmMinI32 = makeScalarAggKernel<Int32Array>('minI32', 4);
+export const wasmMaxI32 = makeScalarAggKernel<Int32Array>('maxI32', 4);
+export const wasmMinF64 = makeScalarAggKernel<Float64Array>('minF64', 8);
+export const wasmMaxF64 = makeScalarAggKernel<Float64Array>('maxF64', 8);

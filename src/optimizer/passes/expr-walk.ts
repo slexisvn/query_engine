@@ -1,4 +1,4 @@
-import { type BoundExpr } from '../../binder/expression-binder.js';
+import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
 
 export type ExprLike = BoundExpr & {
   left?: BoundExpr;
@@ -31,4 +31,10 @@ export function walkExpr(expr: BoundExpr | null | undefined, fn: (e: BoundExpr) 
   if (e.list && Array.isArray(e.list)) for (const item of e.list) walkExpr(item, fn);
   if (e.pattern) walkExpr(e.pattern, fn);
   if (e.source) walkExpr(e.source, fn);
+}
+
+export function containsAggregate(expr: BoundExpr | null | undefined): boolean {
+  let found = false;
+  walkExpr(expr, (e) => { if (e.kind === BoundExprKind.AGGREGATE) found = true; });
+  return found;
 }

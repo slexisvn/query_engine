@@ -3,10 +3,11 @@ import { Column } from '../storage/column.js';
 import { DataChunk } from '../storage/chunk.js';
 import type { AnyColumn } from '../storage/chunk.js';
 import { BoundExprKind, getExprType } from '../binder/expression-binder.js';
-import type { BoundExpr, BoundColumnRefNode } from '../binder/expression-binder.js';
+import type { BoundExpr } from '../binder/expression-binder.js';
 import { DataType } from '../storage/data-type.js';
 import type { ColumnValue } from '../storage/data-type.js';
 import type { EvalValue, CompiledExpr, ColumnMapping } from './execution-types.js';
+import { resolveColumnIndex as resolveColIdx } from './column-resolve.js';
 
 interface VectorResult {
   ref?: boolean;
@@ -185,16 +186,6 @@ function createEvalColumn(chunk: DataChunk, evalFn: CompiledExpr, dataType: Data
   return col;
 }
 
-
-function resolveColIdx(expr: BoundColumnRefNode, columnMapping: ColumnMapping | null): number {
-  if (columnMapping) {
-    const key = `${expr.tableAlias}.${expr.columnName}`.toUpperCase();
-    if (columnMapping.has(key)) return columnMapping.get(key)!;
-    const byName = expr.columnName.toUpperCase();
-    if (columnMapping.has(byName)) return columnMapping.get(byName)!;
-  }
-  return expr.columnIndex;
-}
 
 function compileVectorBinaryOp(op: string, leftFn: VectorFn | null, rightFn: VectorFn | null): VectorFn | null {
   return null;

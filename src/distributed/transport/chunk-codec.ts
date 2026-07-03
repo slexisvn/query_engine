@@ -103,6 +103,24 @@ export class ChunkCodec {
     return new DataChunk(columns, rowCount);
   }
 
+  _writeBitmap(buf: Buffer, offset: number, col: AnyColumn, bitmapWords: number): number {
+    for (let i = 0; i < bitmapWords; i++) {
+      buf.writeUInt32LE(i < col.nullBitmap.length ? col.nullBitmap[i] : 0, offset + i * 4);
+    }
+    return offset + bitmapWords * 4;
+  }
+
+  _readBitmapInto(col: AnyColumn, buf: Buffer, rowCount: number): number {
+    const bitmapWords = Math.ceil(rowCount / 32);
+    col.hasNulls = buf.readUInt8(0) === 1;
+    const newBitmap = createBitmap(rowCount);
+    for (let i = 0; i < bitmapWords; i++) {
+      newBitmap[i] = buf.readUInt32LE(1 + i * 4);
+    }
+    col.nullBitmap = newBitmap;
+    return 1 + bitmapWords * 4;
+  }
+
   _encodeColumn(col: AnyColumn, rowCount: number): Buffer {
     if (col instanceof DictionaryColumn) {
       return this._encodeDictionaryColumn(col, rowCount);
@@ -123,9 +141,7 @@ export class ChunkCodec {
     const buf = Buffer.allocUnsafe(1 + bitmapBytes + dataBytes);
     buf.writeUInt8(col.hasNulls ? 1 : 0, 0);
 
-    for (let i = 0; i < bitmapWords; i++) {
-      buf.writeUInt32LE(i < col.nullBitmap.length ? col.nullBitmap[i] : 0, 1 + i * 4);
-    }
+    this._writeBitmap(buf, 1, col, bitmapWords);
 
     const dataOffset = 1 + bitmapBytes;
     const src = new Uint8Array((col.data as AnyTypedArray).buffer, (col.data as AnyTypedArray).byteOffset, dataBytes);
@@ -145,9 +161,7 @@ export class ChunkCodec {
     const buf = Buffer.allocUnsafe(1 + bitmapBytes + offsetBytes + stringDataBytes);
     buf.writeUInt8(col.hasNulls ? 1 : 0, 0);
 
-    for (let i = 0; i < bitmapWords; i++) {
-      buf.writeUInt32LE(i < col.nullBitmap.length ? col.nullBitmap[i] : 0, 1 + i * 4);
-    }
+    this._writeBitmap(buf, 1, col, bitmapWords);
 
     let pos = 1 + bitmapBytes;
     for (let i = 0; i <= rowCount; i++) {
@@ -179,9 +193,7 @@ export class ChunkCodec {
     const buf = Buffer.allocUnsafe(1 + bitmapBytes + dictPayloadBytes + indexBytes);
     buf.writeUInt8(col.hasNulls ? 1 : 0, 0);
 
-    for (let i = 0; i < bitmapWords; i++) {
-      buf.writeUInt32LE(i < col.nullBitmap.length ? col.nullBitmap[i] : 0, 1 + i * 4);
-    }
+    this._writeBitmap(buf, 1, col, bitmapWords);
 
     let pos = 1 + bitmapBytes;
     buf.writeUInt32LE(dictSize, pos);
@@ -215,19 +227,10 @@ export class ChunkCodec {
 
   _decodeFixedColumn(buf: Buffer, dataType: DataType, rowCount: number): Column {
     const col = new Column(dataType, rowCount);
-    const bitmapWords = Math.ceil(rowCount / 32);
-    const bitmapBytes = bitmapWords * 4;
 
-    col.hasNulls = buf.readUInt8(0) === 1;
-
-    const newBitmap = createBitmap(rowCount);
-    for (let i = 0; i < bitmapWords; i++) {
-      newBitmap[i] = buf.readUInt32LE(1 + i * 4);
-    }
-    col.nullBitmap = newBitmap;
+    const dataStart = this._readBitmapInto(col, buf, rowCount);
 
     const byteWidth = byteWidthFor(dataType);
-    const dataStart = 1 + bitmapBytes;
     const dataBuf = buf.subarray(dataStart, dataStart + rowCount * byteWidth);
 
     const TypedCtor = typedArrayFor(dataType, 0).constructor as { new (buffer: ArrayBuffer): AnyTypedArray };
@@ -241,18 +244,8 @@ export class ChunkCodec {
 
   _decodeVarcharColumn(buf: Buffer, rowCount: number): Column {
     const col = new Column(DataType.VARCHAR, rowCount);
-    const bitmapWords = Math.ceil(rowCount / 32);
-    const bitmapBytes = bitmapWords * 4;
 
-    col.hasNulls = buf.readUInt8(0) === 1;
-
-    const newBitmap = createBitmap(rowCount);
-    for (let i = 0; i < bitmapWords; i++) {
-      newBitmap[i] = buf.readUInt32LE(1 + i * 4);
-    }
-    col.nullBitmap = newBitmap;
-
-    let pos = 1 + bitmapBytes;
+    let pos = this._readBitmapInto(col, buf, rowCount);
     const offsets = new Uint32Array(rowCount + 1);
     for (let i = 0; i <= rowCount; i++) {
       offsets[i] = buf.readUInt32LE(pos);
@@ -273,18 +266,8 @@ export class ChunkCodec {
 
   _decodeDictionaryColumn(buf: Buffer, rowCount: number): DictionaryColumn {
     const col = new DictionaryColumn(rowCount);
-    const bitmapWords = Math.ceil(rowCount / 32);
-    const bitmapBytes = bitmapWords * 4;
 
-    col.hasNulls = buf.readUInt8(0) === 1;
-
-    const newBitmap = createBitmap(rowCount);
-    for (let i = 0; i < bitmapWords; i++) {
-      newBitmap[i] = buf.readUInt32LE(1 + i * 4);
-    }
-    col.nullBitmap = newBitmap;
-
-    let pos = 1 + bitmapBytes;
+    let pos = this._readBitmapInto(col, buf, rowCount);
     const dictSize = buf.readUInt32LE(pos);
     pos += 4;
 

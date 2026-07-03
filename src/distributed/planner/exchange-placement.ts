@@ -7,6 +7,7 @@ import type {
   LogicalAggregateNode,
   LogicalSortNode,
 } from '../../planner/logical-plan.js';
+import { BoundExprKind } from '../../binder/expression-binder.js';
 import type { BoundExpr } from '../../binder/expression-binder.js';
 import type {
   JoinExchangePlacement,
@@ -115,7 +116,7 @@ export class ExchangePlacement {
 
     const preds = splitAnd(condition);
     for (const pred of preds) {
-      if ((pred as ShuffleOperand).op === '=' && (pred as ShuffleOperand).left?.kind === 'ColumnRef' && (pred as ShuffleOperand).right?.kind === 'ColumnRef') {
+      if (pred.kind === BoundExprKind.BINARY && (pred as ShuffleOperand).op === '=' && (pred as ShuffleOperand).left?.kind === BoundExprKind.COLUMN_REF && (pred as ShuffleOperand).right?.kind === BoundExprKind.COLUMN_REF) {
         leftKeys.push((pred as ShuffleOperand).left as BoundExpr);
         rightKeys.push((pred as ShuffleOperand).right as BoundExpr);
       }

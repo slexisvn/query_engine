@@ -1,98 +1,10 @@
-import { getCoreInstance } from './core-instance.js';
-import type { WasmExports } from '../wasm-types.js';
+import { makeFilterKernel, makeBetweenKernel } from './kernel-factory.js';
 
-export async function wasmFilterEqF64(data: Float64Array, value: number): Promise<Uint32Array> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-
-  const count = data.length;
-  const dataPtr = loader.resolveDataPtr(data, 8);
-  const selVecPtr = loader.alloc(count * 4);
-
-  const matchCount = (instance.exports as WasmExports).filterEqF64(dataPtr, selVecPtr, count, value);
-  return loader.readU32Array(selVecPtr, matchCount);
-}
-
-export async function wasmFilterLtF64(data: Float64Array, value: number): Promise<Uint32Array> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-
-  const count = data.length;
-  const dataPtr = loader.resolveDataPtr(data, 8);
-  const selVecPtr = loader.alloc(count * 4);
-
-  const matchCount = (instance.exports as WasmExports).filterLtF64(dataPtr, selVecPtr, count, value);
-  return loader.readU32Array(selVecPtr, matchCount);
-}
-
-export async function wasmFilterGtF64(data: Float64Array, value: number): Promise<Uint32Array> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-
-  const count = data.length;
-  const dataPtr = loader.resolveDataPtr(data, 8);
-  const selVecPtr = loader.alloc(count * 4);
-
-  const matchCount = (instance.exports as WasmExports).filterGtF64(dataPtr, selVecPtr, count, value);
-  return loader.readU32Array(selVecPtr, matchCount);
-}
-
-export async function wasmFilterLeF64(data: Float64Array, value: number): Promise<Uint32Array> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-
-  const count = data.length;
-  const dataPtr = loader.resolveDataPtr(data, 8);
-  const selVecPtr = loader.alloc(count * 4);
-
-  const matchCount = (instance.exports as WasmExports).filterLeF64(dataPtr, selVecPtr, count, value);
-  return loader.readU32Array(selVecPtr, matchCount);
-}
-
-export async function wasmFilterGeF64(data: Float64Array, value: number): Promise<Uint32Array> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-
-  const count = data.length;
-  const dataPtr = loader.resolveDataPtr(data, 8);
-  const selVecPtr = loader.alloc(count * 4);
-
-  const matchCount = (instance.exports as WasmExports).filterGeF64(dataPtr, selVecPtr, count, value);
-  return loader.readU32Array(selVecPtr, matchCount);
-}
-
-export async function wasmFilterBetweenF64(data: Float64Array, low: number, high: number): Promise<Uint32Array> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-
-  const count = data.length;
-  const dataPtr = loader.resolveDataPtr(data, 8);
-  const selVecPtr = loader.alloc(count * 4);
-
-  const matchCount = (instance.exports as WasmExports).filterBetweenF64(dataPtr, selVecPtr, count, low, high);
-  return loader.readU32Array(selVecPtr, matchCount);
-}
-
-export async function wasmFilterLeI32(data: Int32Array, value: number): Promise<Uint32Array> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-
-  const count = data.length;
-  const dataPtr = loader.resolveDataPtr(data, 4);
-  const selVecPtr = loader.alloc(count * 4);
-
-  const matchCount = (instance.exports as WasmExports).filterLeI32(dataPtr, selVecPtr, count, value);
-  return loader.readU32Array(selVecPtr, matchCount);
-}
-
-export async function wasmFilterGeI32(data: Int32Array, value: number): Promise<Uint32Array> {
-  const { loader, instance } = await getCoreInstance();
-  loader.reset();
-
-  const count = data.length;
-  const dataPtr = loader.resolveDataPtr(data, 4);
-  const selVecPtr = loader.alloc(count * 4);
-
-  const matchCount = (instance.exports as WasmExports).filterGeI32(dataPtr, selVecPtr, count, value);
-  return loader.readU32Array(selVecPtr, matchCount);
-}
+export const wasmFilterEqF64 = makeFilterKernel<Float64Array>('filterEqF64', 8);
+export const wasmFilterLtF64 = makeFilterKernel<Float64Array>('filterLtF64', 8);
+export const wasmFilterGtF64 = makeFilterKernel<Float64Array>('filterGtF64', 8);
+export const wasmFilterLeF64 = makeFilterKernel<Float64Array>('filterLeF64', 8);
+export const wasmFilterGeF64 = makeFilterKernel<Float64Array>('filterGeF64', 8);
+export const wasmFilterBetweenF64 = makeBetweenKernel<Float64Array>('filterBetweenF64', 8);
+export const wasmFilterLeI32 = makeFilterKernel<Int32Array>('filterLeI32', 4);
+export const wasmFilterGeI32 = makeFilterKernel<Int32Array>('filterGeI32', 4);

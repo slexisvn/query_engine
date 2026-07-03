@@ -2,7 +2,7 @@ import { Column } from '../../storage/column.js';
 import { DataChunk } from '../../storage/chunk.js';
 import { JoinType } from '../../planner/logical-plan.js';
 import { Config } from '../../config.js';
-import { joinKeyOf, probeJoinRows, buildJoinOutputChunk } from './join-core.js';
+import { joinKeyOf, probeJoinRows, buildJoinOutputChunk, materializeRow } from './join-core.js';
 import type { DataType, ColumnValue } from '../../storage/data-type.js';
 import type { CompiledExpr, EvalValue } from '../execution-types.js';
 
@@ -107,11 +107,7 @@ export class HashJoinBuild {
 
     const chunkRows: ColumnValue[][] = new Array(flat.size);
     for (let i = 0; i < flat.size; i++) {
-      const row: ColumnValue[] = new Array(flat.columns.length);
-      for (let c = 0; c < flat.columns.length; c++) {
-        row[c] = flat.columns[c].get(i);
-      }
-      chunkRows[i] = row;
+      chunkRows[i] = materializeRow(flat, i);
     }
 
     for (let i = 0; i < flat.size; i++) {
@@ -266,10 +262,7 @@ export class HashJoinProbe {
 
     for (let i = 0; i < flat.size; i++) {
       const key = this.extractProbeKey(flat, i);
-      const row: ColumnValue[] = new Array(flat.columns.length);
-      for (let c = 0; c < flat.columns.length; c++) {
-        row[c] = flat.columns[c].get(i);
-      }
+      const row = materializeRow(flat, i);
 
       if (key === null) {
         inMemoryRows.push({ row, key: null });
@@ -348,8 +341,7 @@ export class HashJoinProbe {
       for await (const bChunk of buildIter) {
         for (let r = 0; r < bChunk.size; r++) {
           const key = this.buildSide.buildKey(bChunk, r);
-          const row: ColumnValue[] = new Array(bChunk.columns.length);
-          for (let c = 0; c < bChunk.columns.length; c++) row[c] = bChunk.columns[c].get(r);
+          const row = materializeRow(bChunk, r);
 
           const rIdx = part.rows.length;
           part.rows.push({ row, key: key as JoinKey });
@@ -369,8 +361,7 @@ export class HashJoinProbe {
         const pItems: ProbeItem[] = [];
         for (let r = 0; r < pChunk.size; r++) {
           const key = this.extractProbeKey(pChunk, r);
-          const row: ColumnValue[] = new Array(pChunk.columns.length);
-          for (let c = 0; c < pChunk.columns.length; c++) row[c] = pChunk.columns[c].get(r);
+          const row = materializeRow(pChunk, r);
           pItems.push({ row, key });
         }
 

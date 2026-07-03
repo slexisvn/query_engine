@@ -16,6 +16,7 @@ import type {
   ColumnMapping,
   ExecColumn,
 } from './execution-types.js';
+import { resolveColumnIndex } from './column-resolve.js';
 
 const LIKE_CACHE_MAX = 256;
 
@@ -315,17 +316,6 @@ function compileFunction(name: string, args: CompiledExpr[]): CompiledExpr {
     };
     default: return () => null;
   }
-}
-
-function resolveColumnIndex(expr: BoundColumnRefNode, columnMapping: ColumnMapping | null): number {
-  if (columnMapping) {
-    const key = `${expr.tableAlias}.${expr.columnName}`.toUpperCase();
-    if (columnMapping.has(key)) return columnMapping.get(key)!;
-
-    const byName = `${expr.columnName}`.toUpperCase();
-    if (columnMapping.has(byName)) return columnMapping.get(byName)!;
-  }
-  return expr.columnIndex;
 }
 
 function likeToRegex(pattern: string): RegExp {

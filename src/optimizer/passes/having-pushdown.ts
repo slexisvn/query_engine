@@ -1,8 +1,9 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { PlanNodeType, type LogicalPlanNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
-import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
+import { type BoundExpr } from '../../binder/expression-binder.js';
 import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
+import { containsAggregate } from './expr-walk.js';
 
 export class HavingPushdown extends OptimizationPass {
   override get name() { return 'HavingPushdown'; }
@@ -56,30 +57,4 @@ class HavingPushdownRewriter extends PlanRewriter {
     }
     return node;
   }
-}
-
-function containsAggregate(expr: BoundExpr | null): boolean {
-  if (!expr) return false;
-  if (expr.kind === BoundExprKind.AGGREGATE) return true;
-
-    if (expr.kind === BoundExprKind.BINARY) {
-    return containsAggregate(expr.left) || containsAggregate(expr.right);
-  }
-  if (expr.kind === BoundExprKind.UNARY) {
-    return containsAggregate(expr.operand);
-  }
-  if (expr.kind === BoundExprKind.FUNCTION || expr.kind === BoundExprKind.CASE) {
-    if (expr.kind === BoundExprKind.FUNCTION && expr.args) {
-      return expr.args.some(containsAggregate);
-    }
-    if (expr.kind === BoundExprKind.CASE && expr.whenClauses) {
-      for (const wc of expr.whenClauses) {
-        if (containsAggregate(wc.condition) || containsAggregate(wc.result)) return true;
-      }
-    }
-    if (expr.kind === BoundExprKind.CASE && expr.operand && containsAggregate(expr.operand)) return true;
-    if (expr.kind === BoundExprKind.CASE && expr.elseExpr && containsAggregate(expr.elseExpr)) return true;
-  }
-
-    return false;
 }
