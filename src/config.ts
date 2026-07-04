@@ -1,5 +1,6 @@
-import { DEFAULT_CHUNK_SIZE } from './storage/chunk.js';
 import { getEnvInt, getEnvFloat, getEnvFlag, getCpuCount } from './runtime/platform.js';
+
+export const DEFAULT_CHUNK_SIZE = 2048;
 
 const env = getEnvInt;
 const envFlag = getEnvFlag;

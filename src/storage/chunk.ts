@@ -2,7 +2,7 @@ import { Column } from './column.js';
 import { DictionaryColumn } from './dictionary-column.js';
 import { DataType, type ColumnValue } from './data-type.js';
 
-export const DEFAULT_CHUNK_SIZE = 2048;
+import { DEFAULT_CHUNK_SIZE } from '../config.js';
 
 export type AnyColumn = Column | DictionaryColumn;
 export type SelectionVector = Uint32Array | Int32Array | number[];

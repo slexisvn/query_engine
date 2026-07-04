@@ -1,7 +1,6 @@
 import { Worker } from 'worker_threads';
 import { promises as fs } from 'fs';
-import { Config } from '../config.js';
-import { DEFAULT_CHUNK_SIZE } from '../storage/chunk.js';
+import { Config, DEFAULT_CHUNK_SIZE } from '../config.js';
 import type { DataChunk } from '../storage/chunk.js';
 import { SabArena } from '../storage/sab-arena.js';
 import { MorselScheduler } from './morsel-scheduler.js';

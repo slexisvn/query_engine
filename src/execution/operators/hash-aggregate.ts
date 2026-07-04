@@ -1,5 +1,6 @@
 import { Column } from '../../storage/column.js';
-import { DataChunk, DEFAULT_CHUNK_SIZE } from '../../storage/chunk.js';
+import { DEFAULT_CHUNK_SIZE } from '../../config.js';
+import { DataChunk } from '../../storage/chunk.js';
 import { DataType, type ColumnValue } from '../../storage/data-type.js';
 import { globalDispatch } from '../../wasm/dispatch.js';
 import { hashValue } from '../../utils/hash.js';

@@ -1,5 +1,5 @@
-import { Config } from '../../config.js';
-import { DataChunk, DEFAULT_CHUNK_SIZE } from '../../storage/chunk.js';
+import { Config, DEFAULT_CHUNK_SIZE } from '../../config.js';
+import { DataChunk } from '../../storage/chunk.js';
 import { Column } from '../../storage/column.js';
 import { isFixedWidth } from '../../storage/data-type.js';
 import { setBit, clearBit, testBit, setBitRange } from '../../utils/bitmap.js';

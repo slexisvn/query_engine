@@ -4,7 +4,7 @@ import { MorselScheduler } from './morsel-scheduler.js';
 import { writePartialSpill, readPartialSpill } from './partial-spill.js';
 import { ChunkSetReader, encodeChunkSet } from './chunk-transport.js';
 import { SabArena } from '../storage/sab-arena.js';
-import { DEFAULT_CHUNK_SIZE } from '../storage/chunk.js';
+import { DEFAULT_CHUNK_SIZE } from '../config.js';
 import type { DataChunk } from '../storage/chunk.js';
 import type { ColumnValue } from '../storage/data-type.js';
 import { instantiateFragment, instantiateAggregate, instantiateJoinSpec } from '../execution/fragment-spec.js';

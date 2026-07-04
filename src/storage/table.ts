@@ -1,5 +1,5 @@
-import { Column } from './column.js';
-import { DataChunk, DEFAULT_CHUNK_SIZE } from './chunk.js';
+import { DEFAULT_CHUNK_SIZE } from '../config.js';
+import { DataChunk } from './chunk.js';
 import { BufferPoolManager, type PageStore } from './buffer-pool.js';
 import { Config } from '../config.js';
 import type { ColumnSchema, ColumnValue } from './data-type.js';

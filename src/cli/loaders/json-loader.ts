@@ -3,7 +3,7 @@ import path from 'path';
 import { DataType } from '../../storage/data-type.js';
 import type { ColumnSchema, ColumnValue } from '../../storage/data-type.js';
 import { Table } from '../../storage/table.js';
-import { DEFAULT_CHUNK_SIZE } from '../../storage/chunk.js';
+import { DEFAULT_CHUNK_SIZE } from '../../config.js';
 import { DataLoader } from './data-loader.js';
 import type { QueryEngine } from '../../engine/query-engine.js';
 

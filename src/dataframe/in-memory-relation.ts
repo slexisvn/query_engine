@@ -1,4 +1,5 @@
-import { DataChunk, DEFAULT_CHUNK_SIZE } from '../storage/chunk.js';
+import { DataChunk } from '../storage/chunk.js';
+import { DEFAULT_CHUNK_SIZE } from '../config.js';
 import { inferColumnType, coerceForColumn } from './type-inference.js';
 import type { ColumnSchema, ColumnValue, DataType } from '../storage/data-type.js';
 
