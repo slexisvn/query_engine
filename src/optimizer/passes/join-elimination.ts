@@ -131,7 +131,7 @@ function hasAnyNameUsed(columnNames: Set<string>, usedColumns: Set<string>): boo
 
 function collectOutputNames(node: LogicalPlanNode): Set<string> {
   const names = new Set<string>();
-  const add = (value: string | undefined | null): void => {
+  const add = (value?: string | null): void => {
     const name = (value || '').toUpperCase();
     if (name) names.add(name);
   };

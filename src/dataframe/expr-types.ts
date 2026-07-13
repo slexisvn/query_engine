@@ -20,7 +20,7 @@ export function inferConcatType(): DataType {
   return DataType.VARCHAR;
 }
 
-export function inferAggregateResultType(name: string, argType: DataType | undefined): DataType {
+export function inferAggregateResultType(name: string, argType?: DataType): DataType {
   switch (name.toUpperCase()) {
     case 'COUNT':
     case 'COUNT_STAR':

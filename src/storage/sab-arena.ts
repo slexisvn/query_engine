@@ -72,6 +72,6 @@ export function columnAllocator(byteHint = 0): Allocator {
   return byteHint > 0 ? new SabArena(byteHint) : new SabArena();
 }
 
-export function isSharedView(view: ArrayBufferView | null | undefined): boolean {
+export function isSharedView(view?: ArrayBufferView): boolean {
   return !!view && view.buffer instanceof SharedArrayBuffer;
 }

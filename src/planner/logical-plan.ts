@@ -379,7 +379,7 @@ export function LogicalMergeExchange(orderKeys: LogicalOrderKey[], limit: number
   };
 }
 
-export function LogicalExchangeReceive(sourceFragmentIds: number[], schema: ColumnInfo[] | null | undefined): LogicalExchangeReceiveNode {
+export function LogicalExchangeReceive(sourceFragmentIds: number[], schema?: ColumnInfo[]): LogicalExchangeReceiveNode {
   return {
     type: PlanNodeType.EXCHANGE_RECEIVE,
     sourceFragmentIds,

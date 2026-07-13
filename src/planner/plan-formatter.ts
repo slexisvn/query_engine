@@ -1,7 +1,7 @@
 import { PlanNodeType, JoinType, PhysicalStrategy, type LogicalPlanNode } from './logical-plan.js';
 import { BoundExprKind, type BoundExpr, type BoundAggregateNode, type BoundWindowNode } from '../binder/expression-binder.js';
 
-export function formatExpression(expr: BoundExpr | null | undefined): string {
+export function formatExpression(expr?: BoundExpr | null): string {
   if (!expr) return '';
   switch (expr.kind) {
     case BoundExprKind.COLUMN_REF:

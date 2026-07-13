@@ -6,7 +6,7 @@ interface ResultLike {
   message?: string;
 }
 
-export function formatResult(result: ResultLike | null | undefined): void {
+export function formatResult(result?: ResultLike): void {
   if (!result || !result.rows || result.rows.length === 0) {
     console.log('Empty result set.');
     return;

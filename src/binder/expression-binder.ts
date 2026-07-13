@@ -167,7 +167,7 @@ export function BoundWindow(name: string, args: BoundExpr[], partitionBy: BoundE
   return { kind: BoundExprKind.WINDOW, name, args, partitionBy, orderBy, resultType };
 }
 
-export function getExprType(expr: { kind?: BoundExprKind; resultType?: string | null; dataType?: string | null } | null | undefined): string | null {
+export function getExprType(expr?: { kind?: BoundExprKind; resultType?: string | null; dataType?: string | null } | null): string | null {
   if (!expr) return null;
   return expr.resultType || expr.dataType || null;
 }

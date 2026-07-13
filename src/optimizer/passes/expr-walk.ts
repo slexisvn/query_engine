@@ -33,7 +33,7 @@ export function walkExpr(expr: BoundExpr | null | undefined, fn: (e: BoundExpr) 
   if (e.source) walkExpr(e.source, fn);
 }
 
-export function containsAggregate(expr: BoundExpr | null | undefined): boolean {
+export function containsAggregate(expr?: BoundExpr): boolean {
   let found = false;
   walkExpr(expr, (e) => { if (e.kind === BoundExprKind.AGGREGATE) found = true; });
   return found;

@@ -216,7 +216,7 @@ class PhysicalDesignRewriter extends PlanRewriter {
     return null;
   }
 
-  columnMatches(sortedKey: SortedByEntry | null | undefined, reqKey: SortedByEntry | null | undefined): boolean {
+  columnMatches(sortedKey?: SortedByEntry | null, reqKey?: SortedByEntry | null): boolean {
     const s = (sortedKey && typeof sortedKey === 'object') ? sortedKey.key : sortedKey;
     const r = (reqKey && typeof reqKey === 'object') ? reqKey.key : reqKey;
     if (!s || !r) return false;
@@ -396,7 +396,7 @@ function buildParentMap(root: LogicalPlanNode): Map<LogicalPlanNode, LogicalPlan
   return map;
 }
 
-function toNumber(value: number | bigint | string | null | undefined): number | null {
+function toNumber(value?: number | bigint | string | null): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === 'bigint') return Number(value);
   if (typeof value === 'number') return value;

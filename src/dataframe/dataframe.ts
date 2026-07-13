@@ -386,7 +386,7 @@ export class DataFrame {
   }
 }
 
-function formatCell(value: ColumnValue | undefined): string {
+function formatCell(value?: ColumnValue): string {
   if (value === null || value === undefined) return 'NULL';
   return String(value);
 }

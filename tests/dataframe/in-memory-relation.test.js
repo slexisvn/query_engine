@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryRelation } from '../../src/dataframe/in-memory-relation.js';
-import { DEFAULT_CHUNK_SIZE } from '../../src/storage/chunk.js';
+import { DEFAULT_CHUNK_SIZE } from '../../src/config.js';
 import { DataType } from '../../src/storage/data-type.js';
 
 async function collect(relation) {

@@ -59,7 +59,7 @@ export class DefaultCardinalityEstimator {
     return tableStats ? tableStats.rowCount : DEFAULT_SCAN_ROWS;
   }
 
-  estimatePlan(node: LogicalPlanNode | null | undefined): number {
+  estimatePlan(node?: LogicalPlanNode | null): number {
     if (!node) return DEFAULT_SCAN_ROWS;
 
     switch (node.type) {
@@ -537,7 +537,7 @@ interface BucketRanges {
   highs: (number | null)[];
 }
 
-function toNumber(value: number | bigint | string | boolean | null | undefined): number | null {
+function toNumber(value?: number | bigint | string | boolean | null): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === 'bigint') return Number(value);
   if (typeof value === 'number') return value;
