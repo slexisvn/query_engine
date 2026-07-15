@@ -619,7 +619,8 @@ export class QueryEngine {
       const { registerAllKernels } = await import('../wasm/register-kernels.js');
       registerAllKernels();
       this.wasmEnabled = true;
-    } catch (_) {
+    } catch (error) {
+      console.warn('[wasm] Failed to enable WebAssembly acceleration:', error);
       this.wasmEnabled = false;
     }
   }

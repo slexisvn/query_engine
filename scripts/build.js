@@ -1,7 +1,8 @@
 import esbuild from 'esbuild';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
-import { mkdir, copyFile } from 'fs/promises';
+import { rmSync } from 'fs';
+import { chmod } from 'fs/promises';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -12,8 +13,9 @@ const NODE_ENTRY = join(SRC, 'index.ts');
 const BROWSER_ENTRY = join(SRC, 'browser.ts');
 const BUFFER_SHIM = join(__dirname, 'buffer-shim.js');
 
-const NODE_OUTFILE = join(DIST, 'bundle', 'node', 'query-engine.node.js');
-const BROWSER_OUTFILE = join(DIST, 'bundle', 'browser', 'query-engine.browser.js');
+const NODE_OUTFILE = join(DIST, 'index.node.js');
+const BROWSER_OUTFILE = join(DIST, 'index.browser.js');
+const CLI_OUTFILE = join(DIST, 'index.cli.js');
 
 const NODE_ONLY_SUBSYSTEMS = /(^|\/)(parallel|distributed)\//;
 
@@ -41,10 +43,23 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 export function nodeByteSource(name) {
-  return readFile(join(here, '../../wasm', name + '.wasm'));
+  const fileName = name + '.wasm';
+  return readFile(join(here, fileName)).catch(() => readFile(join(here, '..', fileName)));
 }
 `,
     }));
+  },
+};
+
+const cliNodeEntryPlugin = {
+  name: 'cli-node-entry',
+  setup(build) {
+    build.onResolve({ filter: /^(\.\.\/|\.\.\/\.\.\/)index\.js$/ }, (args) => {
+      if (args.importer.replace(/\\/g, '/').includes('/src/cli/')) {
+        return { path: './index.node.js', external: true };
+      }
+      return null;
+    });
   },
 };
 
@@ -52,7 +67,7 @@ const COMMON = {
   bundle: true,
   format: 'esm',
   target: 'es2022',
-  sourcemap: true,
+  sourcemap: false,
   legalComments: 'none',
   metafile: false,
 };
@@ -79,19 +94,31 @@ function buildBrowser() {
   });
 }
 
+function buildCli() {
+  return esbuild.build({
+    ...COMMON,
+    stdin: {
+      contents: `
+import { start } from '../src/cli/index.ts';
+start();
+`,
+      resolveDir: DIST,
+      sourcefile: 'cli-entry.js',
+      loader: 'js',
+    },
+    outfile: CLI_OUTFILE,
+    platform: 'node',
+    banner: { js: '#!/usr/bin/env node' },
+    external: ['./index.node.js', 'cli-highlight', 'csv-parser'],
+    plugins: [cliNodeEntryPlugin],
+  });
+}
+
 async function run() {
-  const args = process.argv.slice(2);
-  const only = args.includes('--node') ? 'node'
-    : args.includes('--browser') ? 'browser'
-    : 'both';
-
-  const tasks = [];
-  if (only !== 'browser') tasks.push(buildNode());
-  if (only !== 'node') tasks.push(buildBrowser());
-  await Promise.all(tasks);
-
-  if (only !== 'browser') console.log(`Built ${NODE_OUTFILE} (full / node)`);
-  if (only !== 'node') console.log(`Built ${BROWSER_OUTFILE} (browser)`);
+  rmSync(DIST, { recursive: true, force: true });
+  await Promise.all([buildNode(), buildBrowser()]);
+  await buildCli();
+  await chmod(CLI_OUTFILE, 0o755);
 }
 
 run().catch((err) => {

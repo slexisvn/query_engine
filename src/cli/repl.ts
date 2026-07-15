@@ -1,8 +1,7 @@
 import readline from 'readline';
 import { highlight } from 'cli-highlight';
 import { formatResult } from './format.js';
-import type { QueryEngine } from '../engine/query-engine.js';
-import type { QueryCoordinator } from '../distributed/execution/coordinator.js';
+import type { QueryCoordinator, QueryEngine } from '../index.js';
 
 interface ReplOptions {
   coordinator?: QueryCoordinator | null;

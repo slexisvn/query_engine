@@ -1,12 +1,9 @@
 import fs from 'fs';
 import csv from 'csv-parser';
 import path from 'path';
-import { DataType } from '../../storage/data-type.js';
-import type { ColumnSchema, ColumnValue } from '../../storage/data-type.js';
-import { Table } from '../../storage/table.js';
-import { DEFAULT_CHUNK_SIZE } from '../../config.js';
+import { DataType, DEFAULT_CHUNK_SIZE, Table } from '../../index.js';
+import type { ColumnSchema, ColumnValue, QueryEngine } from '../../index.js';
 import { DataLoader } from './data-loader.js';
-import type { QueryEngine } from '../../engine/query-engine.js';
 
 interface CSVLoadOptions {
   partitionIndex?: number | null;

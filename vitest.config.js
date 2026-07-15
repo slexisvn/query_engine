@@ -4,7 +4,7 @@ import path from 'node:path';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url)).replace(/\\/g, '/');
 const SRC = ROOT + '/src/';
-const DIST = ROOT + '/dist/js/';
+const DIST = ROOT + '/dist/';
 
 const srcToDist = {
   name: 'src-to-dist',

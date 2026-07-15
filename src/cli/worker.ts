@@ -1,19 +1,15 @@
-import { Catalog } from '../catalog/catalog.js';
-import { QueryEngine } from '../index.js';
+import { Catalog, Config, FragmentExecutor, HttpTransport, QueryEngine } from '../index.js';
 import { loadDataFiles } from './cli-common.js';
-import { HttpTransport } from '../distributed/transport/http-transport.js';
-import { FragmentExecutor } from '../distributed/execution/fragment-executor.js';
-import { Config } from '../config.js';
-import type { Fragment } from '../distributed/planner/fragment.js';
-import type { DataChunk } from '../storage/chunk.js';
 import type {
   ControlMessage,
+  DataChunk,
   ExchangeType,
+  Fragment,
   FragmentDispatchJSON,
   NodeId,
   NodeRegistration,
   OutputConfig,
-} from '../distributed/distributed-types.js';
+} from '../index.js';
 
 type FragmentExecuteFragment = Parameters<FragmentExecutor['execute']>[0];
 
@@ -122,7 +118,7 @@ async function main(): Promise<void> {
     console.log(`[fragment] Received fragment ${fragmentJson.fragmentId}`);
 
     try {
-      const { Fragment } = await import('../distributed/planner/fragment.js');
+      const { Fragment } = await import('../index.js');
       const fragment = Object.assign(
         new Fragment({ planRoot: fragmentJson.planRoot }),
         fragmentJson

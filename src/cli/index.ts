@@ -3,13 +3,11 @@ import { fork } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import { availableParallelism } from 'os';
 import { fileURLToPath } from 'url';
-import { Catalog } from '../catalog/catalog.js';
-import { QueryEngine } from '../index.js';
+import { Catalog, QueryEngine } from '../index.js';
 import { loadDataFiles } from './cli-common.js';
 import { startREPL } from './repl.js';
-import { Config } from '../config.js';
-import type { NodeRegistration, NodeId, PartitionId } from '../distributed/distributed-types.js';
-import type { QueryCoordinator } from '../distributed/execution/coordinator.js';
+import { Config } from '../index.js';
+import type { NodeRegistration, NodeId, PartitionId, QueryCoordinator } from '../index.js';
 
 interface LoadOptions {
   partitionIndex?: number;
@@ -41,7 +39,7 @@ interface RegisterTransportLike {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-async function main(): Promise<void> {
+export async function start(): Promise<void> {
   const args = process.argv.slice(2);
   const dataPaths: string[] = [];
   let useWasm = true;
@@ -152,8 +150,7 @@ async function main(): Promise<void> {
 }
 
 async function spawnWorkers(engine: QueryEngine, coordPort: number, count: number, dataPaths: string[]): Promise<ChildProcess[]> {
-  const { NodeDescriptor, NodeRole } = await import('../distributed/cluster/node-descriptor.js');
-  const { RoundRobinPartitionStrategy } = await import('../distributed/partition/partition-strategy.js');
+  const { NodeDescriptor, NodeRole, RoundRobinPartitionStrategy } = await import('../index.js');
   const workerScript = path.join(__dirname, 'worker.js');
   const children: ChildProcess[] = [];
   const basePort = coordPort + 1;
@@ -235,5 +232,3 @@ async function spawnWorkers(engine: QueryEngine, coordPort: number, count: numbe
   });
 }
 
-
-main();

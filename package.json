@@ -1,17 +1,47 @@
 {
-  "name": "query-engine",
+  "name": "@slexisvn/query-engine",
   "version": "0.1.0",
   "type": "module",
+  "main": "./dist/index.node.js",
+  "module": "./dist/index.node.js",
+  "browser": "./dist/index.browser.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "qe": "./dist/index.cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "browser": "./dist/index.browser.js",
+      "import": "./dist/index.node.js",
+      "default": "./dist/index.node.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/index.browser.js",
+      "default": "./dist/index.browser.js"
+    },
+    "./cli": "./dist/index.cli.js",
+    "./core.wasm": "./dist/core.wasm",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/index.node.js",
+    "dist/index.browser.js",
+    "dist/index.cli.js",
+    "dist/core.wasm",
+    "dist/**/*.d.ts"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build:js": "tsc -p tsconfig.build.json",
-    "build": "npm run build:wasm && node scripts/build.js",
+    "build": "node scripts/build.js && npm run build:wasm && tsc -p tsconfig.build.json",
     "build:wasm": "asc --config src/wasm/assembly/asconfig.json --target release",
-    "pretest": "npm run build:js",
+    "prepack": "npm run build",
     "test": "vitest run",
-    "prestart": "npm run build:js",
-    "start": "node dist/js/cli/index.js",
-    "serve": "node scripts/serve.js"
+    "start": "node dist/index.cli.js"
   },
   "devDependencies": {
     "@types/node": "^22.19.21",

@@ -1,8 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { LoaderFactory } from './loaders/loader-factory.js';
-import type { QueryEngine } from '../index.js';
-import type { Catalog } from '../catalog/catalog.js';
+import type { Catalog, QueryEngine } from '../index.js';
 
 interface LoadDataFilesOptions {
   loadOptions?: object;

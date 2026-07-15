@@ -1,4 +1,4 @@
-import type { ColumnValue } from '../storage/data-type.js';
+import type { ColumnValue } from '../index.js';
 
 interface ResultLike {
   rows: Record<string, ColumnValue>[];

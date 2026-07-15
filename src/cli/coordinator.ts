@@ -1,16 +1,16 @@
 import readline from 'readline';
-import { Catalog } from '../catalog/catalog.js';
-import { QueryEngine } from '../index.js';
+import {
+  Catalog,
+  Config,
+  HttpTransport,
+  NodeDescriptor,
+  NodeRole,
+  QueryEngine,
+  RoundRobinPartitionStrategy,
+} from '../index.js';
 import { loadDataFiles } from './cli-common.js';
 import { formatResult } from './format.js';
-import { HttpTransport } from '../distributed/transport/http-transport.js';
-import { NodeDescriptor, NodeRole } from '../distributed/cluster/node-descriptor.js';
-import { RoundRobinPartitionStrategy } from '../distributed/partition/partition-strategy.js';
-import { Config } from '../config.js';
-import type { ClusterManager } from '../distributed/cluster/cluster-manager.js';
-import type { PartitionMap } from '../distributed/partition/partition-map.js';
-import type { QueryCoordinator } from '../distributed/execution/coordinator.js';
-import type { NodeId, NodeRegistration, HeartbeatMessage } from '../distributed/distributed-types.js';
+import type { ClusterManager, HeartbeatMessage, NodeId, NodeRegistration, PartitionMap, QueryCoordinator } from '../index.js';
 
 interface CoordinatorRegistration extends NodeRegistration {
   partitionIndex?: number | null;

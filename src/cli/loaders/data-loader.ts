@@ -1,7 +1,5 @@
-import type { QueryEngine } from '../../engine/query-engine.js';
-import { DataType } from '../../storage/data-type.js';
-import type { ColumnSchema } from '../../storage/data-type.js';
-import type { Table } from '../../storage/table.js';
+import { DataType } from '../../index.js';
+import type { ColumnSchema, QueryEngine, Table } from '../../index.js';
 
 export class DataLoader {
   async load(engine: QueryEngine, filePath: string): Promise<string> {
