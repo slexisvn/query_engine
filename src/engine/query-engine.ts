@@ -504,11 +504,6 @@ export class QueryEngine {
       seen.add(upper);
     }
 
-    // Derive the column types from the executor's actual output columns so the
-    // new table's storage representation matches the values produced (the
-    // binder's static type can disagree with the runtime physical type, e.g.
-    // COUNT(*) or pass-through INT64). Fall back to the bound types only when
-    // the result yields no chunks to inspect.
     const fallbackTypes = (): ColumnSchema[] =>
       columnNames.map((name: string, i: number) => ({
         name: name.toUpperCase(),
