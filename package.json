@@ -1,6 +1,6 @@
 {
   "name": "@slexisvn/query-engine",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "./dist/index.node.js",
   "module": "./dist/index.node.js",
@@ -39,7 +39,6 @@
     "typecheck": "tsc --noEmit",
     "build": "node scripts/build.js && npm run build:wasm && tsc -p tsconfig.build.json",
     "build:wasm": "asc --config src/wasm/assembly/asconfig.json --target release",
-    "prepack": "npm run build",
     "test": "vitest run",
     "start": "node dist/index.cli.js"
   },
