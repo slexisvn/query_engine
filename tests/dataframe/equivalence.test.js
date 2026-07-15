@@ -68,4 +68,10 @@ describe('DataFrame.sql against self', () => {
       'SELECT id FROM __DF0 WHERE age >= 18 AND spend > 80')).rows;
     expect(sortRows(chained)).toEqual(sortRows(sqlRows));
   });
+
+  it('binds $N placeholders passed through options.params', async () => {
+    const result = df.sql('SELECT id FROM self WHERE city = $1 AND spend >= $2', { params: ['SG', 100] });
+    const rows = await result.collect();
+    expect(sortRows(rows)).toEqual([{ id: 3 }]);
+  });
 });

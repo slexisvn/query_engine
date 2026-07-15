@@ -11,6 +11,7 @@ export enum NodeKind {
   SUBQUERY_REF = 'SubqueryRef',
   COLUMN_REF = 'ColumnRef',
   LITERAL = 'Literal',
+  PARAMETER = 'Parameter',
   BINARY_EXPR = 'BinaryExpr',
   UNARY_EXPR = 'UnaryExpr',
   BETWEEN_EXPR = 'BetweenExpr',
@@ -38,7 +39,7 @@ export enum NodeKind {
 }
 
 export type Expr =
-  | ColumnRefNode | LiteralNode | BinaryExprNode | UnaryExprNode
+  | ColumnRefNode | LiteralNode | ParameterNode | BinaryExprNode | UnaryExprNode
   | BetweenExprNode | InExprNode | LikeExprNode | IsNullExprNode
   | ExistsExprNode | SubqueryExprNode | FunctionCallNode | AggregateCallNode
   | CaseExprNode | CastExprNode | ExtractExprNode | SubstringExprNode
@@ -100,6 +101,8 @@ export interface SubqueryRefNode { kind: NodeKind.SUBQUERY_REF; query: QueryStmt
 export interface ColumnRefNode { kind: NodeKind.COLUMN_REF; name: string; table: string | null; }
 
 export interface LiteralNode { kind: NodeKind.LITERAL; value: string | number | boolean | null; dataType: string | null; }
+
+export interface ParameterNode { kind: NodeKind.PARAMETER; index: number; }
 
 export interface BinaryExprNode { kind: NodeKind.BINARY_EXPR; op: string; left: Expr; right: Expr | QuantifiedSubqueryNode; }
 
@@ -221,6 +224,10 @@ export function ColumnRef(name: string, table: string | null = null): ColumnRefN
 
 export function Literal(value: string | number | boolean | null, dataType: string | null = null): LiteralNode {
   return { kind: NodeKind.LITERAL, value, dataType };
+}
+
+export function Parameter(index: number): ParameterNode {
+  return { kind: NodeKind.PARAMETER, index };
 }
 
 export function BinaryExpr(op: string, left: Expr, right: Expr | QuantifiedSubqueryNode): BinaryExprNode {

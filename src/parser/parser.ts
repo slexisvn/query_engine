@@ -266,7 +266,11 @@ export class Parser {
       return inner;
     }
 
-    const name = this.expectIdent();
+    let name = this.expectIdent();
+    while (this.isAt(TokenType.DOT)) {
+      this.advance();
+      name = this.expectIdent();
+    }
     const alias = this.parseOptionalAlias(() => !this.isJoinKeyword() && !this.isClauseKeyword()) ?? name;
     return AST.TableRef(name, alias);
   }
@@ -594,10 +598,15 @@ export class Parser {
       return this.parseAggregateCall();
     }
 
+    if (token.type === TokenType.PLACEHOLDER) {
+      this.advance();
+      return AST.Parameter(Number(token.value));
+    }
+
     if (token.type === TokenType.COLON) {
       this.advance();
       const paramToken = this.expect(TokenType.NUMBER);
-      return AST.Literal(`:${paramToken.value}`, 'PARAM');
+      return AST.Parameter(Number(paramToken.value));
     }
 
     if (token.type === TokenType.IDENT) {

@@ -1052,3 +1052,70 @@ describe('LEFT/FULL join outer-side semantics (HASH path)', () => {
     expect(rows.some(r => r.rk !== null && r.rk >= 30 && r.lk === null)).toBe(true);
   });
 });
+
+describe('bind parameters', () => {
+  function ordersEngine() {
+    const schema = [
+      { name: 'region', dataType: 'VARCHAR' },
+      { name: 'status', dataType: 'VARCHAR' },
+      { name: 'amount', dataType: 'INT32' },
+    ];
+    const catalog = new Catalog();
+    registerMockTable(catalog, 'orders', schema, [
+      makeChunk([
+        { type: 'VARCHAR', values: ['US', 'US', 'US', 'EU', 'EU'] },
+        { type: 'VARCHAR', values: ['active', 'inactive', 'active', 'active', 'active'] },
+        { type: 'INT32', values: [100, 50, 200, 999, 40] },
+      ]),
+    ]);
+    return new QueryEngine(catalog);
+  }
+
+  it('binds $N placeholders in a schema-qualified conditional aggregate', async () => {
+    const engine = ordersEngine();
+    const result = await engine.run(
+      'SELECT orders.region AS region, SUM(CASE WHEN orders.status = $1 THEN orders.amount END) AS revenue '
+      + 'FROM public.orders AS orders WHERE orders.region = $2 GROUP BY orders.region',
+      ['active', 'US'],
+    );
+    expect(result.rows).toEqual([{ region: 'US', revenue: 300 }]);
+    engine.close();
+  });
+
+  it('substitutes the same value everywhere a placeholder repeats', async () => {
+    const engine = ordersEngine();
+    const result = await engine.run(
+      'SELECT SUM(CASE WHEN status = $1 THEN amount END) AS revenue, '
+      + 'COUNT(CASE WHEN status = $1 THEN 1 END) AS cnt FROM orders',
+      ['active'],
+    );
+    expect(result.rows[0].revenue).toBe(1339);
+    expect(result.rows[0].cnt).toBe(4);
+    engine.close();
+  });
+
+  it('binds numeric placeholders with inferred type', async () => {
+    const engine = ordersEngine();
+    const result = await engine.run(
+      'SELECT SUM(amount) AS total FROM orders WHERE amount > $1',
+      [60],
+    );
+    expect(result.rows[0].total).toBe(1299);
+    engine.close();
+  });
+
+  it('accepts the :N colon placeholder syntax', async () => {
+    const engine = ordersEngine();
+    const result = await engine.run('SELECT SUM(amount) AS total FROM orders WHERE region = :1', ['EU']);
+    expect(result.rows[0].total).toBe(1039);
+    engine.close();
+  });
+
+  it('throws when a placeholder has no supplied value', async () => {
+    const engine = ordersEngine();
+    await expect(
+      engine.run('SELECT region FROM orders WHERE region = $2', ['US']),
+    ).rejects.toThrow('Missing value for parameter $2');
+    engine.close();
+  });
+});

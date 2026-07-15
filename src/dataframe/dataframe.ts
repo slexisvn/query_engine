@@ -70,7 +70,7 @@ interface SqlFrameLike {
 interface EngineLike {
   catalog: Catalog;
   functionRegistry: FunctionRegistry;
-  sql(sqlString: string, options: { frames: SqlFrameLike[] }): DataFrame;
+  sql(sqlString: string, options: { frames: SqlFrameLike[]; params?: readonly ColumnValue[] }): DataFrame;
   _nextDfId(): number;
   _runPlan(plan: LogicalPlanNode, outputColumns: OutputColumnLike[], streaming: boolean, cteMap: CteMap | null): Promise<ResultLike>;
 }
@@ -162,7 +162,7 @@ export class DataFrame {
     return planToString(this._plan);
   }
 
-  sql(sqlString: string): DataFrame {
+  sql(sqlString: string, options: { params?: readonly ColumnValue[] } = {}): DataFrame {
     const columns = this._schema.fields.map(f => ({ name: f.name, dataType: f.dataType }));
     return this._engine.sql(sqlString, {
       frames: [{
@@ -171,6 +171,7 @@ export class DataFrame {
         plan: this._plan,
         cteMap: this._cteMap,
       }],
+      params: options.params,
     });
   }
 

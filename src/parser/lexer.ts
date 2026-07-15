@@ -20,6 +20,7 @@ export enum TokenType {
   SEMICOLON = 'SEMICOLON',
   CONCAT = 'CONCAT',
   COLON = 'COLON',
+  PLACEHOLDER = 'PLACEHOLDER',
   EOF = 'EOF',
   EXPLAIN = 'EXPLAIN',
 
@@ -117,8 +118,10 @@ export enum TokenType {
 const NON_KEYWORD_TOKENS = new Set([
   'IDENT', 'NUMBER', 'STRING', 'COMMA', 'DOT', 'STAR',
   'LPAREN', 'RPAREN', 'EQ', 'NEQ', 'LT', 'GT', 'LTE', 'GTE',
-  'PLUS', 'MINUS', 'SLASH', 'PERCENT', 'SEMICOLON', 'CONCAT', 'COLON', 'EOF',
+  'PLUS', 'MINUS', 'SLASH', 'PERCENT', 'SEMICOLON', 'CONCAT', 'COLON', 'PLACEHOLDER', 'EOF',
 ]);
+
+const PLACEHOLDER_PREFIX = '$';
 
 const KEYWORDS = new Map<string, TokenType>();
 for (const key of Object.keys(TokenType)) {
@@ -161,6 +164,8 @@ export class Lexer {
 
       if (ch === "'") {
         this.tokens.push(this._readString(start));
+      } else if (ch === PLACEHOLDER_PREFIX) {
+        this.tokens.push(this._readPlaceholder(start));
       } else if (this._isDigit(ch)) {
         this.tokens.push(this._readNumber(start));
       } else if (this._isIdentStart(ch)) {
@@ -211,6 +216,18 @@ export class Lexer {
       }
     }
     throw new Error(`Unterminated string at position ${start}`);
+  }
+
+  _readPlaceholder(start: number): Token {
+    this.pos++;
+    const digitsStart = this.pos;
+    while (this.pos < this.input.length && this._isDigit(this.input[this.pos])) {
+      this.pos++;
+    }
+    if (this.pos === digitsStart) {
+      throw new Error(`Expected parameter number after '${PLACEHOLDER_PREFIX}' at position ${start}`);
+    }
+    return new Token(TokenType.PLACEHOLDER, this.input.slice(digitsStart, this.pos), start);
   }
 
   _readNumber(start: number): Token {

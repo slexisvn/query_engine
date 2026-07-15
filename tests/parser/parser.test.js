@@ -731,8 +731,14 @@ describe('Parser', () => {
   describe('parameter markers', () => {
     it('parses :N parameter syntax', () => {
       const ast = parse('SELECT * FROM t WHERE id = :1');
-      expect(ast.where.right.value).toBe(':1');
-      expect(ast.where.right.dataType).toBe('PARAM');
+      expect(ast.where.right.kind).toBe(NodeKind.PARAMETER);
+      expect(ast.where.right.index).toBe(1);
+    });
+
+    it('parses $N placeholder syntax', () => {
+      const ast = parse('SELECT * FROM t WHERE id = $2');
+      expect(ast.where.right.kind).toBe(NodeKind.PARAMETER);
+      expect(ast.where.right.index).toBe(2);
     });
   });
 

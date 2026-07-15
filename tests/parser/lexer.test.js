@@ -118,6 +118,16 @@ describe('Lexer', () => {
       ]);
     });
 
+    it('tokenizes $N parameter placeholders with the number as value', () => {
+      const tokens = new Lexer('$1 $42').tokens;
+      expect(tokens.map(t => t.type)).toEqual([TokenType.PLACEHOLDER, TokenType.PLACEHOLDER, TokenType.EOF]);
+      expect(tokens.map(t => t.value)).toEqual(['1', '42', '']);
+    });
+
+    it('throws on $ without a following number', () => {
+      expect(() => new Lexer('$ ')).toThrow("Expected parameter number after '$' at position 0");
+    });
+
     it('throws on bare ! without =', () => {
       expect(() => new Lexer('!')).toThrow("Unexpected character '!' at position 0");
     });

@@ -54,17 +54,29 @@ interface CteInfo { name: string; columns: ColumnInfo[]; bound: BoundQuery; }
 
 interface JoinSide { type?: string; columns?: ColumnInfo[]; alias?: string; tableName?: string; cteName?: string; }
 
+function valueDataType(value: BE.LiteralValue): string | null {
+  switch (typeof value) {
+    case 'boolean': return DataType.BOOLEAN;
+    case 'bigint': return DataType.INT64;
+    case 'string': return DataType.VARCHAR;
+    case 'number': return Number.isInteger(value) ? DataType.INT32 : DataType.FLOAT64;
+    default: return null;
+  }
+}
+
 export class Binder {
   catalog: CatalogLike;
   functionRegistry: object;
   cteScopes: Map<string, CteInfo>;
   aggregatesFound: BE.BoundExpr[];
+  params: readonly BE.LiteralValue[];
 
-  constructor(catalog: CatalogLike, functionRegistry: object) {
+  constructor(catalog: CatalogLike, functionRegistry: object, params: readonly BE.LiteralValue[] = []) {
     this.catalog = catalog;
     this.functionRegistry = functionRegistry;
     this.cteScopes = new Map();
     this.aggregatesFound = [];
+    this.params = params;
   }
 
   bind(ast: AST.QueryStmt): BoundQuery {
@@ -371,6 +383,9 @@ export class Binder {
       case NodeKind.LITERAL:
         return this.bindLiteral(node);
 
+      case NodeKind.PARAMETER:
+        return this.bindParameter(node);
+
       case NodeKind.BINARY_EXPR:
         return this.bindBinaryExpr(node, scope);
 
@@ -503,6 +518,14 @@ export class Binder {
       return BE.BoundLiteral(node.value, DataType.FLOAT64);
     }
     return BE.BoundLiteral(node.value, DataType.VARCHAR);
+  }
+
+  bindParameter(node: AST.ParameterNode): BE.BoundLiteralNode {
+    if (node.index < 1 || node.index > this.params.length) {
+      throw new Error(`Missing value for parameter $${node.index}`);
+    }
+    const value = this.params[node.index - 1];
+    return BE.BoundLiteral(value, valueDataType(value));
   }
 
   bindBinaryExpr(node: AST.BinaryExprNode, scope: BinderScope): BE.BoundBinaryNode {

@@ -40,12 +40,15 @@ import { DFSchema } from '../dataframe/schema.js';
 import { InMemoryRelation } from '../dataframe/in-memory-relation.js';
 import type { Statement, QueryStmt, CreateTableStmtNode, DropTableStmtNode, TypeNameNode, ColumnDefNode } from '../parser/ast.js';
 import type { BoundQuery, OutputColumn } from '../binder/binder.js';
+import type { LiteralValue } from '../binder/expression-binder.js';
 import type { Catalog, CatalogTable } from '../catalog/catalog.js';
 import type { ColumnSchema, ColumnValue } from '../storage/data-type.js';
 import type { DataChunk } from '../storage/chunk.js';
 import type { TableStatistics } from '../catalog/statistics.js';
 import type { OptimizationPass } from '../optimizer/pass.js';
 import type { Transport } from '../distributed/transport/transport.js';
+
+export type QueryParam = LiteralValue;
 
 type StatisticsMap = Map<string, TableStatistics>;
 
@@ -87,6 +90,7 @@ interface SqlFrame {
 
 interface SqlOptions {
   frames?: SqlFrame[];
+  params?: readonly QueryParam[];
 }
 
 interface DistributedClusterConfig {
@@ -258,8 +262,8 @@ export class QueryEngine {
     return parse(sql);
   }
 
-  bind(ast: QueryStmt): BoundQuery {
-    const binder = new Binder(this.catalog as BinderCatalog, this.functionRegistry);
+  bind(ast: QueryStmt, params: readonly QueryParam[] = []): BoundQuery {
+    const binder = new Binder(this.catalog as BinderCatalog, this.functionRegistry, params);
     return binder.bind(ast);
   }
 
@@ -271,7 +275,7 @@ export class QueryEngine {
     return this.optimizer.optimize(logicalPlan);
   }
 
-  async compile(sql: string): Promise<CompileResult> {
+  async compile(sql: string, params: readonly QueryParam[] = []): Promise<CompileResult> {
     const ast = this.parseSQL(sql);
     let isExplain = false;
     let isAnalyze = false;
@@ -288,7 +292,7 @@ export class QueryEngine {
       return { ddl: ast };
     }
 
-    const bound = this.bind(targetAst as QueryStmt);
+    const bound = this.bind(targetAst as QueryStmt, params);
     const logicalPlan = this.plan(bound);
     let cteMap = logicalPlan._cteMap || new Map<string, LogicalPlanNode>();
 
@@ -352,7 +356,7 @@ export class QueryEngine {
       || ast.kind === 'ExplainStmt' || ast.kind === 'ExplainAnalyzeStmt') {
       throw new Error('sql() supports query statements only');
     }
-    const binder = new Binder(this.catalog as BinderCatalog, this.functionRegistry);
+    const binder = new Binder(this.catalog as BinderCatalog, this.functionRegistry, options.params);
     for (const frame of options.frames || []) {
       binder.cteScopes.set(frame.name.toUpperCase(), {
         name: frame.name,
@@ -395,8 +399,8 @@ export class QueryEngine {
     return new QueryResult(columnNames, sink);
   }
 
-  async run(sql: string): Promise<DDLResult | RunRowsResult> {
-    const compiled = await this.compile(sql);
+  async run(sql: string, params: readonly QueryParam[] = []): Promise<DDLResult | RunRowsResult> {
+    const compiled = await this.compile(sql, params);
 
     if (compiled.ddl) {
       return this.executeDDL(compiled.ddl);
