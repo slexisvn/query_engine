@@ -18,17 +18,22 @@ const BROWSER_OUTFILE = join(DIST, 'index.browser.js');
 const CLI_OUTFILE = join(DIST, 'index.cli.js');
 
 const NODE_ONLY_SUBSYSTEMS = /(^|\/)(parallel|distributed)\//;
+const NODE_ONLY_STUB_NS = 'node-only-stub';
 
-const externalizeNodeSubsystemsPlugin = {
-  name: 'externalize-node-subsystems',
+const stubNodeSubsystemsPlugin = {
+  name: 'stub-node-subsystems',
   setup(build) {
     build.onResolve({ filter: /.*/ }, (args) => {
       if (args.kind === 'entry-point') return null;
       if (NODE_ONLY_SUBSYSTEMS.test(args.path)) {
-        return { path: args.path, external: true };
+        return { path: NODE_ONLY_STUB_NS, namespace: NODE_ONLY_STUB_NS };
       }
       return null;
     });
+    build.onLoad({ filter: /.*/, namespace: NODE_ONLY_STUB_NS }, () => ({
+      loader: 'js',
+      contents: `throw new Error('[@slexisvn/query-engine] parallel/distributed execution is not available in the browser build; use the Node build for these features.');`,
+    }));
   },
 };
 
@@ -90,7 +95,7 @@ function buildBrowser() {
     platform: 'browser',
     define: { global: 'globalThis' },
     inject: [BUFFER_SHIM],
-    plugins: [externalizeNodeSubsystemsPlugin],
+    plugins: [stubNodeSubsystemsPlugin],
   });
 }
 
