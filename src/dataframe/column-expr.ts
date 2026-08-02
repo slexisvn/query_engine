@@ -13,7 +13,7 @@ import {
   getExprType,
 } from '../binder/expression-binder.js';
 import type { BoundExpr, LiteralValue } from '../binder/expression-binder.js';
-import { DataType } from '../storage/data-type.js';
+import { DataType, normalizeTypeName } from '../storage/data-type.js';
 import type { ColumnValue } from '../storage/data-type.js';
 import type { CatalogLike } from '../binder/binder.js';
 import { inferValueType } from './type-inference.js';
@@ -147,8 +147,16 @@ export class Col {
       BoundInList(this._build(schema, ctx), cols.map(c => c._build(schema, ctx)), false));
   }
 
-  cast(targetType: DataType): Col {
-    return new Col((schema, ctx) => BoundCast(this._build(schema, ctx), targetType));
+  cast(targetType: DataType | string): Col {
+    return new Col((schema, ctx) => BoundCast(this._build(schema, ctx), normalizeTypeName(targetType)));
+  }
+
+  desc(): { col: Col; desc: boolean } {
+    return { col: this, desc: true };
+  }
+
+  asc(): { col: Col; desc: boolean } {
+    return { col: this, desc: false };
   }
 }
 

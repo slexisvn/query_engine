@@ -54,8 +54,11 @@ class NodeMergeRewriter extends PlanRewriter {
     const child: LogicalPlanNode = this.rewrite(node.children[0]);
 
     if (child.type === PlanNodeType.LIMIT) {
-      const mergedCount = Math.min(node.count, child.count);
-      return { ...node, count: mergedCount, children: [child.children[0]] };
+      const nodeOffset = node.offset || 0;
+      const childOffset = child.offset || 0;
+      const available = Math.max(0, child.count - nodeOffset);
+      const mergedCount = Math.min(node.count, available);
+      return { ...node, count: mergedCount, offset: childOffset + nodeOffset, children: [child.children[0]] };
     }
 
     if (child !== node.children[0]) {

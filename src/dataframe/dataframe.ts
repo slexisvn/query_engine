@@ -244,7 +244,7 @@ export class DataFrame {
   }
 
   union(other: DataFrame): DataFrame {
-    return this._union(other, true);
+    return this._union(other, false);
   }
 
   unionAll(other: DataFrame): DataFrame {
