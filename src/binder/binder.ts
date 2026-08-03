@@ -1,6 +1,6 @@
 import { NodeKind } from '../parser/ast.js';
 import type * as AST from '../parser/ast.js';
-import { DataType, dateToEpochDays, timestampToEpochMs } from '../storage/data-type.js';
+import { DataType, dateToEpochDays, timestampToEpochMs, normalizeTypeName } from '../storage/data-type.js';
 import { BinderScope, type ColumnInfo } from './scope.js';
 import * as BE from './expression-binder.js';
 
@@ -678,17 +678,6 @@ export class Binder {
   }
 
   resolveTypeName(typeName: AST.TypeNameNode): string {
-    const name = typeName.name.toUpperCase();
-    const map: Record<string, string> = {
-      'INTEGER': DataType.INT32, 'INT': DataType.INT32, 'INT32': DataType.INT32,
-      'BIGINT': DataType.INT64, 'INT64': DataType.INT64,
-      'FLOAT': DataType.FLOAT64, 'DOUBLE': DataType.FLOAT64, 'REAL': DataType.FLOAT64,
-      'DECIMAL': DataType.DECIMAL, 'NUMERIC': DataType.DECIMAL,
-      'VARCHAR': DataType.VARCHAR, 'TEXT': DataType.VARCHAR, 'CHAR': DataType.VARCHAR,
-      'DATE': DataType.DATE,
-      'TIMESTAMP': DataType.TIMESTAMP, 'DATETIME': DataType.TIMESTAMP,
-      'BOOLEAN': DataType.BOOLEAN, 'BOOL': DataType.BOOLEAN,
-    };
-    return map[name] || DataType.VARCHAR;
+    return normalizeTypeName(typeName.name);
   }
 }

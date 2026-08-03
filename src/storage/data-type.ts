@@ -74,6 +74,30 @@ export function isFixedWidth(dataType: DataType): boolean {
   return FIXED_WIDTH_TYPES.has(dataType);
 }
 
+const DATA_TYPE_NAMES = new Set<string>(Object.values(DataType));
+
+const TYPE_NAME_ALIASES: Record<string, DataType> = {
+  INTEGER: DataType.INT32,
+  INT: DataType.INT32,
+  BIGINT: DataType.INT64,
+  LONG: DataType.INT64,
+  FLOAT: DataType.FLOAT64,
+  DOUBLE: DataType.FLOAT64,
+  REAL: DataType.FLOAT64,
+  NUMERIC: DataType.DECIMAL,
+  TEXT: DataType.VARCHAR,
+  CHAR: DataType.VARCHAR,
+  STRING: DataType.VARCHAR,
+  DATETIME: DataType.TIMESTAMP,
+  BOOL: DataType.BOOLEAN,
+};
+
+export function normalizeTypeName(name: string): DataType {
+  const upper = name.toUpperCase();
+  if (DATA_TYPE_NAMES.has(upper)) return upper as DataType;
+  return TYPE_NAME_ALIASES[upper] ?? DataType.VARCHAR;
+}
+
 export function isNumeric(dataType: DataType): boolean {
   return dataType === DataType.INT32
     || dataType === DataType.INT64

@@ -37,10 +37,12 @@ export class Column {
 
     if (isFixedWidth(dataType)) {
       this.data = allocator.acquire(typedArrayCtorFor(dataType), capacity);
-    } else {
+    } else if (dataType === DataType.VARCHAR) {
       this.offsets = allocator.acquire(Uint32Array, capacity + 1);
       this.stringBytes = allocator.acquire(Uint8Array, STRING_INITIAL_BYTES);
       this.stringBytesUsed = 0;
+    } else {
+      throw new Error(`Unsupported column data type: ${dataType}`);
     }
 
     this.nullBitmap = allocator.acquire(Uint32Array, bitmapWordCount(capacity));
