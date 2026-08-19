@@ -1,7 +1,7 @@
 import type { BoundExpr, BoundColumnRefNode, BoundWindowNode } from '../binder/expression-binder.js';
 import type { ColumnInfo } from '../binder/scope.js';
+import type { ColumnValue } from '../storage/data-type.js';
 
-export type IndexScanValue = string | number | bigint | null;
 
 export type ProjectedExpr = BoundExpr & { outputName?: string };
 
@@ -43,15 +43,6 @@ export enum JoinType {
   CROSS = 'CROSS',
 }
 
-export enum PhysicalStrategy {
-  HASH = 'HASH',
-  MERGE = 'MERGE',
-  NESTED_LOOP = 'NESTED_LOOP',
-  STREAM = 'STREAM',
-  UNGROUPED = 'UNGROUPED',
-  PERFECT_HASH = 'PERFECT_HASH',
-}
-
 export enum SortDirection {
   ASC = 'ASC',
   DESC = 'DESC',
@@ -71,10 +62,6 @@ interface PlanNodeBase {
   _cardinality?: number;
   _sortedBy?: SortedByEntry[];
   _cteMap?: Map<string, LogicalPlanNode>;
-  _requiresSort?: { left: boolean; right: boolean };
-  _buildSide?: 'left' | 'right';
-  _dedupeBuild?: boolean;
-  _cost?: number;
 }
 
 export interface LogicalScanNode extends PlanNodeBase {
@@ -93,6 +80,7 @@ export interface LogicalFilterNode extends PlanNodeBase {
 export interface LogicalProjectNode extends PlanNodeBase {
   type: PlanNodeType.PROJECT;
   expressions: ProjectedExpr[];
+  outputAlias?: string;
   children: LogicalPlanNode[];
 }
 
@@ -100,7 +88,6 @@ export interface LogicalJoinNode extends PlanNodeBase {
   type: PlanNodeType.JOIN;
   joinType: JoinType;
   condition: BoundExpr | null;
-  physicalStrategy: PhysicalStrategy;
   children: LogicalPlanNode[];
 }
 
@@ -108,7 +95,6 @@ export interface LogicalAggregateNode extends PlanNodeBase {
   type: PlanNodeType.AGGREGATE;
   groupBy: BoundExpr[];
   aggregates: BoundExpr[];
-  physicalStrategy: PhysicalStrategy;
   children: LogicalPlanNode[];
 }
 
@@ -142,6 +128,7 @@ export interface LogicalCTEScanNode extends PlanNodeBase {
   type: PlanNodeType.CTE_SCAN;
   cteName: string;
   cteId: number;
+  alias: string;
   children: LogicalPlanNode[];
 }
 
@@ -175,9 +162,9 @@ export interface LogicalIndexScanNode extends PlanNodeBase {
   indexName: string;
   columnName: string;
   scanType: string;
-  scanKey: IndexScanValue;
-  scanLow: IndexScanValue;
-  scanHigh: IndexScanValue;
+  scanKey: ColumnValue;
+  scanLow: ColumnValue;
+  scanHigh: ColumnValue;
   lowInc: boolean;
   highInc: boolean;
   columns: ColumnInfo[];
@@ -206,7 +193,6 @@ export interface LogicalPartialAggregateNode extends PlanNodeBase {
   type: PlanNodeType.PARTIAL_AGGREGATE;
   groupBy: BoundExpr[];
   aggregates: BoundExpr[];
-  physicalStrategy: PhysicalStrategy;
   children: LogicalPlanNode[];
 }
 
@@ -215,7 +201,6 @@ export interface LogicalFinalAggregateNode extends PlanNodeBase {
   groupBy: BoundExpr[];
   aggregates: BoundExpr[];
   partialAggregates: BoundExpr[];
-  physicalStrategy: PhysicalStrategy;
   children: LogicalPlanNode[];
 }
 
@@ -260,27 +245,26 @@ export function LogicalFilter(condition: BoundExpr | null, child: LogicalPlanNod
   return { type: PlanNodeType.FILTER, condition, children: [child] };
 }
 
-export function LogicalProject(expressions: ProjectedExpr[], child: LogicalPlanNode): LogicalProjectNode {
-  return { type: PlanNodeType.PROJECT, expressions, children: [child] };
+export function LogicalProject(expressions: ProjectedExpr[], child: LogicalPlanNode, outputAlias?: string): LogicalProjectNode {
+  const node: LogicalProjectNode = { type: PlanNodeType.PROJECT, expressions, children: [child] };
+  return outputAlias ? { ...node, outputAlias } : node;
 }
 
-export function LogicalJoin(joinType: JoinType, condition: BoundExpr | null, left: LogicalPlanNode, right: LogicalPlanNode, physicalStrategy: PhysicalStrategy = PhysicalStrategy.HASH): LogicalJoinNode {
+export function LogicalJoin(joinType: JoinType, condition: BoundExpr | null, left: LogicalPlanNode, right: LogicalPlanNode): LogicalJoinNode {
   return {
     type: PlanNodeType.JOIN,
     joinType,
     condition,
     children: [left, right],
-    physicalStrategy,
   };
 }
 
-export function LogicalAggregate(groupBy: BoundExpr[], aggregates: BoundExpr[], child: LogicalPlanNode, physicalStrategy: PhysicalStrategy = PhysicalStrategy.HASH): LogicalAggregateNode {
+export function LogicalAggregate(groupBy: BoundExpr[], aggregates: BoundExpr[], child: LogicalPlanNode): LogicalAggregateNode {
   return {
     type: PlanNodeType.AGGREGATE,
     groupBy,
     aggregates,
     children: [child],
-    physicalStrategy,
   };
 }
 
@@ -300,8 +284,8 @@ export function LogicalUnion(left: LogicalPlanNode, right: LogicalPlanNode, all:
   return { type: PlanNodeType.UNION, all: !!all, children: [left, right] };
 }
 
-export function LogicalCTEScan(cteName: string, cteId: number): LogicalCTEScanNode {
-  return { type: PlanNodeType.CTE_SCAN, cteName, cteId, children: [] };
+export function LogicalCTEScan(cteName: string, cteId: number, alias?: string): LogicalCTEScanNode {
+  return { type: PlanNodeType.CTE_SCAN, cteName, cteId, alias: alias || cteName, children: [] };
 }
 
 export function LogicalCTEAnchor(cteName: string, cteId: number, producer: LogicalPlanNode, consumer: LogicalPlanNode): LogicalCTEAnchorNode {
@@ -322,7 +306,7 @@ export function LogicalTopN(orderKeys: LogicalOrderKey[], count: number, offset:
   return { type: PlanNodeType.TOP_N, orderKeys, count, offset: offset || 0, children: [child] };
 }
 
-export function LogicalIndexScan(table: string, alias: string | undefined, indexName: string, columnName: string, scanType: string, scanKey: IndexScanValue, scanLow: IndexScanValue, scanHigh: IndexScanValue, lowInc: boolean, highInc: boolean, columns: ColumnInfo[]): LogicalIndexScanNode {
+export function LogicalIndexScan(table: string, alias: string | undefined, indexName: string, columnName: string, scanType: string, scanKey: ColumnValue, scanLow: ColumnValue, scanHigh: ColumnValue, lowInc: boolean, highInc: boolean, columns: ColumnInfo[]): LogicalIndexScanNode {
   return {
     type: PlanNodeType.INDEX_SCAN,
     table, alias: alias || table, indexName, columnName,
@@ -355,7 +339,6 @@ export function LogicalPartialAggregate(groupBy: BoundExpr[], aggregates: BoundE
     groupBy,
     aggregates,
     children: [child],
-    physicalStrategy: PhysicalStrategy.HASH,
   };
 }
 
@@ -366,7 +349,6 @@ export function LogicalFinalAggregate(groupBy: BoundExpr[], aggregates: BoundExp
     aggregates,
     partialAggregates,
     children: [child],
-    physicalStrategy: PhysicalStrategy.HASH,
   };
 }
 

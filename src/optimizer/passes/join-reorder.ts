@@ -1,17 +1,32 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanNodeType, JoinType, LogicalJoin, LogicalFilter, getChildren, setChildren, type LogicalPlanNode, type LogicalScanNode } from '../../planner/logical-plan.js';
+import { PlanNodeType, JoinType, LogicalJoin, LogicalFilter, getChildren, type LogicalPlanNode, type LogicalScanNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { buildHyperGraph } from '../dphyp/hypergraph.js';
-import { runDPhyp, type DPhypPlan } from '../dphyp/dphyp.js';
-import { DefaultCostModel } from '../dphyp/cost-model.js';
-import { DefaultCardinalityEstimator, type TableStats } from '../dphyp/cardinality.js';
-import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
+import { buildHyperGraph } from '../join-order/hypergraph.js';
+import { enumerateJoinOrder } from '../join-order/enumerator.js';
+import { DefaultCostModel } from '../join-order/cost-model.js';
+import { DefaultCardinalityEstimator, type TableStats } from '../join-order/cardinality.js';
+import { collectTableRefs } from '../expr-walk.js';
+import type { JoinPlan } from '../join-order/join-plan.js';
+import type { Relation } from '../join-order/hypergraph.js';
+import type { BoundExpr } from '../../binder/expression-binder.js';
 import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
 
-interface Relation {
-  name: string;
-  alias: string;
-  plan: LogicalPlanNode;
+const SYNTHETIC_RELATION_PREFIX = '_rel_';
+
+function declaredRelationName(node: LogicalPlanNode): string | null {
+  switch (node.type) {
+    case PlanNodeType.SCAN:
+    case PlanNodeType.INDEX_SCAN:
+      return node.alias || node.table;
+    case PlanNodeType.CTE_SCAN:
+      return node.alias;
+    case PlanNodeType.PROJECT:
+      return node.outputAlias || null;
+    case PlanNodeType.FILTER:
+      return declaredRelationName(node.children[0]);
+    default:
+      return null;
+  }
 }
 
 export class JoinReorder extends OptimizationPass {
@@ -37,11 +52,13 @@ export class JoinReorder extends OptimizationPass {
 class JoinReorderRewriter extends PlanRewriter {
   costModel: DefaultCostModel;
   cardEstimator: DefaultCardinalityEstimator;
+  syntheticRelationCount: number;
 
   constructor(costModel: DefaultCostModel, cardEstimator: DefaultCardinalityEstimator) {
     super();
     this.costModel = costModel;
     this.cardEstimator = cardEstimator;
+    this.syntheticRelationCount = 0;
   }
 
   override rewriteJoin(node: LogicalPlanNode): LogicalPlanNode {
@@ -100,13 +117,14 @@ class JoinReorderRewriter extends PlanRewriter {
 
     if (graph.size < 2) return root;
 
-    const result = runDPhyp(graph, this.costModel, this.cardEstimator);
+    const result = enumerateJoinOrder(graph, this.costModel, this.cardEstimator);
     if (!result) return root;
 
     let plan = this.reconstructPlan(result.plan);
 
-    if (nonJoinFilters.length > 0) {
-      plan = LogicalFilter(combineConjuncts(nonJoinFilters), plan);
+    const residualFilters = [...graph.unrepresentedPredicates, ...nonJoinFilters];
+    if (residualFilters.length > 0) {
+      plan = LogicalFilter(combineConjuncts(residualFilters), plan);
     }
 
     return plan;
@@ -117,98 +135,44 @@ class JoinReorderRewriter extends PlanRewriter {
         && (node.joinType === JoinType.INNER || node.joinType === JoinType.CROSS)) {
       this.flattenJoinTree(node.children[0], relations, joinPredicates, nonJoinFilters);
       this.flattenJoinTree(node.children[1], relations, joinPredicates, nonJoinFilters);
-
-      if (node.condition) {
-        const preds = splitConjuncts(node.condition);
-        for (const pred of preds) {
-          const refs = this.collectTableRefs(pred);
-          if (refs.size >= 2) {
-            joinPredicates.push(pred);
-          } else if (refs.size === 1) {
-            nonJoinFilters.push(pred);
-          } else {
-            nonJoinFilters.push(pred);
-          }
-        }
-      }
+      this.classifyPredicates(node.condition, joinPredicates, nonJoinFilters);
       return;
     }
 
     if (node.type === PlanNodeType.FILTER) {
-      const preds = splitConjuncts(node.condition);
       const child = node.children[0];
 
       if (child.type === PlanNodeType.JOIN
           && (child.joinType === JoinType.INNER || child.joinType === JoinType.CROSS)) {
-        for (const pred of preds) {
-          const refs = this.collectTableRefs(pred);
-          if (refs.size >= 2) {
-            joinPredicates.push(pred);
-          } else {
-            nonJoinFilters.push(pred);
-          }
-        }
+        this.classifyPredicates(node.condition, joinPredicates, nonJoinFilters);
         this.flattenJoinTree(child, relations, joinPredicates, nonJoinFilters);
+        return;
+      }
+
+      if (child.type === PlanNodeType.SCAN) {
+        relations.push({ name: child.table, alias: child.alias || child.table, plan: node });
         return;
       }
     }
 
-    if (node.type === PlanNodeType.FILTER && node.children[0].type === PlanNodeType.SCAN) {
-      const scan = node.children[0];
-      relations.push({
-        name: scan.table,
-        alias: scan.alias || scan.table,
-        plan: node,
-      });
-      return;
-    }
-
     if (node.type === PlanNodeType.SCAN) {
-      relations.push({
-        name: node.table,
-        alias: node.alias || node.table,
-        plan: node,
-      });
+      relations.push({ name: node.table, alias: node.alias || node.table, plan: node });
       return;
     }
 
     const alias = this.inferAlias(node);
-    relations.push({
-      name: alias,
-      alias,
-      plan: node,
-    });
+    relations.push({ name: alias, alias, plan: node });
   }
 
-  collectTableRefs(expr: BoundExpr): Set<string> {
-    const refs = new Set<string>();
-    this._walkExpr(expr, (e: BoundExpr) => {
-      if (e.kind === BoundExprKind.COLUMN_REF && e.tableAlias) {
-        refs.add(e.tableAlias.toUpperCase());
-      }
-    });
-    return refs;
-  }
-
-  _walkExpr(expr: BoundExpr | null | undefined, fn: (e: BoundExpr) => void): void {
-    if (!expr) return;
-    fn(expr);
-    switch (expr.kind) {
-      case BoundExprKind.BINARY:
-        this._walkExpr(expr.left, fn);
-        this._walkExpr(expr.right, fn);
-        return;
-      case BoundExprKind.UNARY:
-        this._walkExpr(expr.operand, fn);
-        return;
-      case BoundExprKind.FUNCTION:
-      case BoundExprKind.AGGREGATE:
-        for (const a of expr.args) this._walkExpr(a, fn);
-        return;
+  classifyPredicates(condition: BoundExpr | null, joinPredicates: BoundExpr[], nonJoinFilters: BoundExpr[]): void {
+    if (!condition) return;
+    for (const pred of splitConjuncts(condition)) {
+      if (collectTableRefs(pred).size >= 2) joinPredicates.push(pred);
+      else nonJoinFilters.push(pred);
     }
   }
 
-  reconstructPlan(dpPlan: DPhypPlan | LogicalPlanNode): LogicalPlanNode {
+  reconstructPlan(dpPlan: JoinPlan | LogicalPlanNode): LogicalPlanNode {
     if (!dpPlan) return dpPlan;
     if (dpPlan.type === 'HashJoin') {
       const left = this.reconstructPlan(dpPlan.buildSide);
@@ -219,12 +183,10 @@ class JoinReorderRewriter extends PlanRewriter {
   }
 
   inferAlias(node: LogicalPlanNode): string {
-    if (node.type === PlanNodeType.SCAN || node.type === PlanNodeType.INDEX_SCAN) {
-      if (node.alias) return node.alias;
-      if (node.table) return node.table;
-    }
+    const declared = declaredRelationName(node);
+    if (declared) return declared;
     const scan = this.findFirstScan(node);
-    return scan?.alias || scan?.table || `_rel_${Math.random().toString(36).slice(2, 6)}`;
+    return scan?.alias || scan?.table || `${SYNTHETIC_RELATION_PREFIX}${this.syntheticRelationCount++}`;
   }
 
   findFirstScan(node: LogicalPlanNode | null): LogicalScanNode | null {

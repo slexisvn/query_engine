@@ -1,12 +1,14 @@
 import type { Sink, SourceGenerator } from './execution-types.js';
 
+export type PipelineState = 'PENDING' | 'RUNNING' | 'DONE' | 'FAILED' | 'CANCELLED';
+
 export interface Pipeline {
   id: number;
   sink: Sink;
   source: SourceGenerator | null;
   dependencies: Set<number>;
   dependents: Set<number>;
-  state: 'PENDING' | 'RUNNING' | 'DONE';
+  state: PipelineState;
   cancelled: boolean;
 }
 
@@ -65,10 +67,19 @@ export class PipelineGraph {
     }
   }
 
+  markPipelineFailed(pipelineId: number): void {
+    const pipeline = this.pipelines.get(pipelineId);
+    if (!pipeline) return;
+    pipeline.state = 'FAILED';
+  }
+
   cancelPipeline(pipelineId: number): void {
     const pipeline = this.pipelines.get(pipelineId);
     if (!pipeline || pipeline.cancelled) return;
     pipeline.cancelled = true;
+    if (pipeline.state === 'PENDING' || pipeline.state === 'RUNNING') {
+      pipeline.state = 'CANCELLED';
+    }
   }
 
   isCancelled(pipelineId: number): boolean {

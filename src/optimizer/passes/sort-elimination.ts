@@ -1,7 +1,7 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { PlanNodeType, type LogicalPlanNode, type LogicalSortNode } from '../../planner/logical-plan.js';
-import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
+import { type LogicalPlanNode, type LogicalSortNode } from '../../planner/logical-plan.js';
+import { columnKeyOf, sortDirectionOf, sortKeyMatches } from '../sort-properties.js';
 
 interface RequiredKey { key: string | null; direction: string; }
 
@@ -26,8 +26,8 @@ class SortEliminationRewriter extends PlanRewriter {
     }
 
     const requiredKeys: RequiredKey[] = node.orderKeys.map((ok) => ({
-      key: getColumnKey(ok.expr),
-      direction: ok.direction || 'ASC',
+      key: columnKeyOf(ok.expr),
+      direction: (ok.direction || 'ASC').toUpperCase(),
     }));
 
     if (requiredKeys.some((k) => !k.key)) {
@@ -38,14 +38,10 @@ class SortEliminationRewriter extends PlanRewriter {
     }
 
     const childSorted = child._sortedBy;
-    let match = true;
-    for (let i = 0; i < requiredKeys.length; i++) {
-      if (i >= childSorted.length) { match = false; break; }
-      const sortedEntry = childSorted[i];
-      const sortedKey = typeof sortedEntry === 'object' ? sortedEntry.key : sortedEntry;
-      const sortedDir = typeof sortedEntry === 'object' ? (sortedEntry.direction || 'ASC') : 'ASC';
-      if (!columnMatches(sortedKey, requiredKeys[i].key)) { match = false; break; }
-      if (sortedDir.toUpperCase() !== requiredKeys[i].direction.toUpperCase()) { match = false; break; }
+    let match = requiredKeys.length <= childSorted.length;
+    for (let i = 0; match && i < requiredKeys.length; i++) {
+      if (!sortKeyMatches(childSorted[i], requiredKeys[i].key)) { match = false; break; }
+      if (sortDirectionOf(childSorted[i]) !== requiredKeys[i].direction) { match = false; break; }
     }
 
     if (match) {
@@ -57,20 +53,4 @@ class SortEliminationRewriter extends PlanRewriter {
     }
     return node;
   }
-}
-
-function getColumnKey(expr: BoundExpr): string | null {
-  if (!expr) return null;
-  if (expr.kind === BoundExprKind.COLUMN_REF) {
-    return `${expr.tableAlias || ''}.${expr.columnName}`.toUpperCase();
-  }
-  return null;
-}
-
-function columnMatches(sortedKey: string | null, reqKey: string | null): boolean {
-  if (!sortedKey || !reqKey) return false;
-  if (sortedKey === reqKey) return true;
-  const sortedCol = sortedKey.split('.').pop();
-  const reqCol = reqKey.split('.').pop();
-  return sortedCol === reqCol;
 }

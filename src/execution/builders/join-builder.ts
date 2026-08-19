@@ -1,4 +1,7 @@
-import { JoinType, PhysicalStrategy } from '../../planner/logical-plan.js';
+import type { ExecutionCatalog } from '../execution-catalog.js';
+import { PhysicalNodeType, isPhysicalJoin, type PhysicalJoinNode, type PhysicalPlanNode } from '../physical-plan.js';
+import type { TableStorage } from '../../storage/table-storage.js';
+import { JoinType } from '../../planner/logical-plan.js';
 import type { LogicalJoinNode, LogicalPlanNode } from '../../planner/logical-plan.js';
 import { compileExpression } from '../expression-eval.js';
 import { extractJoinKeys } from '../join-utils.js';
@@ -14,6 +17,8 @@ import {
 } from '../fragment-spec.js';
 import type { Stage, JoinSpec } from '../fragment-spec.js';
 import { Config } from '../../config.js';
+import { isBuildSidePreserved } from '../../optimizer/join-build-side.js';
+import { RowMemoryBudget } from '../memory-budget.js';
 import { combinedMappingOf, registerBufferedChild } from './builder-utils.js';
 import { DataType } from '../../storage/data-type.js';
 import type { BoundExpr } from '../../binder/expression-binder.js';
@@ -29,7 +34,7 @@ import type {
   Sink,
 } from '../execution-types.js';
 
-type SpillManagerLike = ConstructorParameters<typeof HashJoinBuild>[3];
+import type { ChunkSpillStore } from '../../storage/spill-manager/spill-manager.js';
 export type MakeBuildSide = () => HashJoinBuild;
 export type MakeProbeOp = (buildSide: HashJoinBuild) => HashJoinProbe;
 
@@ -43,7 +48,7 @@ interface JoinSideSpec {
 
 export interface JoinSide {
   spec: JoinSideSpec;
-  storage: TableStorageLike | null;
+  storage: TableStorage | null;
   columnIndexes: number[] | null;
 }
 
@@ -77,29 +82,22 @@ interface TempManagerLike {
 }
 
 interface StorageBackendLike {
-  createSpillManager(handle: string): SpillManagerLike;
+  createSpillManager(handle: string): ChunkSpillStore;
 }
 
-interface TableStorageLike {
-  scan(): AsyncGenerator<DataChunk>;
-  getSchema(): ExecSchema;
-}
 
-interface CatalogLike {
-  getTableStorage(table: string): TableStorageLike | null;
-}
 
 interface ExecutorLike {
-  buildPipeline(node: LogicalPlanNode): Promise<CompiledPipeline>;
+  buildPipeline(node: PhysicalPlanNode): Promise<CompiledPipeline>;
   buildSchemaMapping(schema: ExecSchema, alias: string): ColumnMapping;
   resolveProjectedColumnIndexes(storageSchema: ExecSchema, planColumns: ColumnInfo[] | null): number[] | null;
-  catalog: CatalogLike;
+  catalog: ExecutionCatalog;
   tempManager: TempManagerLike;
   storageBackend: StorageBackendLike;
   fragmentPool: FragmentPoolLike | null;
   _estimatePlanRows(node: LogicalPlanNode): number;
   _prepareParallelJoin(
-    node: LogicalJoinNode,
+    physical: PhysicalJoinNode,
     buildInput: CompiledPipeline,
     probeInput: CompiledPipeline,
     buildNode: LogicalPlanNode,
@@ -114,7 +112,7 @@ interface ExecutorLike {
     makeProbeOp: MakeProbeOp,
     buildChunks: DataChunk[],
     probeChunks: DataChunk[],
-    node: LogicalJoinNode,
+    buildPreserved: boolean,
     probeColCount: number,
   ): Promise<DataChunk[]>;
   _executeSubPipeline(compiled: CompiledPipeline): Promise<DataChunk[]>;
@@ -135,15 +133,17 @@ interface JoinBuildCtx {
   markSchema?: ExecSchema | null;
 }
 
-export async function buildJoin(executor: ExecutorLike, node: LogicalJoinNode): Promise<CompiledPipeline> {
-  const left = await executor.buildPipeline(node.children[0]);
-  const right = await executor.buildPipeline(node.children[1]);
+export async function buildJoin(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  if (!isPhysicalJoin(physical)) throw new Error(`Not a join operator: ${physical.type}`);
+  const node = physical.logical as LogicalJoinNode;
+  const left = await executor.buildPipeline(physical.children[0]);
+  const right = await executor.buildPipeline(physical.children[1]);
 
   const isSemiAnti = node.joinType === JoinType.SEMI || node.joinType === JoinType.ANTI;
   const isMark = node.joinType === JoinType.MARK;
   let buildInput: CompiledPipeline, probeInput: CompiledPipeline;
   let buildNode: LogicalPlanNode, probeNode: LogicalPlanNode;
-  if (isSemiAnti || isMark || node._buildSide === 'right') {
+  if (isSemiAnti || isMark || physical.buildSide === 'right') {
     buildInput = right;
     probeInput = left;
     buildNode = node.children[1];
@@ -162,8 +162,7 @@ export async function buildJoin(executor: ExecutorLike, node: LogicalJoinNode): 
     node.condition, buildInput.columnMapping, probeInput.columnMapping
   );
 
-  const buildPreserved = node.joinType === JoinType.FULL
-    || (node.joinType === JoinType.LEFT && buildNode === node.children[0]);
+  const buildPreserved = isBuildSidePreserved(node.joinType, buildNode === node.children[0]);
 
   const conditionEvaluator = residualCondition
     ? compileExpression(residualCondition, combinedMapping)
@@ -179,7 +178,7 @@ export async function buildJoin(executor: ExecutorLike, node: LogicalJoinNode): 
       ? executor.buildSchemaMapping(markSchema!, '')
       : combinedMapping;
 
-  if (node.physicalStrategy === PhysicalStrategy.MERGE) {
+  if (physical.type === PhysicalNodeType.MERGE_JOIN) {
     return buildMergeJoin(node, {
       left, right, buildInput, probeInput,
       buildKeys, probeKeys, conditionEvaluator,
@@ -187,7 +186,7 @@ export async function buildJoin(executor: ExecutorLike, node: LogicalJoinNode): 
     });
   }
 
-  if (node.physicalStrategy === PhysicalStrategy.NESTED_LOOP) {
+  if (physical.type === PhysicalNodeType.NESTED_LOOP_JOIN) {
     return buildNestedLoopJoin(node, {
       left, right, buildInput, probeInput,
       buildKeys, probeKeys, conditionEvaluator,
@@ -200,9 +199,10 @@ export async function buildJoin(executor: ExecutorLike, node: LogicalJoinNode): 
   const makeBuildSide: MakeBuildSide = () => new HashJoinBuild(
     buildKeys.map((k: BoundExpr) => compileExpression(k, buildInput.columnMapping)),
     node.joinType,
-    !!node._dedupeBuild && !conditionEvaluator,
+    physical.dedupeBuild && !conditionEvaluator,
     executor.storageBackend.createSpillManager(joinSpillHandle),
     buildPreserved,
+    physical.runtimeFilterEntries,
   );
   const makeProbeOp: MakeProbeOp = (buildSide: HashJoinBuild) => new HashJoinProbe(
     buildSide,
@@ -257,7 +257,7 @@ export async function buildJoin(executor: ExecutorLike, node: LogicalJoinNode): 
   };
 
   const parallelJoin = executor._prepareParallelJoin(
-    node, buildInput, probeInput, buildNode, probeNode,
+    physical, buildInput, probeInput, buildNode, probeNode,
     buildKeys, probeKeys, residualCondition, combinedMapping
   );
   if (!parallelJoin) return serialCompiled;
@@ -284,13 +284,15 @@ export async function buildJoin(executor: ExecutorLike, node: LogicalJoinNode): 
         const countRows = (chunks: DataChunk[]): number => chunks.reduce((sum: number, c: DataChunk) => sum + c.size, 0);
         const buildRows = countRows(buildChunks);
         const probeRows = countRows(probeChunks);
+        const buildBudget = new RowMemoryBudget();
+        buildBudget.adoptSchema(buildChunks[0]?.columns.map((c) => c.dataType));
         const eligible = buildRows + probeRows >= Config.parallelJoinThreshold
-          && buildRows <= Config.memoryLimit;
+          && buildRows <= buildBudget.rowCapacity;
 
         const emitSerial = async function* (): AsyncGenerator<DataChunk> {
           const bothBuffered = bufferedBuild !== null && bufferedProbe !== null;
           const resultChunks = bothBuffered
-            ? await executor._runBufferedSerialJoin(makeBuildSide, makeProbeOp, buildChunks, probeChunks, node, probeInput.schema.length)
+            ? await executor._runBufferedSerialJoin(makeBuildSide, makeProbeOp, buildChunks, probeChunks, buildPreserved, probeInput.schema.length)
             : await executor._executeSubPipeline(serialCompiled);
           for (const chunk of resultChunks) {
             if (!chunk || chunk.size === 0) continue;
@@ -433,7 +435,7 @@ function buildNestedLoopJoin(node: LogicalJoinNode, ctx: JoinBuildCtx): Compiled
 
 export function prepareParallelJoin(
   executor: ExecutorLike,
-  node: LogicalJoinNode,
+  physical: PhysicalJoinNode,
   buildInput: CompiledPipeline,
   probeInput: CompiledPipeline,
   buildNode: LogicalPlanNode,
@@ -443,6 +445,7 @@ export function prepareParallelJoin(
   residualCondition: BoundExpr | null,
   combinedMapping: ColumnMapping,
 ): ParallelJoinPrep | null {
+  const node = physical.logical;
   if (!executor.fragmentPool) return null;
   if (buildKeys.length === 0 || node.joinType === JoinType.CROSS) return null;
   if (executor._estimatePlanRows(node) < Config.parallelJoinThreshold) return null;
@@ -450,8 +453,7 @@ export function prepareParallelJoin(
   const buildSide = prepareJoinSide(executor, buildNode, buildInput);
   const probeSide = prepareJoinSide(executor, probeNode, probeInput);
 
-  const buildPreserved = node.joinType === JoinType.FULL
-    || (node.joinType === JoinType.LEFT && buildNode === node.children[0]);
+  const buildPreserved = isBuildSidePreserved(node.joinType, buildNode === node.children[0]);
 
   const spec = buildJoinSpec({
     build: buildSide.spec,
@@ -461,7 +463,7 @@ export function prepareParallelJoin(
     residualCondition,
     joinType: node.joinType,
     buildPreserved,
-    uniqueKeys: !!node._dedupeBuild && !residualCondition,
+    uniqueKeys: physical.dedupeBuild && !residualCondition,
     buildMapping: buildInput.columnMapping,
     probeMapping: probeInput.columnMapping,
     combinedMapping,
@@ -505,7 +507,7 @@ export async function runBufferedSerialJoin(
   makeProbeOp: MakeProbeOp,
   buildChunks: DataChunk[],
   probeChunks: DataChunk[],
-  node: LogicalJoinNode,
+  buildPreserved: boolean,
   probeColCount: number,
 ): Promise<DataChunk[]> {
   const buildSide = makeBuildSide();
@@ -518,7 +520,7 @@ export async function runBufferedSerialJoin(
     const result = await probeOp.process(chunk);
     if (result && result.size > 0) out.push(result);
   }
-  if (node.joinType === JoinType.LEFT || node.joinType === JoinType.FULL) {
+  if (buildPreserved) {
     const unmatchedRows = buildSide.emitUnmatched(probeColCount);
     if (unmatchedRows.length > 0) out.push(probeOp.buildOutputChunk(unmatchedRows));
   }

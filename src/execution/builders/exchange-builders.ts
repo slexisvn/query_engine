@@ -1,3 +1,4 @@
+import type { PhysicalPlanNode } from '../physical-plan.js';
 import { compileExpression } from '../expression-eval.js';
 import type { DataChunk } from '../../storage/chunk.js';
 import type { PipelineGraph } from '../pipeline.js';
@@ -25,7 +26,7 @@ interface MergeExchangeConfig {
   channelId: string;
 }
 
-interface DistributedContextLike {
+export interface DistributedExecutionContext {
   role: string;
   getExchangeConfig(node: LogicalExchangeNode): ExchangeConfig;
   getMergeExchangeConfig(node: LogicalMergeExchangeNode): MergeExchangeConfig;
@@ -35,15 +36,15 @@ interface DistributedExchangeNode extends LogicalExchangeNode {
   _targetNodes?: string[];
 }
 
-interface ChunkReceiverLike {
+export interface ChunkReceiver {
   generate(): AsyncGenerator<DataChunk>;
   cleanup(): void;
 }
 
 interface ExecutorLike {
-  buildPipeline(node: LogicalPlanNode): Promise<CompiledPipeline>;
-  _distributedContext: DistributedContextLike | null;
-  _exchangeReceivers: Map<number, ChunkReceiverLike> | null;
+  buildPipeline(node: PhysicalPlanNode): Promise<CompiledPipeline>;
+  _distributedContext: DistributedExecutionContext | null;
+  _exchangeReceivers: Map<number, ChunkReceiver> | null;
 }
 
 function buildKeyExtractors(partitionKeys: BoundExpr[] | null, columnMapping: ColumnMapping): KeyExtractor[] {
@@ -54,8 +55,9 @@ function buildKeyExtractors(partitionKeys: BoundExpr[] | null, columnMapping: Co
   }) as KeyExtractor[];
 }
 
-export async function buildExchange(executor: ExecutorLike, node: LogicalExchangeNode): Promise<CompiledPipeline> {
-  const child = await executor.buildPipeline(node.children[0]);
+export async function buildExchange(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalExchangeNode;
+  const child = await executor.buildPipeline(physical.children[0]);
 
   if (executor._distributedContext) {
     const { transport, sourceNodes, channelId, exchangeType } = executor._distributedContext.getExchangeConfig(node);
@@ -119,8 +121,9 @@ export async function buildExchange(executor: ExecutorLike, node: LogicalExchang
   };
 }
 
-export async function buildMergeExchange(executor: ExecutorLike, node: LogicalMergeExchangeNode): Promise<CompiledPipeline> {
-  const child = await executor.buildPipeline(node.children[0]);
+export async function buildMergeExchange(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalMergeExchangeNode;
+  const child = await executor.buildPipeline(physical.children[0]);
 
   if (executor._distributedContext) {
     const { transport, sourceNodes, channelId } = executor._distributedContext.getMergeExchangeConfig(node);
@@ -157,11 +160,12 @@ export async function buildMergeExchange(executor: ExecutorLike, node: LogicalMe
   };
 }
 
-export async function buildExchangeReceive(executor: ExecutorLike, node: LogicalExchangeReceiveNode): Promise<CompiledPipeline> {
+export async function buildExchangeReceive(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalExchangeReceiveNode;
   const receivers = executor._exchangeReceivers;
   const fragmentIds = node.sourceFragmentIds || [];
 
-  const matchingReceivers: ChunkReceiverLike[] = [];
+  const matchingReceivers: ChunkReceiver[] = [];
   if (receivers) {
     for (const fid of fragmentIds) {
       const receiver = receivers.get(fid);

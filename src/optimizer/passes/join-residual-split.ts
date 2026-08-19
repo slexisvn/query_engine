@@ -3,7 +3,7 @@ import { JoinType, LogicalFilter, LogicalJoin, type LogicalPlanNode, type Logica
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
 import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
-import { walkExpr } from './expr-walk.js';
+import { walkExpr } from '../expr-walk.js';
 import { collectPlanRefs, refBelongsToPlan, type PlanRefs, type ExprRef } from './plan-refs.js';
 
 type MetadataValue = string | number | boolean | object | null | undefined;
@@ -39,7 +39,6 @@ class JoinResidualSplitRewriter extends PlanRewriter {
       combineConjuncts(joinPreds),
       rewritten.children[0],
       rewritten.children[1],
-      rewritten.physicalStrategy,
     );
     return LogicalFilter(combineConjuncts(residualPreds), copyJoinMetadata(join, rewritten));
   }

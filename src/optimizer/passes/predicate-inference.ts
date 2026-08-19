@@ -3,7 +3,7 @@ import { PlanNodeType, JoinType, LogicalFilter, getChildren, setChildren, type L
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { BoundExprKind, BoundBinary, BoundLiteral, BoundInList, type BoundExpr, type LiteralValue } from '../../binder/expression-binder.js';
 import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
-import { walkExpr } from './expr-walk.js';
+import { walkExpr } from '../expr-walk.js';
 
 interface RangeBound { op: string; literal: BoundExpr; }
 

@@ -1,5 +1,5 @@
 import type { DataChunk } from '../chunk.js';
-import type { PageStore } from '../buffer-pool.js';
+import type { PageStore } from '../page-cache.js';
 
 export class MemoryPageStore implements PageStore {
   pages: Map<string, DataChunk>;

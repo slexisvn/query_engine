@@ -1,31 +1,27 @@
-import { DataChunk } from '../../storage/chunk.js';
-import type { DataType } from '../../storage/data-type.js';
-import { dedupProcess, dedupConsume, dedupFinalize, type DedupTarget } from './dedup-core.js';
+import { ChunkDeduplicator } from './chunk-deduplicator.js';
+import type { DataChunk } from '../../storage/chunk.js';
+import type { ChunkSpillStore } from '../../storage/spill-manager/spill-manager.js';
 
 export class UnionOperator {
   isAll: boolean;
-  seen: Set<string> | null;
-  schema: DataType[] | null;
-  _legacyChunks!: DataChunk[];
+  deduplicator: ChunkDeduplicator;
 
-  constructor(isAll: boolean) {
+  constructor(isAll: boolean, spillStore: ChunkSpillStore | null = null) {
     this.isAll = isAll;
-    this.seen = isAll ? null : new Set();
-    this.schema = null;
+    this.deduplicator = new ChunkDeduplicator(spillStore);
   }
 
   async init(): Promise<void> {}
 
   async process(chunk: DataChunk): Promise<DataChunk> {
-    if (this.isAll) return chunk;
-    return dedupProcess(this as unknown as DedupTarget, chunk);
+    return this.isAll ? chunk : this.deduplicator.filter(chunk);
   }
 
   async consume(chunk: DataChunk): Promise<void> {
-    await dedupConsume(this as unknown as DedupTarget, await this.process(chunk));
+    await this.deduplicator.buffer(await this.process(chunk));
   }
 
-  async finalize(): Promise<DataChunk[]> {
-    return dedupFinalize(this as unknown as DedupTarget);
+  finalize(): AsyncGenerator<DataChunk> {
+    return this.deduplicator.drain();
   }
 }

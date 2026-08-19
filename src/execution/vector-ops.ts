@@ -8,6 +8,7 @@ import { DataType } from '../storage/data-type.js';
 import type { ColumnValue } from '../storage/data-type.js';
 import type { EvalValue, CompiledExpr, ColumnMapping } from './execution-types.js';
 import { resolveColumnIndex as resolveColIdx } from './column-resolve.js';
+import { binaryValueOp, unaryValueOp } from './value-ops.js';
 
 interface VectorResult {
   ref?: boolean;
@@ -48,19 +49,7 @@ export function compileVectorExpression(expr: BoundExpr | null, columnMapping: C
 
     case BoundExprKind.UNARY: {
       const operandFn = compileVectorExpression(expr.operand, columnMapping);
-      if (expr.op === '-') {
-        return (chunk: DataChunk) => {
-          const operand = operandFn!(chunk);
-          return vectorUnaryMinus(operand, chunk);
-        };
-      }
-      if (expr.op === 'NOT') {
-        return (chunk: DataChunk) => {
-          const operand = operandFn!(chunk);
-          return vectorUnaryNot(operand, chunk);
-        };
-      }
-      return operandFn;
+      return compileVectorUnaryOp(expr.op, operandFn) ?? operandFn;
     }
 
     default:
@@ -187,14 +176,33 @@ function createEvalColumn(chunk: DataChunk, evalFn: CompiledExpr, dataType: Data
 }
 
 
+function materialize(result: VectorResult | null, chunk: DataChunk): EvalValue[] {
+  const values: EvalValue[] = new Array(chunk.size);
+  for (let i = 0; i < chunk.size; i++) values[i] = vectorGet(result, chunk, i);
+  return values;
+}
+
 function compileVectorBinaryOp(op: string, leftFn: VectorFn | null, rightFn: VectorFn | null): VectorFn | null {
-  return null;
+  const apply = binaryValueOp(op);
+  if (!apply || !leftFn || !rightFn) return null;
+
+  return (chunk: DataChunk) => {
+    const left = materialize(leftFn(chunk), chunk);
+    const right = materialize(rightFn(chunk), chunk);
+    const data: EvalValue[] = new Array(chunk.size);
+    for (let i = 0; i < chunk.size; i++) data[i] = apply(left[i], right[i]);
+    return { ref: false, data, size: chunk.size };
+  };
 }
 
-function vectorUnaryMinus(operand: VectorResult | null, chunk: DataChunk): VectorResult | null {
-  return null;
-}
+function compileVectorUnaryOp(op: string, operandFn: VectorFn | null): VectorFn | null {
+  const apply = unaryValueOp(op);
+  if (!apply || !operandFn) return null;
 
-function vectorUnaryNot(operand: VectorResult | null, chunk: DataChunk): VectorResult | null {
-  return null;
+  return (chunk: DataChunk) => {
+    const operand = materialize(operandFn(chunk), chunk);
+    const data: EvalValue[] = new Array(chunk.size);
+    for (let i = 0; i < chunk.size; i++) data[i] = apply(operand[i]);
+    return { ref: false, data, size: chunk.size };
+  };
 }

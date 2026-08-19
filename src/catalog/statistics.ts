@@ -1,4 +1,4 @@
-import { DataType, type ColumnValue, type ColumnSchema } from '../storage/data-type.js';
+import { DataType, toNumericValue, type ColumnValue, type ColumnSchema } from '../storage/data-type.js';
 
 const HISTOGRAM_BUCKETS = 64;
 const MCV_COUNT = 10;
@@ -17,6 +17,38 @@ export interface ColumnStatisticsInit {
   mcv?: Mcv | null;
   avgWidth?: number;
   avgLength?: number | null;
+}
+
+export interface HistogramLike {
+  numBuckets: number;
+  totalCount: number | null;
+  boundaries: ColumnValue[];
+  bucketCounts: number[] | null;
+  bucketDistincts: number[] | null;
+  estimateLessThan(value: ColumnValue): number;
+  estimateRange(low: ColumnValue, high: ColumnValue): number;
+}
+
+export interface ColumnStats {
+  ndv?: number;
+  nullFraction?: number;
+  avgLength?: number | null;
+  min?: ColumnValue;
+  max?: ColumnValue;
+  mcv?: Mcv | null;
+  histogram?: HistogramLike | null;
+}
+
+export interface TableStats {
+  rowCount: number;
+  columnStats?: Map<string, ColumnStats>;
+  getColumnStats?(columnName: string): ColumnStats | null;
+  getCorrelation?(colA: string, colB: string): number | null;
+}
+
+export interface StatsProvider {
+  get(key: string): TableStats | undefined;
+  values(): IterableIterator<TableStats>;
 }
 
 export interface HistogramBucketInfo {
@@ -114,26 +146,26 @@ export class EquiDepthHistogram {
 
   estimateLessThan(value: ColumnValue): number {
     if (this.numBuckets === 0) return 0.5;
-    const numVal = toNum(value);
+    const numVal = toNumericValue(value);
     if (numVal === null) return 0.5;
 
     let lo = 0, hi = this.numBuckets - 1;
     while (lo <= hi) {
       const mid = (lo + hi) >>> 1;
-      if (toNum(this.boundaries[mid])! < numVal) lo = mid + 1;
+      if (toNumericValue(this.boundaries[mid])! < numVal) lo = mid + 1;
       else hi = mid - 1;
     }
 
     if (lo >= this.numBuckets) return 1.0;
     if (lo === 0) {
-      const bucketMax = toNum(this.boundaries[0])!;
-      const bucketMin = this.numBuckets > 0 ? toNum(this.boundaries[0])! : bucketMax;
+      const bucketMax = toNumericValue(this.boundaries[0])!;
+      const bucketMin = this.numBuckets > 0 ? toNumericValue(this.boundaries[0])! : bucketMax;
       const frac = bucketMax > 0 ? Math.max(0, numVal) / bucketMax : 0.5;
       return Math.max(0, Math.min(1, frac / this.numBuckets));
     }
 
-    const bucketMin = toNum(this.boundaries[lo - 1])!;
-    const bucketMax = toNum(this.boundaries[lo])!;
+    const bucketMin = toNumericValue(this.boundaries[lo - 1])!;
+    const bucketMax = toNumericValue(this.boundaries[lo])!;
     const range = bucketMax - bucketMin;
     const frac = range > 0 ? (numVal - bucketMin) / range : 0.5;
     return Math.max(0, Math.min(1, (lo + Math.max(0, Math.min(1, frac))) / this.numBuckets));
@@ -255,7 +287,7 @@ export class StatisticsCollector {
     for (let j = 0; j < sorted.length; j++) {
       const b = bucketOf(j);
       bucketCounts[b]++;
-      if (j === 0 || bucketOf(j - 1) !== b || toNum(sorted[j]) !== toNum(sorted[j - 1])) {
+      if (j === 0 || bucketOf(j - 1) !== b || toNumericValue(sorted[j]) !== toNumericValue(sorted[j - 1])) {
         bucketDistincts[b]++;
       }
     }
@@ -366,9 +398,3 @@ function pearsonCorrelation(xs: number[], ys: number[]): number {
   return denom > 0 ? cov / denom : 0;
 }
 
-function toNum(v: ColumnValue): number | null {
-  if (v === null || v === undefined) return null;
-  if (typeof v === 'bigint') return Number(v);
-  if (typeof v === 'number') return v;
-  return null;
-}

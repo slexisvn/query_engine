@@ -6,34 +6,19 @@ import { NodeKind } from '../parser/ast.js';
 import { DataType } from '../storage/data-type.js';
 import { Column } from '../storage/column.js';
 import { Table } from '../storage/table.js';
+import { isPagedTableStorage } from '../storage/table-storage.js';
 import { Optimizer } from '../optimizer/optimizer.js';
-import { SubqueryUnnesting } from '../optimizer/passes/subquery-unnesting.js';
-import { CTEOptimization } from '../optimizer/passes/cte-optimization.js';
-import { PredicatePushdown } from '../optimizer/passes/predicate-pushdown.js';
-import { ProjectionPushdown } from '../optimizer/passes/projection-pushdown.js';
-import { JoinReorder } from '../optimizer/passes/join-reorder.js';
-import { PhysicalDesign } from '../optimizer/passes/physical-design.js';
+import { createDefaultOptimizer } from '../optimizer/optimizer-pipeline.js';
 import { QueryExecutor } from '../execution/query-executor.js';
+import { PhysicalPlanner } from '../execution/physical-planner.js';
 import { QueryResult } from '../execution/query-result.js';
 import { StatisticsCollector } from '../catalog/statistics.js';
-import { ExpressionSimplifier } from '../optimizer/passes/expression-simplifier.js';
-import { OuterToInnerJoin } from '../optimizer/passes/outer-to-inner.js';
-import { LimitPushdown } from '../optimizer/passes/limit-pushdown.js';
-import { HavingPushdown } from '../optimizer/passes/having-pushdown.js';
-import { EmptyPropagation } from '../optimizer/passes/empty-propagation.js';
-import { NodeMerge } from '../optimizer/passes/node-merge.js';
-import { PredicateInference } from '../optimizer/passes/predicate-inference.js';
-import { SortElimination } from '../optimizer/passes/sort-elimination.js';
-import { JoinElimination } from '../optimizer/passes/join-elimination.js';
-import { PredicateDedup } from '../optimizer/passes/predicate-dedup.js';
-import { JoinResidualSplit } from '../optimizer/passes/join-residual-split.js';
-import { TopNFusion } from '../optimizer/passes/topn-fusion.js';
-import { IndexSelection } from '../optimizer/passes/index-selection.js';
 import { BTreeIndex } from '../storage/btree.js';
-import { FilterOrdering } from '../optimizer/passes/filter-ordering.js';
-import { AggregatePushdown } from '../optimizer/passes/aggregate-pushdown.js';
 import { StatisticsCache } from '../catalog/statistics-cache.js';
+import { LRUCache } from '../utils/lru-cache.js';
+import { Config } from '../config.js';
 import { LogicalScan } from '../planner/logical-plan.js';
+import { PLAN_PROPERTIES_PASS } from '../optimizer/passes/plan-properties.js';
 import type { LogicalPlanNode } from '../planner/logical-plan.js';
 import { DataFrame } from '../dataframe/dataframe.js';
 import { DFSchema } from '../dataframe/schema.js';
@@ -47,6 +32,11 @@ import type { DataChunk } from '../storage/chunk.js';
 import type { TableStatistics } from '../catalog/statistics.js';
 import type { OptimizationPass } from '../optimizer/pass.js';
 import type { Transport } from '../distributed/transport/transport.js';
+import type { NodeDescriptor, NodeRoleValue } from '../distributed/cluster/node-descriptor.js';
+import type { ClusterManager } from '../distributed/cluster/cluster-manager.js';
+import type { PartitionMap } from '../distributed/partition/partition-map.js';
+import type { QueryCoordinator } from '../distributed/execution/coordinator.js';
+import type { NodeCapacity, NodeId } from '../distributed/distributed-types.js';
 
 export type QueryParam = LiteralValue;
 
@@ -94,20 +84,20 @@ interface SqlOptions {
 }
 
 interface DistributedClusterConfig {
-  nodeId?: string;
+  nodeId?: NodeId;
   host?: string;
   port?: number;
-  role?: string;
-  capacity?: number;
+  role?: NodeRoleValue;
+  capacity?: NodeCapacity;
   transport?: Transport;
 }
 
 interface DistributedContext {
-  clusterManager: object;
-  partitionMap: object;
+  clusterManager: ClusterManager;
+  partitionMap: PartitionMap;
   transport: Transport;
-  coordinator: object;
-  localNode: { port: number };
+  coordinator: QueryCoordinator;
+  localNode: NodeDescriptor;
 }
 
 interface DistributedPassEntry {
@@ -159,6 +149,10 @@ export function setDefaultStorageBackend(factory: StorageBackendFactory): void {
   _defaultBackendFactory = factory;
 }
 
+function serializeParams(params: readonly QueryParam[]): string {
+  return params.map(param => (typeof param === 'bigint' ? `${param}n` : JSON.stringify(param))).join('\u0001');
+}
+
 function coerceForStorage(value: ColumnValue, dataType: DataType): ColumnValue {
   if (value === null || value === undefined) return null;
   const wantsBigInt = dataType === DataType.INT64 || dataType === DataType.DECIMAL || dataType === DataType.TIMESTAMP;
@@ -185,6 +179,7 @@ export class QueryEngine {
   _statsCollected?: boolean;
   _distributedPasses?: DistributedPassEntry[];
   _activeCancel?: AbortController | null;
+  planCache: LRUCache<string, CompiledQuery>;
   workerPool?: WorkerPoolLike | null;
   fragmentPool?: FragmentPoolLike | null;
   parallelEnabled?: boolean;
@@ -206,7 +201,9 @@ export class QueryEngine {
 
     this.precomputedStats = options.statistics || null;
     this.statsCache = new StatisticsCache(catalog);
+    this.planCache = new LRUCache(Config.planCacheEntries);
     this.optimizer = this.createOptimizer(this.precomputedStats);
+    this.executor.setPhysicalPlanner(new PhysicalPlanner(this.precomputedStats ?? new Map()));
   }
 
   _nextDfId(): number {
@@ -224,38 +221,7 @@ export class QueryEngine {
   }
 
   createOptimizer(statistics: StatisticsMap | null): Optimizer {
-    const statsMap = statistics || new Map<string, TableStatistics>();
-    const optimizer = new Optimizer();
-    optimizer.registerPass(new ExpressionSimplifier());
-    optimizer.registerPass(new SubqueryUnnesting());
-    optimizer.registerPass(new HavingPushdown());
-    optimizer.registerPass(new CTEOptimization());
-    optimizer.registerPass(new PredicatePushdown());
-    optimizer.registerPass(new PredicateInference());
-    optimizer.registerPass(new PredicatePushdown());
-    optimizer.registerPass(new OuterToInnerJoin());
-    optimizer.registerPass(new PredicatePushdown());
-    optimizer.registerPass(new AggregatePushdown());
-
-    if (statistics) {
-      optimizer.registerPass(new JoinReorder(statistics as ConstructorParameters<typeof JoinReorder>[0]));
-      optimizer.registerPass(new PredicatePushdown());
-    }
-
-    optimizer.registerPass(new JoinElimination());
-    optimizer.registerPass(new ProjectionPushdown());
-    optimizer.registerPass(new LimitPushdown());
-    optimizer.registerPass(new EmptyPropagation());
-    optimizer.registerPass(new NodeMerge());
-    optimizer.registerPass(new PredicateDedup());
-    optimizer.registerPass(new FilterOrdering(statsMap));
-    optimizer.registerPass(new IndexSelection(this.catalog, statistics as ConstructorParameters<typeof IndexSelection>[1]));
-    optimizer.registerPass(new JoinResidualSplit());
-    optimizer.registerPass(new PhysicalDesign(statsMap as ConstructorParameters<typeof PhysicalDesign>[0]));
-    optimizer.registerPass(new SortElimination());
-    optimizer.registerPass(new TopNFusion());
-
-    return optimizer;
+    return createDefaultOptimizer({ catalog: this.catalog, statistics });
   }
 
   parseSQL(sql: string): Statement {
@@ -275,7 +241,25 @@ export class QueryEngine {
     return this.optimizer.optimize(logicalPlan);
   }
 
+  planCacheKey(sql: string, params: readonly QueryParam[]): string | null {
+    if (this.distributed) return null;
+    return `${this.catalog.version}\u0000${this._statsCollected ? 1 : 0}\u0000${sql}\u0000${serializeParams(params)}`;
+  }
+
   async compile(sql: string, params: readonly QueryParam[] = []): Promise<CompileResult> {
+    await this._ensureStatistics();
+    const cacheKey = this.planCacheKey(sql, params);
+    const cached = cacheKey === null ? undefined : this.planCache.get(cacheKey);
+    if (cached) return cached;
+
+    const compiled = await this.compileUncached(sql, params);
+    if (cacheKey !== null && compiled.plan && !compiled.isExplain) {
+      this.planCache.set(cacheKey, compiled);
+    }
+    return compiled;
+  }
+
+  async compileUncached(sql: string, params: readonly QueryParam[] = []): Promise<CompileResult> {
     const ast = this.parseSQL(sql);
     let isExplain = false;
     let isAnalyze = false;
@@ -323,6 +307,7 @@ export class QueryEngine {
       const collected = await this.collectStatistics();
       if (collected) {
         this.optimizer = this.createOptimizer(collected);
+        this.executor.setPhysicalPlanner(new PhysicalPlanner(collected));
         this._statsCollected = true;
         if (this._distributedPasses) {
           this._applyDistributedPasses(this.optimizer, this._distributedPasses);
@@ -340,11 +325,11 @@ export class QueryEngine {
   }
 
   createDataFrame(rows: Record<string, ColumnValue>[] | ColumnValue[][], declaredSchema: ColumnSchema[] | null = null): DataFrame {
-    const relation = InMemoryRelation.fromRows(rows, declaredSchema as Parameters<typeof InMemoryRelation.fromRows>[1]);
+    const relation = InMemoryRelation.fromRows(rows, declaredSchema);
     const name = `${DATAFRAME_TABLE_PREFIX}${this._nextDfId()}`;
     const storageSchema: ColumnSchema[] = relation.getSchema();
     this.catalog.registerTable(name, storageSchema);
-    this.catalog.registerTableStorage(name, relation as object as Table);
+    this.catalog.registerTableStorage(name, relation);
     const plan = LogicalScan(name, storageSchema, name);
     const schema = DFSchema.fromStorageSchema(storageSchema, name);
     return new DataFrame(this, plan, schema);
@@ -378,12 +363,16 @@ export class QueryEngine {
       index: i,
       tableAlias: '',
     })));
-    return new DataFrame(this, logicalPlan, schema, cteMap as ConstructorParameters<typeof DataFrame>[3]);
+    return new DataFrame(this, logicalPlan, schema, cteMap);
   }
 
   async _formatPlan(plan: LogicalPlanNode): Promise<string> {
     const { formatPlan } = await import('../planner/plan-formatter.js');
-    return formatPlan(plan);
+    const { physicalPlanToString } = await import('../execution/physical-plan.js');
+    const physical = this.executor.physicalPlanner.plan(plan);
+    return `${formatPlan(plan)}
+Physical Plan:
+${physicalPlanToString(physical)}`;
   }
 
   async _explainPlanResult(plan: LogicalPlanNode): Promise<RunRowsResult> {
@@ -583,7 +572,7 @@ export class QueryEngine {
       if (!tableDef.primaryKey || tableDef.primaryKey.length === 0) continue;
 
       const storage = this.catalog.getTableStorage(tableName);
-      if (!storage) continue;
+      if (!storage || !isPagedTableStorage(storage)) continue;
 
       for (const pkCol of tableDef.primaryKey) {
         const colIdx = tableDef.columns.findIndex((c: ColumnSchema) => c.name.toUpperCase() === pkCol.toUpperCase());
@@ -595,7 +584,8 @@ export class QueryEngine {
         await storage.flush();
         for (let p = 0; p < storage.pageIds.length; p++) {
           const pageId = storage.pageIds[p];
-          const chunk = (await storage.bufferPool.fetchPage(pageId, true)) as DataChunk;
+          const chunk = await storage.pageCache.fetchPage(pageId, true);
+          if (!chunk) continue;
           for (let r = 0; r < chunk.size; r++) {
             const key = chunk.columns[colIdx].get(r);
             if (key !== null && key !== undefined) {
@@ -651,7 +641,7 @@ export class QueryEngine {
 
       const { globalDispatch } = await import('../wasm/dispatch.js');
       const { ParallelDispatch } = await import('../parallel/parallel-dispatch.js');
-      const parallelDispatch = new ParallelDispatch(pool as ConstructorParameters<typeof ParallelDispatch>[0], regionAllocator, globalDispatch);
+      const parallelDispatch = new ParallelDispatch(pool, regionAllocator, globalDispatch);
 
       const { FragmentPool } = await import('../parallel/fragment-pool.js');
       const fragmentPool = new FragmentPool(Config.parallelWorkers, Config.aggMorselRows);
@@ -667,7 +657,7 @@ export class QueryEngine {
     }
   }
 
-  async enableDistributed(clusterConfig: DistributedClusterConfig = {}): Promise<object> {
+  async enableDistributed(clusterConfig: DistributedClusterConfig = {}): Promise<QueryCoordinator> {
     const { NodeDescriptor, NodeRole } = await import('../distributed/cluster/node-descriptor.js');
     const { ClusterManager } = await import('../distributed/cluster/cluster-manager.js');
     const { PartitionMap } = await import('../distributed/partition/partition-map.js');
@@ -682,14 +672,14 @@ export class QueryEngine {
       port: clusterConfig.port || 9400,
       role: clusterConfig.role || NodeRole.HYBRID,
       capacity: clusterConfig.capacity,
-    } as ConstructorParameters<typeof NodeDescriptor>[0]);
+    });
 
     const clusterManager = new ClusterManager(localNode);
     const partitionMap = new PartitionMap();
     const statsMap = this.precomputedStats || new Map();
 
     const makeDistributedPasses = (): DistributedPassEntry[] => [
-      { method: 'insertPassAfter', args: ['PhysicalDesign', new DistributionAwareJoin(partitionMap, statsMap)] },
+      { method: 'insertPassAfter', args: [PLAN_PROPERTIES_PASS, new DistributionAwareJoin(partitionMap, statsMap)] },
       { method: 'registerPass', args: [new PartialAggregatePass()] },
       { method: 'registerPass', args: [new DistributedSortPass()] },
     ];

@@ -2,6 +2,7 @@ import { DataChunk } from '../../storage/chunk.js';
 import { Column } from '../../storage/column.js';
 import type { DataType, ColumnValue } from '../../storage/data-type.js';
 import type { BoundExpr, BoundWindowNode, BoundLiteralNode } from '../../binder/expression-binder.js';
+import { encodeCompositeKey } from '../composite-key.js';
 import type { CompiledExpr, ColumnMapping, ExecSchema, ExecColumn, EvalValue } from '../execution-types.js';
 
 type CompileExpressionFn = (expr: BoundExpr, mapping: ColumnMapping) => CompiledExpr;
@@ -318,10 +319,7 @@ export class WindowOperator {
 
     const groups = new Map<string, number[]>();
     for (let i = 0; i < allRows.length; i++) {
-      const key = partitionEvals.map((e) => {
-        const v = getVal(i, e);
-        return typeof v === 'bigint' ? Number(v) : v;
-      }).join('|');
+      const key = encodeCompositeKey(partitionEvals.map((e) => getVal(i, e)));
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(i);
     }

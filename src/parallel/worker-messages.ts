@@ -154,6 +154,16 @@ export type WorkerResultData =
   | PipelineAggregatesResult
   | ProjectResult;
 
+export interface WorkerResultForTask {
+  [WorkerTaskType.FILTER]: SelectionVectorResult;
+  [WorkerTaskType.AGGREGATE]: ScalarAggregateResult;
+  [WorkerTaskType.FILTER_COMPOUND]: SelectionVectorResult;
+  [WorkerTaskType.PIPELINE]: SelectionVectorResult & PipelineAggregatesResult;
+  [WorkerTaskType.PROJECT]: ProjectResult;
+}
+
+export type TaskOfType<T extends WorkerTaskType> = Extract<WorkerTask, { type: T }>;
+
 export interface WorkerReadyMessage {
   type: 'ready';
   workerId: number;

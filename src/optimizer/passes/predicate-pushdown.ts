@@ -2,7 +2,7 @@ import { OptimizationPass } from '../pass.js';
 import { PlanNodeType, JoinType, LogicalFilter, LogicalJoin, setChildren, type LogicalPlanNode, type LogicalJoinNode, type LogicalProjectNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { BoundExprKind, type BoundExpr, type BoundBinaryNode } from '../../binder/expression-binder.js';
-import { walkExpr, containsAggregate } from './expr-walk.js';
+import { walkExpr, containsAggregate } from '../expr-walk.js';
 import { collectPlanRefs, refBelongsToPlan, type ExprRef } from './plan-refs.js';
 
 type MetadataValue = string | number | boolean | object | null | undefined;

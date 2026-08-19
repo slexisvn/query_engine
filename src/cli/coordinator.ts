@@ -68,7 +68,7 @@ async function main(): Promise<void> {
   }) as QueryCoordinator;
 
   for (const tableName of engine.catalog.listTables()) {
-    (engine.distributed!.partitionMap as PartitionMap).registerTable(tableName, new RoundRobinPartitionStrategy() as Parameters<PartitionMap['registerTable']>[1], 1, new Map());
+    engine.distributed!.partitionMap.registerTable(tableName, new RoundRobinPartitionStrategy() as Parameters<PartitionMap['registerTable']>[1], 1, new Map());
   }
 
   const partitionPlacements = new Map<string, Map<number, NodeId[]>>();

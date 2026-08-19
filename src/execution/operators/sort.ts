@@ -1,7 +1,9 @@
+import type { ChunkSpillStore } from '../../storage/spill-manager/spill-manager.js';
 import { Column } from '../../storage/column.js';
 import { DataChunk } from '../../storage/chunk.js';
 import { PriorityQueue } from '../../utils/priority-queue.js';
 import { Config } from '../../config.js';
+import { RowMemoryBudget } from '../memory-budget.js';
 import type { ColumnValue, DataType } from '../../storage/data-type.js';
 import type { CompiledExpr } from '../execution-types.js';
 import { materializeActiveRow } from './join-core.js';
@@ -23,12 +25,6 @@ interface MergeState {
   chunkItems: SortRow[];
 }
 
-interface SpillManagerLike {
-  appendChunk(id: string, chunk: DataChunk | null): Promise<void>;
-  readChunks(id: string): AsyncGenerator<DataChunk>;
-  clearAll(): Promise<void>;
-}
-
 export class SortOperator {
   keyExtractors: SortKey[];
   limit: number | null;
@@ -36,10 +32,11 @@ export class SortOperator {
   topN: number | null;
   rows: SortRow[];
   schema: DataType[] | null;
-  spillManager: SpillManagerLike;
+  spillManager: ChunkSpillStore;
   runCount: number;
+  memoryBudget: RowMemoryBudget;
 
-  constructor(keyExtractors: SortKey[], limit: number | null, offset: number, spillManager: SpillManagerLike) {
+  constructor(keyExtractors: SortKey[], limit: number | null, offset: number, spillManager: ChunkSpillStore) {
     this.keyExtractors = keyExtractors;
     this.limit = limit ?? null;
     this.offset = offset || 0;
@@ -49,6 +46,7 @@ export class SortOperator {
 
     this.spillManager = spillManager;
     this.runCount = 0;
+    this.memoryBudget = new RowMemoryBudget();
   }
 
   async init(): Promise<void> {}
@@ -56,6 +54,7 @@ export class SortOperator {
   async consume(chunk: DataChunk): Promise<void> {
     if (!this.schema) {
       this.schema = chunk.columns.map((c) => c.dataType);
+      this.memoryBudget.adoptSchema(this.schema);
     }
 
     const chunkRows: SortRow[] = new Array(chunk.size);
@@ -69,14 +68,17 @@ export class SortOperator {
       chunkRows[i] = { row, sortKeys };
     }
 
-    this.rows.push(...chunkRows);
+    for (const row of chunkRows) this.rows.push(row);
+    this.memoryBudget.admit(chunkRows.length);
 
     if (this.topN && this.runCount === 0 && this.rows.length > this.topN * 4) {
       this.rows.sort((a, b) => this.compareRows(a, b));
       this.rows.length = this.topN;
+      this.memoryBudget.reset();
+      this.memoryBudget.admit(this.rows.length);
     }
 
-    if (this.rows.length >= Config.memoryLimit) {
+    if (this.memoryBudget.exceeded) {
       await this.spillCurrentRun();
     }
   }
@@ -93,6 +95,7 @@ export class SortOperator {
     await this.spillManager.appendChunk(`run_${this.runCount}`, chunk);
     this.runCount++;
     this.rows = [];
+    this.memoryBudget.reset();
   }
 
   async finalize(): Promise<DataChunk[]> {

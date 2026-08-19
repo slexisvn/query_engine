@@ -39,8 +39,11 @@
     "typecheck": "tsc --noEmit",
     "build": "node scripts/build.js && npm run build:wasm && tsc -p tsconfig.build.json",
     "build:wasm": "asc --config src/wasm/assembly/asconfig.json --target release",
-    "test": "vitest run",
-    "start": "node dist/index.cli.js"
+    "test": "npm run build:ts && vitest run",
+    "start": "node dist/index.cli.js",
+    "test:unit": "npm run build:ts && vitest run --project unit",
+    "test:e2e": "npm run build:ts && vitest run --project e2e",
+    "build:ts": "tsc -p tsconfig.build.json"
   },
   "devDependencies": {
     "@types/node": "^22.19.21",

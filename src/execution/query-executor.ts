@@ -1,4 +1,10 @@
 import { PlanNodeType, type LogicalPlanNode, type LogicalJoinNode } from '../planner/logical-plan.js';
+import { PhysicalNodeType, type PhysicalJoinNode, type PhysicalPlanNode } from './physical-plan.js';
+import type { ExecutionCatalog } from './execution-catalog.js';
+import type { MaterializedCTE } from './builders/cte-builders.js';
+import type { ChunkReceiver, DistributedExecutionContext } from './builders/exchange-builders.js';
+import type { ParallelExpressionDispatch, WorkerPoolHandle } from './parallel-context.js';
+import { PhysicalPlanner } from './physical-planner.js';
 import {
   normalizeExecType as normalizeExecTypeShared,
   normalizeAggResultType as normalizeAggResultTypeShared,
@@ -19,6 +25,8 @@ import type { FragmentPoolLike as AggFragmentPoolLike } from './builders/aggrega
 import { buildAggregate, buildPartialAggregate, buildFinalAggregate } from './builders/aggregate-builder.js';
 import { buildCTEAnchor, buildCTEScan, buildMaterialize, buildDependentJoin } from './builders/cte-builders.js';
 import { buildExchange, buildMergeExchange, buildExchangeReceive } from './builders/exchange-builders.js';
+import type { ChunkSpillStore } from '../storage/spill-manager/spill-manager.js';
+import type { TableStorage } from '../storage/table-storage.js';
 import type { DataChunk } from '../storage/chunk.js';
 import type { DataType, ColumnValue } from '../storage/data-type.js';
 import type { BoundAggregateNode, BoundExpr } from '../binder/expression-binder.js';
@@ -30,88 +38,76 @@ import type {
   ColumnMapping,
 } from './execution-types.js';
 
-type BuilderFn = (executor: QueryExecutor, node: LogicalPlanNode) => Promise<CompiledPipeline>;
-
-interface TableStorageLike {
-  rowCount(): number;
-  scan(): AsyncGenerator<DataChunk>;
-  getSchema(): ExecSchema;
-}
-
-type BTreeLike = object;
-
-interface CatalogLike {
-  getTableStorage(name: string): TableStorageLike | null;
-  getIndexForColumn(table: string, column: string): BTreeLike | null;
-}
+type BuilderFn = (executor: QueryExecutor, node: PhysicalPlanNode) => Promise<CompiledPipeline>;
 
 interface TempManagerLike {
   allocate(category: string, label: string): string;
 }
 
-interface SpillManagerLike {
-  appendChunk(id: string, chunk: DataChunk | null): Promise<void>;
-  readChunks(id: string): AsyncGenerator<DataChunk>;
-  clearAll(): Promise<void>;
-}
-
 interface StorageBackendLike {
   createTempSpace(): object;
   createPageStore(): object;
-  createSpillManager(handle: string): SpillManagerLike;
+  createSpillManager(handle: string): ChunkSpillStore;
 }
 
-type WorkerPoolLike = object;
+type WorkerPoolLike = WorkerPoolHandle;
 
-type ParallelDispatchLike = object;
+type ParallelDispatchLike = ParallelExpressionDispatch;
 
 type FragmentPoolLike = JoinFragmentPoolLike & AggFragmentPoolLike;
 
-type DistributedContextLike = object;
+
 
 interface ExecuteResult {
   sink: ResultSink;
   columnNames: string[];
 }
 
-const BUILDERS = {
-  [PlanNodeType.SCAN]: buildScan,
-  [PlanNodeType.INDEX_SCAN]: buildIndexScan,
-  [PlanNodeType.FILTER]: buildFilter,
-  [PlanNodeType.PROJECT]: buildProject,
-  [PlanNodeType.JOIN]: buildJoin,
-  [PlanNodeType.AGGREGATE]: buildAggregate,
-  [PlanNodeType.SORT]: buildSort,
-  [PlanNodeType.LIMIT]: buildLimit,
-  [PlanNodeType.DISTINCT]: buildDistinct,
-  [PlanNodeType.UNION]: buildUnion,
-  [PlanNodeType.CTE_ANCHOR]: buildCTEAnchor,
-  [PlanNodeType.CTE_SCAN]: buildCTEScan,
-  [PlanNodeType.MATERIALIZE]: buildMaterialize,
-  [PlanNodeType.DEPENDENT_JOIN]: buildDependentJoin,
-  [PlanNodeType.TOP_N]: buildTopN,
-  [PlanNodeType.WINDOW]: buildWindow,
-  [PlanNodeType.EMPTY]: buildEmpty,
-  [PlanNodeType.SINGLE_ROW]: buildSingleRow,
-  [PlanNodeType.EXCHANGE]: buildExchange,
-  [PlanNodeType.PARTIAL_AGGREGATE]: buildPartialAggregate,
-  [PlanNodeType.FINAL_AGGREGATE]: buildFinalAggregate,
-  [PlanNodeType.MERGE_EXCHANGE]: buildMergeExchange,
-  [PlanNodeType.EXCHANGE_RECEIVE]: buildExchangeReceive,
+const BUILDERS: Partial<Record<PhysicalNodeType, BuilderFn>> = {
+  [PhysicalNodeType.TABLE_SCAN]: buildScan,
+  [PhysicalNodeType.INDEX_SCAN]: buildIndexScan,
+  [PhysicalNodeType.FILTER]: buildFilter,
+  [PhysicalNodeType.PROJECT]: buildProject,
+  [PhysicalNodeType.HASH_JOIN]: buildJoin,
+  [PhysicalNodeType.MERGE_JOIN]: buildJoin,
+  [PhysicalNodeType.NESTED_LOOP_JOIN]: buildJoin,
+  [PhysicalNodeType.HASH_AGGREGATE]: buildAggregate,
+  [PhysicalNodeType.STREAM_AGGREGATE]: buildAggregate,
+  [PhysicalNodeType.UNGROUPED_AGGREGATE]: buildAggregate,
+  [PhysicalNodeType.PERFECT_HASH_AGGREGATE]: buildAggregate,
+  [PhysicalNodeType.SORT]: buildSort,
+  [PhysicalNodeType.LIMIT]: buildLimit,
+  [PhysicalNodeType.DISTINCT]: buildDistinct,
+  [PhysicalNodeType.UNION]: buildUnion,
+  [PhysicalNodeType.CTE_ANCHOR]: buildCTEAnchor,
+  [PhysicalNodeType.CTE_SCAN]: buildCTEScan,
+  [PhysicalNodeType.MATERIALIZE]: buildMaterialize,
+  [PhysicalNodeType.DEPENDENT_JOIN]: buildDependentJoin,
+  [PhysicalNodeType.TOP_N]: buildTopN,
+  [PhysicalNodeType.WINDOW]: buildWindow,
+  [PhysicalNodeType.EMPTY]: buildEmpty,
+  [PhysicalNodeType.SINGLE_ROW]: buildSingleRow,
+  [PhysicalNodeType.EXCHANGE]: buildExchange,
+  [PhysicalNodeType.PARTIAL_AGGREGATE]: buildPartialAggregate,
+  [PhysicalNodeType.FINAL_AGGREGATE]: buildFinalAggregate,
+  [PhysicalNodeType.MERGE_EXCHANGE]: buildMergeExchange,
+  [PhysicalNodeType.EXCHANGE_RECEIVE]: buildExchangeReceive,
 };
 
 export class QueryExecutor {
-  catalog: CatalogLike;
+  catalog: ExecutionCatalog;
   tempManager: TempManagerLike;
   storageBackend: StorageBackendLike;
-  cteResults: Map<string, DataChunk[]>;
+  cteResults: Map<string, MaterializedCTE>;
   cteDefinitions: Map<string, LogicalPlanNode>;
   workerPool: WorkerPoolLike | null;
   parallelDispatch: ParallelDispatchLike | null;
   fragmentPool: FragmentPoolLike | null;
-  _distributedContext: DistributedContextLike | null;
+  _distributedContext: DistributedExecutionContext | null;
+  _exchangeReceivers: Map<number, ChunkReceiver> | null;
+  physicalPlanner: PhysicalPlanner;
 
-  constructor(catalog: CatalogLike, tempManager: TempManagerLike, storageBackend: StorageBackendLike | null = null) {
+  constructor(catalog: ExecutionCatalog, tempManager: TempManagerLike, storageBackend: StorageBackendLike | null = null) {
     this.catalog = catalog;
     this.tempManager = tempManager;
     this.storageBackend = storageBackend ?? new MemoryStorageBackend();
@@ -121,6 +117,12 @@ export class QueryExecutor {
     this.parallelDispatch = null;
     this.fragmentPool = null;
     this._distributedContext = null;
+    this._exchangeReceivers = null;
+    this.physicalPlanner = new PhysicalPlanner();
+  }
+
+  setPhysicalPlanner(planner: PhysicalPlanner): void {
+    this.physicalPlanner = planner;
   }
 
   setParallelContext(workerPool: WorkerPoolLike, parallelDispatch: ParallelDispatchLike, fragmentPool: FragmentPoolLike | null = null): void {
@@ -129,11 +131,11 @@ export class QueryExecutor {
     this.fragmentPool = fragmentPool;
   }
 
-  setDistributedContext(ctx: DistributedContextLike): void {
+  setDistributedContext(ctx: DistributedExecutionContext): void {
     this._distributedContext = ctx;
   }
 
-  _shouldParallelize(storage: TableStorageLike): boolean {
+  _shouldParallelize(storage: TableStorage): boolean {
     return !!(this.workerPool
       && this.parallelDispatch
       && storage.rowCount() >= Config.parallelThreshold);
@@ -152,12 +154,12 @@ export class QueryExecutor {
   async executePlan(logicalPlan: LogicalPlanNode, streaming: boolean = false): Promise<ResultSink> {
     this.cteResults.clear();
     const graph = new PipelineGraph();
-    const resultSink = new ResultSink(streaming);
+    const resultSink = new ResultSink(streaming, this.storageBackend.createSpillManager(this.tempManager.allocate('spill', 'result')));
     await resultSink.init();
 
     const rootPipelineId = graph.createPipeline(resultSink);
 
-    const compiledRoot = await this.buildPipeline(logicalPlan);
+    const compiledRoot = await this.buildPipeline(this.physicalPlanner.plan(logicalPlan));
 
     compiledRoot.register(graph, rootPipelineId, resultSink);
 
@@ -173,12 +175,16 @@ export class QueryExecutor {
     return resultSink;
   }
 
-  async buildPipeline(node: LogicalPlanNode): Promise<CompiledPipeline> {
-    const builder = BUILDERS[node.type] as BuilderFn | undefined;
+  async buildPipeline(node: PhysicalPlanNode): Promise<CompiledPipeline> {
+    const builder = BUILDERS[node.type];
     if (!builder) {
-      throw new Error(`Unsupported plan node: ${node.type}`);
+      throw new Error(`Unsupported physical operator: ${node.type}`);
     }
     return builder(this, node);
+  }
+
+  async buildLogicalPipeline(node: LogicalPlanNode): Promise<CompiledPipeline> {
+    return this.buildPipeline(this.physicalPlanner.plan(node));
   }
 
   resolveProjectedColumnIndexes(storageSchema: ExecSchema, planColumns: ExecColumn[] | null): number[] | null {
@@ -243,7 +249,7 @@ export class QueryExecutor {
   }
 
   _prepareParallelJoin(
-    node: LogicalJoinNode,
+    physical: PhysicalJoinNode,
     buildInput: CompiledPipeline,
     probeInput: CompiledPipeline,
     buildNode: LogicalPlanNode,
@@ -253,7 +259,7 @@ export class QueryExecutor {
     residualCondition: BoundExpr | null,
     combinedMapping: ColumnMapping,
   ): ParallelJoinPrep | null {
-    return prepareParallelJoin(this, node, buildInput, probeInput, buildNode, probeNode, buildKeys, probeKeys, residualCondition, combinedMapping);
+    return prepareParallelJoin(this, physical, buildInput, probeInput, buildNode, probeNode, buildKeys, probeKeys, residualCondition, combinedMapping);
   }
 
   _runBufferedSerialJoin(
@@ -261,10 +267,10 @@ export class QueryExecutor {
     makeProbeOp: MakeProbeOp,
     buildChunks: DataChunk[],
     probeChunks: DataChunk[],
-    node: LogicalJoinNode,
+    buildPreserved: boolean,
     probeColCount: number,
   ): Promise<DataChunk[]> {
-    return runBufferedSerialJoin(makeBuildSide, makeProbeOp, buildChunks, probeChunks, node, probeColCount);
+    return runBufferedSerialJoin(makeBuildSide, makeProbeOp, buildChunks, probeChunks, buildPreserved, probeColCount);
   }
 
   normalizeExecType(dt: DataType | string): DataType {

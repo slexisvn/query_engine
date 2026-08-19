@@ -4,6 +4,8 @@ import { DataType, type ColumnValue } from '../../storage/data-type.js';
 import { globalDispatch } from '../../wasm/dispatch.js';
 import { isVectorizableExpr, evalVectorized } from '../wasm-expr-eval.js';
 import { resolveWasmAggKernel, type ScalarReduceKernel, type BitmapCountKernel } from './agg-wasm.js';
+import { encodeCompositeKey } from '../composite-key.js';
+import { GLOBAL_GROUP_KEY } from './hash-aggregate.js';
 import type { BoundExpr } from '../../binder/expression-binder.js';
 import type { CompiledExpr, ColumnMapping, EvalValue } from '../execution-types.js';
 
@@ -228,10 +230,7 @@ export class StreamAggregateOperator {
   }
 
   extractGroupKey(chunk: DataChunk, rowIdx: number): string {
-    if (this.groupByExtractors.length === 0) return '__ALL__';
-    return this.groupByExtractors.map((fn) => {
-      const v = fn(chunk, rowIdx);
-      return typeof v === 'bigint' ? v.toString() : String(v);
-    }).join('|');
+    if (this.groupByExtractors.length === 0) return GLOBAL_GROUP_KEY;
+    return encodeCompositeKey(this.groupByExtractors.map((fn) => fn(chunk, rowIdx)));
   }
 }

@@ -252,7 +252,7 @@ export class QueryCoordinator {
 
     const executor = this._fragmentExecutor._localExecutor as LocalExecutorHost;
     executor._exchangeReceivers = receivers;
-    const compiled = await executor.buildPipeline(rootFragment.planRoot);
+    const compiled = await executor.buildLogicalPipeline(rootFragment.planRoot);
     executor._exchangeReceivers = null;
 
     const { PipelineGraph } = await import('../../execution/pipeline.js');

@@ -3,6 +3,7 @@ import type { DataType, ColumnValue } from '../../storage/data-type.js';
 import { DataChunk } from '../../storage/chunk.js';
 import { JoinType } from '../../planner/logical-plan.js';
 import { hashValue } from '../../utils/hash.js';
+import { encodeCompositeKey } from '../composite-key.js';
 import { heapAllocator } from '../../storage/sab-arena.js';
 import type { Allocator } from '../../storage/sab-arena.js';
 import type { CompiledExpr, EvalValue } from '../execution-types.js';
@@ -53,13 +54,13 @@ export function joinKeyOf(extractors: CompiledExpr[], chunk: DataChunk, rowIdx: 
     if (val === null || val === undefined) return null;
     return typeof val === 'bigint' ? Number(val) : (val as ColumnValue);
   }
-  const parts = new Array(extractors.length);
+  const parts: ColumnValue[] = new Array(extractors.length);
   for (let i = 0; i < extractors.length; i++) {
     const val = extractors[i](chunk, rowIdx);
     if (val === null || val === undefined) return null;
-    parts[i] = typeof val === 'bigint' ? Number(val) : val;
+    parts[i] = typeof val === 'bigint' ? Number(val) : (val as ColumnValue);
   }
-  return parts.join('|');
+  return encodeCompositeKey(parts);
 }
 
 export function joinKeyHash(key: JoinKey): number {
@@ -88,7 +89,11 @@ export function probeJoinRows(items: Iterable<ProbeItem>, lookup: (key: JoinKey)
     const { row: pRow, key } = item;
 
     if (key === null) {
-      if (joinType === JoinType.LEFT || joinType === JoinType.FULL || joinType === JoinType.ANTI || joinType === JoinType.SINGLE) {
+      if (joinType === JoinType.ANTI) {
+        resultRows.push(pRow);
+      } else if (joinType === JoinType.MARK) {
+        resultRows.push(pRow.concat([null]));
+      } else if (joinType === JoinType.LEFT || joinType === JoinType.FULL || joinType === JoinType.SINGLE) {
         resultRows.push(new Array(buildColCount).fill(null).concat(pRow));
       }
       continue;

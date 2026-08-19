@@ -1,32 +1,20 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { PlanNodeType, LogicalIndexScan, LogicalFilter, type LogicalPlanNode, type LogicalFilterNode, type IndexScanValue } from '../../planner/logical-plan.js';
+import { PlanNodeType, LogicalIndexScan, LogicalFilter, type LogicalPlanNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
 import { BoundExprKind, type BoundExpr, type LiteralValue } from '../../binder/expression-binder.js';
 import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
 import { Config } from '../../config.js';
-
-interface ColumnStatsLike {
-  ndv: number;
-  min: IndexScanValue;
-  max: IndexScanValue;
-}
-
-interface TableStatsLike {
-  getColumnStats(column: string): ColumnStatsLike | null;
-}
-
-interface StatisticsLike {
-  get(name: string): TableStatsLike | undefined;
-}
+import { toNumericValue, type ColumnValue } from '../../storage/data-type.js';
+import type { ColumnStats, StatsProvider } from '../../catalog/statistics.js';
 
 interface CatalogLike {
   getIndexForColumn(table: string, column: string): object | null;
 }
 
 interface ColumnBounds {
-  point: IndexScanValue;
-  low: IndexScanValue;
-  high: IndexScanValue;
+  point: ColumnValue;
+  low: ColumnValue;
+  high: ColumnValue;
   lowInc: boolean;
   highInc: boolean;
   conjunctIndices: number[];
@@ -40,14 +28,14 @@ interface ConjunctMapping {
 
 interface ConjunctInfo {
   column: string;
-  value: IndexScanValue;
+  value: ColumnValue;
   type: 'eq' | 'gt' | 'gte' | 'lt' | 'lte';
 }
 
 export class IndexSelection extends OptimizationPass {
   catalog: CatalogLike;
-  statistics: StatisticsLike | null;
-  constructor(catalog: CatalogLike, statistics: StatisticsLike | null) {
+  statistics: StatsProvider | null;
+  constructor(catalog: CatalogLike, statistics: StatsProvider | null) {
     super();
     this.catalog = catalog;
     this.statistics = statistics;
@@ -61,8 +49,8 @@ export class IndexSelection extends OptimizationPass {
 
 class IndexSelectionRewriter extends PlanRewriter {
   catalog: CatalogLike;
-  statistics: StatisticsLike | null;
-  constructor(catalog: CatalogLike, statistics: StatisticsLike | null) {
+  statistics: StatsProvider | null;
+  constructor(catalog: CatalogLike, statistics: StatsProvider | null) {
     super();
     this.catalog = catalog;
     this.statistics = statistics;
@@ -115,11 +103,12 @@ class IndexSelectionRewriter extends PlanRewriter {
       if (this.statistics) {
         const tableStats = this.statistics.get(tableName.toUpperCase());
         if (tableStats) {
-          const colStats = tableStats.getColumnStats(col);
-          if (colStats && colStats.ndv > 0) {
+          const colStats = tableStats.getColumnStats?.(col) ?? null;
+          const ndv = colStats?.ndv ?? 0;
+          if (colStats && ndv > 0) {
             let selectivity: number;
             if (bounds.point !== null) {
-              selectivity = 1 / colStats.ndv;
+              selectivity = 1 / ndv;
             } else {
               selectivity = this._estimateRangeSelectivity(colStats, bounds);
             }
@@ -140,7 +129,7 @@ class IndexSelectionRewriter extends PlanRewriter {
     const indexedIndices = new Set(bestBounds.conjunctIndices);
     const residualConjuncts = conjuncts.filter((_: BoundExpr, i: number) => !indexedIndices.has(i));
 
-    let scanType: string, scanKey: IndexScanValue, scanLow: IndexScanValue, scanHigh: IndexScanValue, lowInc: boolean, highInc: boolean;
+    let scanType: string, scanKey: ColumnValue, scanLow: ColumnValue, scanHigh: ColumnValue, lowInc: boolean, highInc: boolean;
     const indexName = `idx_${tableName}_${bestColumn}`.toUpperCase();
 
     if (bestBounds.point !== null) {
@@ -171,13 +160,13 @@ class IndexSelectionRewriter extends PlanRewriter {
     return indexScan;
   }
 
-  _estimateRangeSelectivity(colStats: ColumnStatsLike, bounds: ColumnBounds): number {
-    const min = toNumber(colStats.min);
-    const max = toNumber(colStats.max);
+  _estimateRangeSelectivity(colStats: ColumnStats, bounds: ColumnBounds): number {
+    const min = toNumericValue(colStats.min);
+    const max = toNumericValue(colStats.max);
     if (min === null || max === null || max <= min) return 0.33;
 
-    let low = bounds.low !== null ? toNumber(bounds.low) : min;
-    let high = bounds.high !== null ? toNumber(bounds.high) : max;
+    let low = bounds.low !== null ? toNumericValue(bounds.low) : min;
+    let high = bounds.high !== null ? toNumericValue(bounds.high) : max;
     if (low === null) low = min;
     if (high === null) high = max;
 
@@ -210,7 +199,7 @@ class IndexSelectionRewriter extends PlanRewriter {
     if (colExpr.tableAlias && colExpr.tableAlias.toUpperCase() !== alias.toUpperCase()) return null;
 
     const column = colExpr.columnName.toUpperCase();
-    const value = litExpr.value as IndexScanValue;
+    const value = litExpr.value as ColumnValue;
 
     let type: ConjunctInfo['type'];
     if (op === '=') {
@@ -229,9 +218,3 @@ class IndexSelectionRewriter extends PlanRewriter {
   }
 }
 
-function toNumber(value: IndexScanValue): number | null {
-  if (value === null || value === undefined) return null;
-  if (typeof value === 'bigint') return Number(value);
-  if (typeof value === 'number') return value;
-  return null;
-}

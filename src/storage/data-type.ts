@@ -70,6 +70,13 @@ export function byteWidthFor(dataType: DataType): number {
   return TYPE_TO_BYTE_WIDTH[dataType] ?? 0;
 }
 
+export function toNumericValue(value?: ColumnValue): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'bigint') return Number(value);
+  if (typeof value === 'number') return value;
+  return null;
+}
+
 export function isFixedWidth(dataType: DataType): boolean {
   return FIXED_WIDTH_TYPES.has(dataType);
 }

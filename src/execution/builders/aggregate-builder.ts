@@ -1,4 +1,8 @@
-import { PhysicalStrategy } from '../../planner/logical-plan.js';
+import type { ExecutionCatalog } from '../execution-catalog.js';
+import { PhysicalNodeType, type PhysicalPlanNode } from '../physical-plan.js';
+import type { TableStorage } from '../../storage/table-storage.js';
+import type { ChunkSpillStore } from '../../storage/spill-manager/spill-manager.js';
+
 import type {
   LogicalPlanNode,
   LogicalAggregateNode,
@@ -51,15 +55,7 @@ interface BuiltAggregateDef {
   extractValue: ExtractValueFn;
 }
 
-interface TableStorageLike {
-  scan(): AsyncGenerator<DataChunk>;
-  getSchema(): ExecSchema;
-  rowCount(): number;
-}
 
-interface CatalogLike {
-  getTableStorage(table: string): TableStorageLike | null;
-}
 
 export interface FragmentPoolLike {
   runAggregate(spec: FragmentSpec, columnIndexes: number[], chunks: DataChunk[], options: { spillDir?: string }): Promise<DataChunk[]>;
@@ -69,10 +65,15 @@ interface TempManagerLike {
   allocate(kind: string, label: string): string;
 }
 
+interface StorageBackendLike {
+  createSpillManager(handle: string): ChunkSpillStore;
+}
+
 interface ExecutorLike {
-  buildPipeline(node: LogicalPlanNode): Promise<CompiledPipeline>;
-  catalog: CatalogLike;
+  buildPipeline(node: PhysicalPlanNode): Promise<CompiledPipeline>;
+  catalog: ExecutionCatalog;
   tempManager: TempManagerLike;
+  storageBackend: StorageBackendLike;
   fragmentPool: FragmentPoolLike | null;
   normalizeExecType(dt: string): DataType;
   normalizeAggResultType(agg: AggDescriptor): DataType;
@@ -80,13 +81,18 @@ interface ExecutorLike {
 }
 
 interface ParallelAggregate extends BuiltFragmentSpec {
-  storage: TableStorageLike;
+  storage: TableStorage;
 }
 
 type RegisterFn = (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => void;
 
-export async function buildAggregate(executor: ExecutorLike, node: LogicalAggregateNode): Promise<CompiledPipeline> {
-  const child = await executor.buildPipeline(node.children[0]);
+function aggregateSpillStore(executor: ExecutorLike, label: string): ChunkSpillStore {
+  return executor.storageBackend.createSpillManager(executor.tempManager.allocate('spill', label));
+}
+
+export async function buildAggregate(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalAggregateNode;
+  const child = await executor.buildPipeline(physical.children[0]);
 
   const groupByEvals = (node.groupBy || []).map((expr: BoundExpr) =>
     compileExpression(expr, child.columnMapping)
@@ -112,7 +118,7 @@ export async function buildAggregate(executor: ExecutorLike, node: LogicalAggreg
 
   const columnMapping = aggregateSchemaMapping(schema, node.groupBy || [], node.aggregates as AggDescriptor[]);
 
-  if (node.physicalStrategy === PhysicalStrategy.STREAM) {
+  if (physical.type === PhysicalNodeType.STREAM_AGGREGATE) {
     return {
       schema, columnMapping,
       register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
@@ -134,7 +140,7 @@ export async function buildAggregate(executor: ExecutorLike, node: LogicalAggreg
   const serialCompiled: CompiledPipeline = {
     schema, columnMapping,
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
-      const aggOp = new HashAggregateOperator(groupByEvals, groupByTypes, aggDefs);
+      const aggOp = new HashAggregateOperator(groupByEvals, groupByTypes, aggDefs, aggregateSpillStore(executor, 'agg'));
       const aggSink: Sink = {
         async consume(chunk: DataChunk) { await aggOp.consume(chunk); },
         async finalize() {}
@@ -221,8 +227,9 @@ function aggregateSchemaMapping(schema: ExecSchema, groupBy: BoundExpr[], aggreg
   return columnMapping;
 }
 
-export async function buildPartialAggregate(executor: ExecutorLike, node: LogicalPartialAggregateNode): Promise<CompiledPipeline> {
-  const child = await executor.buildPipeline(node.children[0]);
+export async function buildPartialAggregate(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalPartialAggregateNode;
+  const child = await executor.buildPipeline(physical.children[0]);
 
   const groupByEvals = (node.groupBy || []).map((expr: BoundExpr) =>
     compileExpression(expr, child.columnMapping)
@@ -276,12 +283,13 @@ export async function buildPartialAggregate(executor: ExecutorLike, node: Logica
 
   return {
     schema, columnMapping,
-    register: registerHashAggregate(child, () => new HashAggregateOperator(groupByEvals, groupByTypes, aggDefs as HashAggDefs)),
+    register: registerHashAggregate(child, () => new HashAggregateOperator(groupByEvals, groupByTypes, aggDefs as HashAggDefs, aggregateSpillStore(executor, 'agg'))),
   };
 }
 
-export async function buildFinalAggregate(executor: ExecutorLike, node: LogicalFinalAggregateNode): Promise<CompiledPipeline> {
-  const child = await executor.buildPipeline(node.children[0]);
+export async function buildFinalAggregate(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalFinalAggregateNode;
+  const child = await executor.buildPipeline(physical.children[0]);
 
   const groupByCount = (node.groupBy || []).length;
   const groupByEvals = (node.groupBy || []).map((_expr: BoundExpr, i: number): CompiledExpr => {
@@ -350,7 +358,7 @@ export async function buildFinalAggregate(executor: ExecutorLike, node: LogicalF
 
   return {
     schema, columnMapping,
-    register: registerHashAggregate(child, () => new HashAggregateOperator(groupByEvals, groupByTypes, aggDefs as HashAggDefs)),
+    register: registerHashAggregate(child, () => new HashAggregateOperator(groupByEvals, groupByTypes, aggDefs as HashAggDefs, aggregateSpillStore(executor, 'agg'))),
   };
 }
 

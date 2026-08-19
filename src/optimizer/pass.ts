@@ -1,11 +1,9 @@
 import type { LogicalPlanNode } from '../planner/logical-plan.js';
 
-export class OptimizationPass {
-  get name(): string {
-    throw new Error('Subclass must implement name');
-  }
+export type OptimizationContext = Record<string, never>;
 
-  apply(plan: LogicalPlanNode, context?: Record<string, never>): LogicalPlanNode {
-    throw new Error('Subclass must implement apply()');
-  }
+export abstract class OptimizationPass {
+  abstract get name(): string;
+
+  abstract apply(plan: LogicalPlanNode, context?: OptimizationContext): LogicalPlanNode;
 }

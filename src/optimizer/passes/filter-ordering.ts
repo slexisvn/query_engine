@@ -1,17 +1,15 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanNodeType, type LogicalPlanNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { DefaultCardinalityEstimator } from '../dphyp/cardinality.js';
+import { DefaultCardinalityEstimator, type TableStats } from '../join-order/cardinality.js';
 import { type BoundExpr } from '../../binder/expression-binder.js';
 import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
-
-interface TableStatistics { rowCount: number; }
 
 interface ScoredPred { pred: BoundExpr; selectivity: number; }
 
 export class FilterOrdering extends OptimizationPass {
   cardEstimator: DefaultCardinalityEstimator;
-  constructor(statisticsMap: Map<string, TableStatistics> = new Map<string, TableStatistics>()) {
+  constructor(statisticsMap: Map<string, TableStats> = new Map<string, TableStats>()) {
     super();
     this.cardEstimator = new DefaultCardinalityEstimator(statisticsMap);
   }

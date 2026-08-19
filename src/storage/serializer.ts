@@ -24,7 +24,8 @@ const ID_TO_DATA_TYPE = Object.fromEntries(
 ) as Record<number, DataType>;
 
 export class ChunkSerializer {
-  static serialize(chunk: DataChunk): Buffer {
+  static serialize(source: DataChunk): Buffer {
+    const chunk = source.selectionVector ? source.flatten() : source;
     const size = computeSize(chunk);
     const buf = Buffer.allocUnsafe(size);
     let offset = 0;

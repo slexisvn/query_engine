@@ -1,6 +1,6 @@
 import * as LP from './logical-plan.js';
 import { BoundExprKind, BoundColumnRef, collectCorrelatedColumns, type BoundExpr, type BoundColumnRefNode, type BoundLiteralNode } from '../binder/expression-binder.js';
-import type { BoundQuery, BoundSelect, BoundSetOp, BoundFrom } from '../binder/binder.js';
+import type { BoundQuery, BoundSelect, BoundSetOp, BoundFrom, OutputColumn } from '../binder/binder.js';
 
 let _cteIdCounter = 0;
 
@@ -120,7 +120,7 @@ export class LogicalPlanner {
         const cteId = _cteIdCounter++;
         const ctePlan = (bound.query as BoundQuery & { prebuiltPlan?: LP.LogicalPlanNode }).prebuiltPlan ?? this.planQuery(bound.query);
         this.cteMap.set(bound.cteName.toUpperCase(), ctePlan);
-        return LP.LogicalCTEScan(bound.cteName, cteId);
+        return LP.LogicalCTEScan(bound.cteName, cteId, bound.alias);
       }
 
       case 'JoinRef': {
@@ -130,14 +130,21 @@ export class LogicalPlanner {
         return LP.LogicalJoin(joinType, bound.condition, left, right);
       }
 
-      case 'SubqueryRef': {
-        const subPlan = this.planQuery(bound.query);
-        return subPlan;
-      }
+      case 'SubqueryRef':
+        return this.aliasRelation(this.planQuery(bound.query), bound.alias, bound.columns);
 
       default:
         throw new Error(`Unknown from type: ${(bound as BoundFrom).type}`);
     }
+  }
+
+  aliasRelation(plan: LP.LogicalPlanNode, alias: string, columns: OutputColumn[]): LP.LogicalPlanNode {
+    if (plan.type === LP.PlanNodeType.PROJECT) return { ...plan, outputAlias: alias };
+    const projections = columns.map((col, i) => ({
+      ...BoundColumnRef(alias, col.name, i, col.dataType),
+      outputName: col.name,
+    }));
+    return LP.LogicalProject(projections, plan, alias);
   }
 
   extractSubqueries(expr: BoundExpr | null, currentPlan: LP.LogicalPlanNode): { expr: BoundExpr | null; subqueryJoins: Array<(child: LP.LogicalPlanNode) => LP.LogicalPlanNode> } {

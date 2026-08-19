@@ -19,6 +19,8 @@ import type {
   ScalarAggregateResult,
   ProjectResult,
   ScalarAggregatePartial,
+  TaskOfType,
+  WorkerResultForTask,
 } from './worker-messages.js';
 import { WorkerTaskType } from './worker-messages.js';
 
@@ -57,7 +59,7 @@ interface GlobalDispatchLike {
 
 interface WorkerPoolLike {
   activeWorkerCount(): number;
-  execute<R>(tasks: WorkerTask[]): Promise<R[]>;
+  execute<T extends WorkerTaskType>(tasks: TaskOfType<T>[]): Promise<WorkerResultForTask[T][]>;
 }
 
 interface FilterParams {
@@ -142,7 +144,7 @@ export class ParallelDispatch {
       ...params,
     } as FilterTask));
 
-    const results = await this.workerPool!.execute<SelectionVectorResult>(tasks);
+    const results = await this.workerPool!.execute(tasks);
     return this._gatherSelectionVectors(results, count);
   }
 
@@ -170,7 +172,7 @@ export class ParallelDispatch {
       dataType: dataType as WasmDataType,
     }));
 
-    const results = await this.workerPool!.execute<ScalarAggregateResult>(tasks);
+    const results = await this.workerPool!.execute(tasks);
     return this._mergeAggregates(results, aggType);
   }
 
@@ -202,7 +204,7 @@ export class ParallelDispatch {
       baseIndex: morsel.start,
     }));
 
-    const results = await this.workerPool!.execute<SelectionVectorResult>(tasks);
+    const results = await this.workerPool!.execute(tasks);
     return this._gatherSelectionVectors(results, count);
   }
 
@@ -231,7 +233,7 @@ export class ParallelDispatch {
       stages,
     }));
 
-    const results = await this.workerPool.execute<SelectionVectorResult & PipelineAggregatesPartialResult>(tasks);
+    const results = await this.workerPool.execute(tasks);
     const hasAggregates = results.some(r => r.aggregates);
 
     if (hasAggregates) {
@@ -290,7 +292,7 @@ export class ParallelDispatch {
       return task;
     });
 
-    const results = await this.workerPool!.execute<ProjectResult>(tasks);
+    const results = await this.workerPool!.execute(tasks);
     return this._gatherProjectResults(results, count);
   }
 

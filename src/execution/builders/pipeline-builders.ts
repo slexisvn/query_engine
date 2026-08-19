@@ -1,3 +1,5 @@
+import type { ParallelExpressionDispatch } from '../parallel-context.js';
+import type { PhysicalPlanNode } from '../physical-plan.js';
 import { compileExpression } from '../expression-eval.js';
 import { FilterOperator } from '../operators/filter.js';
 import { ProjectionOperator } from '../operators/projection.js';
@@ -36,21 +38,21 @@ import type {
 } from '../../planner/logical-plan.js';
 
 type ParallelDispatchLike = ConstructorParameters<typeof FilterOperator>[3];
-type SpillManagerLike = ConstructorParameters<typeof SortOperator>[3];
+import type { ChunkSpillStore } from '../../storage/spill-manager/spill-manager.js';
 
 interface TempManagerLike {
   allocate(category: string, label: string): string;
 }
 
 interface StorageBackendLike {
-  createSpillManager(handle: string): SpillManagerLike;
+  createSpillManager(handle: string): ChunkSpillStore;
 }
 
 interface ExecutorLike {
-  buildPipeline(node: LogicalPlanNode): Promise<CompiledPipeline>;
+  buildPipeline(node: PhysicalPlanNode): Promise<CompiledPipeline>;
   buildSchemaMapping(schema: ExecSchema, alias: string): ColumnMapping;
   normalizeExecType(dt: DataType | string): DataType;
-  parallelDispatch: ParallelDispatchLike;
+  parallelDispatch: ParallelExpressionDispatch | null;
   tempManager: TempManagerLike;
   storageBackend: StorageBackendLike;
 }
@@ -69,8 +71,9 @@ interface KeyExtractor {
   direction: string;
 }
 
-export async function buildFilter(executor: ExecutorLike, node: LogicalFilterNode): Promise<CompiledPipeline> {
-  const child = await executor.buildPipeline(node.children[0]);
+export async function buildFilter(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalFilterNode;
+  const child = await executor.buildPipeline(physical.children[0]);
   const evalFn = compileExpression(node.condition, child.columnMapping);
   const parallelDispatch = executor.parallelDispatch;
 
@@ -97,23 +100,25 @@ export async function buildFilter(executor: ExecutorLike, node: LogicalFilterNod
   };
 }
 
-export async function buildProject(executor: ExecutorLike, node: LogicalProjectNode): Promise<CompiledPipeline> {
-  const child = await executor.buildPipeline(node.children[0]);
+export async function buildProject(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalProjectNode;
+  const child = await executor.buildPipeline(physical.children[0]);
   const evaluators: CompiledExpr[] = node.expressions.map((expr: ProjectedExpr) => compileExpression(expr, child.columnMapping));
   const resultTypes: DataType[] = node.expressions.map((expr: ProjectedExpr) => {
     const meta = expr as ProjectExprMeta;
     return executor.normalizeExecType(meta.dataType || meta.resultType || 'VARCHAR');
   });
 
+  const outputAlias = node.outputAlias || '';
   const schema: ExecSchema = node.expressions.map((expr: ProjectedExpr, i: number) => {
     const meta = expr as ProjectExprMeta;
     return {
       name: meta.outputName || meta.alias || meta.name || meta.columnName || `col${i}`,
       dataType: executor.normalizeExecType(meta.dataType || meta.resultType || 'VARCHAR'),
-      tableAlias: '',
+      tableAlias: outputAlias,
     };
   });
-  const columnMapping = executor.buildSchemaMapping(schema, '');
+  const columnMapping = executor.buildSchemaMapping(schema, outputAlias);
 
   return {
     schema,
@@ -136,8 +141,9 @@ export async function buildProject(executor: ExecutorLike, node: LogicalProjectN
   };
 }
 
-export async function buildSort(executor: ExecutorLike, node: LogicalSortNode): Promise<CompiledPipeline> {
-  const child = await executor.buildPipeline(node.children[0]);
+export async function buildSort(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalSortNode;
+  const child = await executor.buildPipeline(physical.children[0]);
   const keyExtractors: KeyExtractor[] = node.orderKeys.map((ok: LogicalOrderKey) => ({
     eval: compileExpression(ok.expr, child.columnMapping),
     direction: ok.direction || 'ASC',
@@ -171,8 +177,9 @@ export async function buildSort(executor: ExecutorLike, node: LogicalSortNode): 
   };
 }
 
-export async function buildTopN(executor: ExecutorLike, node: LogicalTopNNode): Promise<CompiledPipeline> {
-  const child = await executor.buildPipeline(node.children[0]);
+export async function buildTopN(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalTopNNode;
+  const child = await executor.buildPipeline(physical.children[0]);
   const keyExtractors: KeyExtractor[] = node.orderKeys.map((ok: LogicalOrderKey) => ({
     eval: compileExpression(ok.expr, child.columnMapping),
     direction: ok.direction || 'ASC',
@@ -206,8 +213,9 @@ export async function buildTopN(executor: ExecutorLike, node: LogicalTopNNode): 
   };
 }
 
-export async function buildLimit(executor: ExecutorLike, node: LogicalLimitNode): Promise<CompiledPipeline> {
-  const child = await executor.buildPipeline(node.children[0]);
+export async function buildLimit(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalLimitNode;
+  const child = await executor.buildPipeline(physical.children[0]);
   const limit = node.count;
   const offset = node.offset || 0;
 
@@ -244,14 +252,16 @@ export async function buildLimit(executor: ExecutorLike, node: LogicalLimitNode)
   };
 }
 
-export async function buildDistinct(executor: ExecutorLike, node: LogicalDistinctNode): Promise<CompiledPipeline> {
-  const child = await executor.buildPipeline(node.children[0]);
+export async function buildDistinct(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalDistinctNode;
+  const child = await executor.buildPipeline(physical.children[0]);
 
   return {
     schema: child.schema,
     columnMapping: child.columnMapping,
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
-      const distinctOp = new DistinctOperator();
+      const spillHandle = executor.tempManager.allocate('spill', 'distinct');
+      const distinctOp = new DistinctOperator(executor.storageBackend.createSpillManager(spillHandle));
       const childSink: Sink = {
         async consume(chunk: DataChunk) {
           const result = await distinctOp.process(chunk);
@@ -260,6 +270,9 @@ export async function buildDistinct(executor: ExecutorLike, node: LogicalDistinc
           }
         },
         async finalize() {
+          for await (const chunk of distinctOp.finalize()) {
+            if (chunk.size > 0) await currentSink.consume(chunk);
+          }
           if (currentSink.finalize) await currentSink.finalize();
         }
       };
@@ -268,16 +281,18 @@ export async function buildDistinct(executor: ExecutorLike, node: LogicalDistinc
   };
 }
 
-export async function buildUnion(executor: ExecutorLike, node: LogicalUnionNode): Promise<CompiledPipeline> {
-  const left = await executor.buildPipeline(node.children[0]);
-  const right = await executor.buildPipeline(node.children[1]);
+export async function buildUnion(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalUnionNode;
+  const left = await executor.buildPipeline(physical.children[0]);
+  const right = await executor.buildPipeline(physical.children[1]);
 
   return {
     schema: left.schema,
     columnMapping: left.columnMapping,
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       if (!node.all) {
-        const unionOp = new UnionOperator(false);
+        const spillHandle = executor.tempManager.allocate('spill', 'union');
+        const unionOp = new UnionOperator(false, executor.storageBackend.createSpillManager(spillHandle));
         const dedupSink: Sink = {
           async consume(chunk: DataChunk) {
             const result = await unionOp.process(chunk);
@@ -298,6 +313,11 @@ export async function buildUnion(executor: ExecutorLike, node: LogicalUnionNode)
         graph.addDependency(currentPipelineId, rightPipelineId);
 
         const source: SourceGenerator = async function* () {
+          for await (const chunk of unionOp.finalize()) {
+            if (chunk.size === 0) continue;
+            await currentSink.consume(chunk);
+            yield chunk;
+          }
           if (currentSink.finalize) await currentSink.finalize();
         };
         graph.setSource(currentPipelineId, source);
@@ -319,8 +339,9 @@ export async function buildUnion(executor: ExecutorLike, node: LogicalUnionNode)
   };
 }
 
-export async function buildWindow(executor: ExecutorLike, node: LogicalWindowNode): Promise<CompiledPipeline> {
-  const child = await executor.buildPipeline(node.children[0]);
+export async function buildWindow(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalWindowNode;
+  const child = await executor.buildPipeline(physical.children[0]);
   const windowExprs = node.windowExprs as BoundWindowNode[];
 
   const windowSchema: ExecSchema = [

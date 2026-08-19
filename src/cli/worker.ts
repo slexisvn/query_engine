@@ -2,7 +2,6 @@ import { Catalog, Config, FragmentExecutor, HttpTransport, QueryEngine } from '.
 import { loadDataFiles } from './cli-common.js';
 import type {
   ControlMessage,
-  DataChunk,
   ExchangeType,
   Fragment,
   FragmentDispatchJSON,
@@ -139,7 +138,7 @@ async function main(): Promise<void> {
       fragmentsExecuted++;
 
       const elapsed = (performance.now() - startTime).toFixed(2);
-      const rows = result.sink?.chunks?.reduce((sum: number, c: DataChunk) => sum + c.size, 0) || 0;
+      const rows = result.sink?.totalRows ?? 0;
       console.log(`[fragment] Fragment ${fragmentJson.fragmentId} completed: ${rows} rows in ${elapsed} ms`);
 
       await transport.sendControl('coordinator', {

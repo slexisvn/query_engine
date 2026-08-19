@@ -1,6 +1,6 @@
 import { DEFAULT_CHUNK_SIZE } from '../config.js';
 import { DataChunk } from './chunk.js';
-import { BufferPoolManager, type PageStore } from './buffer-pool.js';
+import { PageCache, type PageStore } from './page-cache.js';
 import { Config } from '../config.js';
 import type { ColumnSchema, ColumnValue } from './data-type.js';
 import type { BTreeIndex } from './btree.js';
@@ -15,7 +15,7 @@ export class Table {
   schema: ColumnSchema[];
   pageIds: string[];
   _rowCount: number;
-  bufferPool: BufferPoolManager;
+  pageCache: PageCache;
   activeChunk: DataChunk | null;
   indexes: TableIndex[];
 
@@ -24,7 +24,7 @@ export class Table {
     this.schema = schema;
     this.pageIds = [];
     this._rowCount = 0;
-    this.bufferPool = new BufferPoolManager(Config.bufferPoolPages, pageStore);
+    this.pageCache = new PageCache(Config.pageCachePages, pageStore);
     this.activeChunk = null;
     this.indexes = [];
   }
@@ -54,7 +54,7 @@ export class Table {
     const pageId = `${this.name}_page_${this.pageIds.length}`;
     this.pageIds.push(pageId);
     this._rowCount += chunk.size;
-    await this.bufferPool.writePage(pageId, chunk);
+    await this.pageCache.writePage(pageId, chunk);
 
     for (const idx of this.indexes) {
       for (let r = 0; r < chunk.size; r++) {
@@ -90,7 +90,7 @@ export class Table {
   async *scan(): AsyncGenerator<DataChunk> {
     await this.flush();
     for (const pageId of this.pageIds) {
-      const chunk = await this.bufferPool.fetchPage(pageId, true);
+      const chunk = await this.pageCache.fetchPage(pageId, true);
       yield chunk as DataChunk;
     }
   }
@@ -99,7 +99,7 @@ export class Table {
     await this.flush();
     const chunks: DataChunk[] = [];
     for (const pageId of this.pageIds) {
-      chunks.push(await this.bufferPool.fetchPage(pageId, false) as DataChunk);
+      chunks.push(await this.pageCache.fetchPage(pageId, false) as DataChunk);
     }
     return chunks;
   }

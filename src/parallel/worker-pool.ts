@@ -1,7 +1,10 @@
 import { Worker } from 'worker_threads';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { WorkerTaskType } from './worker-messages.js';
 import type {
+  TaskOfType,
+  WorkerResultForTask,
   WorkerTask,
   WorkerTaskMessage,
   WorkerResultData,
@@ -151,8 +154,8 @@ export class WorkerPool {
     });
   }
 
-  execute(tasks: WorkerTask[]): Promise<WorkerResultData[]> {
-    return Promise.all(tasks.map(task => this._submitTask(task)));
+  execute<T extends WorkerTaskType>(tasks: TaskOfType<T>[]): Promise<WorkerResultForTask[T][]> {
+    return Promise.all(tasks.map(task => this._submitTask(task))) as Promise<WorkerResultForTask[T][]>;
   }
 
   executeOnWorker(workerId: number, task: WorkerTask): Promise<WorkerResultData> {

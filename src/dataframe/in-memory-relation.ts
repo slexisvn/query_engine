@@ -51,6 +51,10 @@ export class InMemoryRelation {
     }
   }
 
+  async scanAll(): Promise<DataChunk[]> {
+    return this.chunks;
+  }
+
   static fromRows(rows: RowInput[], declaredSchema: ColumnSchema[] | null = null): InMemoryRelation {
     const names = declaredSchema
       ? declaredSchema.map(c => c.name)

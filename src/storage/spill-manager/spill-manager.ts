@@ -1,17 +1,29 @@
 import { ChunkSerializer } from '../serializer.js';
 import type { DataChunk } from '../chunk.js';
 
+export interface SpillReader {
+  read(length: number): Promise<Buffer | null>;
+  close(): Promise<void>;
+}
+
 export interface SpillStorage {
   append(partitionId: string, buffer: Buffer): Promise<void>;
-  read(partitionId: string): Promise<Buffer | null>;
+  openReader(partitionId: string): Promise<SpillReader | null>;
   exists(partitionId: string): boolean;
   remove(partitionId: string): Promise<void>;
   removeAll(): Promise<void>;
 }
 
+export interface ChunkSpillStore {
+  appendChunk(partitionId: string, chunk: DataChunk | null): Promise<void>;
+  readChunks(partitionId: string): AsyncGenerator<DataChunk>;
+  clearPartition(partitionId: string): Promise<void>;
+  clearAll(): Promise<void>;
+}
+
 const LENGTH_HEADER_BYTES = 4;
 
-export class SpillManager {
+export class SpillManager implements ChunkSpillStore {
   storage: SpillStorage;
 
   constructor(storage: SpillStorage) {
@@ -27,16 +39,19 @@ export class SpillManager {
   }
 
   async *readChunks(partitionId: string): AsyncGenerator<DataChunk> {
-    const fileBuffer = await this.storage.read(partitionId);
-    if (!fileBuffer) return;
+    const reader = await this.storage.openReader(partitionId);
+    if (!reader) return;
 
-    let offset = 0;
-    while (offset < fileBuffer.length) {
-      const chunkLength = fileBuffer.readUInt32LE(offset);
-      offset += LENGTH_HEADER_BYTES;
-      const chunkData = fileBuffer.subarray(offset, offset + chunkLength);
-      yield ChunkSerializer.deserialize(chunkData);
-      offset += chunkLength;
+    try {
+      for (;;) {
+        const header = await reader.read(LENGTH_HEADER_BYTES);
+        if (!header) return;
+        const payload = await reader.read(header.readUInt32LE(0));
+        if (!payload) return;
+        yield ChunkSerializer.deserialize(payload);
+      }
+    } finally {
+      await reader.close();
     }
   }
 

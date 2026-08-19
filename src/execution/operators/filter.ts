@@ -1,3 +1,4 @@
+import type { ParallelExpressionDispatch } from '../parallel-context.js';
 import { DataChunk, AnyColumn, SelectionVector } from '../../storage/chunk.js';
 import { Column } from '../../storage/column.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
@@ -23,22 +24,6 @@ const OP_TO_FILTER: Record<string, string> = {
   '<=': 'filterLe',
   '>=': 'filterGe',
 };
-
-interface ParallelFilterResult {
-  selectionVector: Uint32Array;
-  matchCount: number;
-}
-
-interface ParallelDispatch {
-  canParallelize(op: string, dt: DataType, n: number): boolean;
-  filterParallel(
-    data: AnyTypedArray,
-    len: number,
-    op: string,
-    dt: DataType,
-    args: { value?: ColumnValue; low?: ColumnValue; high?: ColumnValue },
-  ): Promise<ParallelFilterResult | null>;
-}
 
 interface SimpleFilterPlan {
   type: 'simple';
@@ -75,9 +60,9 @@ export class FilterOperator {
   predicate: PredicateExpr | null;
   evaluator: CompiledExpr;
   columnMapping: ColumnMapping | null;
-  parallelDispatch: ParallelDispatch | null;
+  parallelDispatch: ParallelExpressionDispatch | null;
 
-  constructor(predicate: PredicateExpr | null, evaluator: CompiledExpr, columnMapping: ColumnMapping | null, parallelDispatch: ParallelDispatch | null) {
+  constructor(predicate: PredicateExpr | null, evaluator: CompiledExpr, columnMapping: ColumnMapping | null, parallelDispatch: ParallelExpressionDispatch | null) {
     this.predicate = predicate;
     this.evaluator = evaluator;
     this.columnMapping = columnMapping || null;
@@ -215,7 +200,7 @@ export class FilterOperator {
       data, data.length, plan.operation, plan.dataType, { value: plan.value }
     );
 
-    if (!result) return null;
+    if (!result?.selectionVector) return null;
     const count = this._dropNullRows(column, result.selectionVector, result.matchCount);
     return this._applySelectionVector(chunk, result.selectionVector, count);
   }
@@ -238,7 +223,7 @@ export class FilterOperator {
       data, data.length, plan.operation, plan.dataType, { low: plan.low, high: plan.high }
     );
 
-    if (!result) return null;
+    if (!result?.selectionVector) return null;
     const count = this._dropNullRows(column, result.selectionVector, result.matchCount);
     return this._applySelectionVector(chunk, result.selectionVector, count);
   }

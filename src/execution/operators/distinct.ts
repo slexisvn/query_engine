@@ -1,28 +1,25 @@
-import { DataChunk } from '../../storage/chunk.js';
-import type { DataType } from '../../storage/data-type.js';
-import { dedupProcess, dedupConsume, dedupFinalize } from './dedup-core.js';
+import { ChunkDeduplicator } from './chunk-deduplicator.js';
+import type { DataChunk } from '../../storage/chunk.js';
+import type { ChunkSpillStore } from '../../storage/spill-manager/spill-manager.js';
 
 export class DistinctOperator {
-  seen: Set<string>;
-  schema: DataType[] | null;
-  _legacyChunks!: DataChunk[];
+  deduplicator: ChunkDeduplicator;
 
-  constructor() {
-    this.seen = new Set();
-    this.schema = null;
+  constructor(spillStore: ChunkSpillStore | null = null) {
+    this.deduplicator = new ChunkDeduplicator(spillStore);
   }
 
   async init(): Promise<void> {}
 
   async process(chunk: DataChunk): Promise<DataChunk> {
-    return dedupProcess(this, chunk);
+    return this.deduplicator.filter(chunk);
   }
 
   async consume(chunk: DataChunk): Promise<void> {
-    await dedupConsume(this, await this.process(chunk));
+    await this.deduplicator.buffer(await this.process(chunk));
   }
 
-  async finalize(): Promise<DataChunk[]> {
-    return dedupFinalize(this);
+  finalize(): AsyncGenerator<DataChunk> {
+    return this.deduplicator.drain();
   }
 }

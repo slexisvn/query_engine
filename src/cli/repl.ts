@@ -15,19 +15,6 @@ interface ReadlineInternal extends readline.Interface {
   _refreshLine(): void;
 }
 
-interface ClusterManagerLike {
-  getWorkerNodes?(): { length: number }[];
-}
-
-interface LocalNodeLike {
-  nodeId: string;
-}
-
-interface DistributedLike {
-  clusterManager: ClusterManagerLike;
-  localNode: LocalNodeLike;
-}
-
 interface DistributedFlag {
   _distributed?: boolean;
 }
@@ -150,8 +137,8 @@ async function handleMetaCommand(cmd: string, engine: QueryEngine, coordinator: 
       console.log(`  parallel:    ${engine.parallelEnabled ? `enabled (${(engine.workerPool as WorkerPoolWithCount | null | undefined)?.maxWorkers} workers)` : 'disabled'}`);
       const distInfo = engine.distributed
         ? (() => {
-          const workers = (engine.distributed as object as DistributedLike).clusterManager.getWorkerNodes?.() || [];
-          return `enabled (node: ${(engine.distributed as object as DistributedLike).localNode.nodeId}, ${workers.length} worker(s))`;
+          const workers = engine.distributed?.clusterManager.getWorkerNodes() ?? [];
+          return `enabled (node: ${engine.distributed?.localNode.nodeId}, ${workers.length} worker(s))`;
         })()
         : 'disabled';
       console.log(`  distributed: ${distInfo}`);

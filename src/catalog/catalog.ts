@@ -1,5 +1,5 @@
 import type { ColumnSchema } from '../storage/data-type.js';
-import type { Table } from '../storage/table.js';
+import type { TableStorage } from '../storage/table-storage.js';
 import type { BTreeIndex } from '../storage/btree.js';
 
 export interface ForeignKeySchema {
@@ -40,18 +40,21 @@ export interface PartitionInfo {
 
 export class Catalog {
   tables: Map<string, CatalogTable>;
-  tableStorage: Map<string, Table>;
+  tableStorage: Map<string, TableStorage>;
   indexes: Map<string, IndexEntry>;
   partitionInfo: Map<string, PartitionInfo>;
+  version: number;
 
   constructor() {
     this.tables = new Map();
     this.tableStorage = new Map();
     this.indexes = new Map();
     this.partitionInfo = new Map();
+    this.version = 0;
   }
 
   registerTable(name: string, schema: ColumnSchema[], options: CatalogTableOptions = {}): void {
+    this.version++;
     const upperName = name.toUpperCase();
     this.tables.set(upperName, {
       name: upperName,
@@ -61,7 +64,8 @@ export class Catalog {
     });
   }
 
-  registerTableStorage(name: string, storage: Table): void {
+  registerTableStorage(name: string, storage: TableStorage): void {
+    this.version++;
     this.tableStorage.set(name.toUpperCase(), storage);
   }
 
@@ -69,7 +73,7 @@ export class Catalog {
     return this.tables.get(name.toUpperCase()) || null;
   }
 
-  getTableStorage(name: string): Table | null {
+  getTableStorage(name: string): TableStorage | null {
     return this.tableStorage.get(name.toUpperCase()) || null;
   }
 
@@ -88,6 +92,7 @@ export class Catalog {
   }
 
   dropTable(name: string): void {
+    this.version++;
     const upper = name.toUpperCase();
     this.tables.delete(upper);
     this.tableStorage.delete(upper);
@@ -105,6 +110,7 @@ export class Catalog {
   }
 
   registerIndex(tableName: string, columnName: string, btree: BTreeIndex): void {
+    this.version++;
     const key = `${tableName.toUpperCase()}.${columnName.toUpperCase()}`;
     this.indexes.set(key, { tableName: tableName.toUpperCase(), columnName: columnName.toUpperCase(), btree });
   }
@@ -125,6 +131,7 @@ export class Catalog {
   }
 
   registerPartitionInfo(tableName: string, strategy: PartitionStrategyLike, partitionCount: number, partitionKey: PartitionKeyLike): void {
+    this.version++;
     this.partitionInfo.set(tableName.toUpperCase(), { strategy, partitionCount, partitionKey });
   }
 

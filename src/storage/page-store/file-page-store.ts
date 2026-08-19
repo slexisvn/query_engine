@@ -4,7 +4,7 @@ import path from 'path';
 import { ChunkSerializer } from '../serializer.js';
 import { PAGE_FILE_SUFFIX } from '../storage-constants.js';
 import type { DataChunk } from '../chunk.js';
-import type { PageStore } from '../buffer-pool.js';
+import type { PageStore } from '../page-cache.js';
 import type { Allocator } from '../sab-arena.js';
 
 export type AllocatorFactory = (byteHint: number) => Allocator;

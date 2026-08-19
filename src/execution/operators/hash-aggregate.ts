@@ -1,5 +1,9 @@
 import { Column } from '../../storage/column.js';
-import { DEFAULT_CHUNK_SIZE } from '../../config.js';
+import { Config, DEFAULT_CHUNK_SIZE } from '../../config.js';
+import { RowMemoryBudget } from '../memory-budget.js';
+import { partialGroupsToChunk, chunkToPartialGroups } from './aggregate-state-codec.js';
+import { encodeCompositeKey } from '../composite-key.js';
+import type { ChunkSpillStore } from '../../storage/spill-manager/spill-manager.js';
 import { DataChunk } from '../../storage/chunk.js';
 import { DataType, type ColumnValue } from '../../storage/data-type.js';
 import { globalDispatch } from '../../wasm/dispatch.js';
@@ -58,15 +62,45 @@ export class HashAggregateOperator {
   aggregateDefs: AggregateDef[];
   hasCachedValues: boolean;
   groups: Map<GroupKey, GroupState>;
-  groupKeys: GroupKey[];
+  spillStore: ChunkSpillStore | null;
+  spillPartitionCount: number;
+  memoryBudget: RowMemoryBudget;
+  spilledPartitions: Set<number>;
 
-  constructor(groupByExtractors: CompiledExpr[], groupByTypes: DataType[], aggregateDefs: AggregateDef[]) {
+  constructor(
+    groupByExtractors: CompiledExpr[],
+    groupByTypes: DataType[],
+    aggregateDefs: AggregateDef[],
+    spillStore: ChunkSpillStore | null = null,
+  ) {
     this.groupByExtractors = groupByExtractors;
     this.groupByTypes = groupByTypes;
     this.aggregateDefs = aggregateDefs;
     this.hasCachedValues = aggregateDefs.some((def) => def.valueKey);
     this.groups = new Map();
-    this.groupKeys = [];
+    this.spillStore = spillStore;
+    this.spillPartitionCount = Config.aggSpillPartitions;
+    this.memoryBudget = new RowMemoryBudget();
+    this.memoryBudget.adoptSchema([...groupByTypes, ...aggregateDefs.map((def) => def.resultType)]);
+    this.spilledPartitions = new Set();
+  }
+
+  partitionHandle(partition: number): string {
+    return `agg_${partition}`;
+  }
+
+  async spillResidentGroups(): Promise<void> {
+    if (!this.spillStore || this.groups.size === 0) return;
+
+    const partitions = this.exportPartials(this.spillPartitionCount);
+    for (let p = 0; p < partitions.length; p++) {
+      if (partitions[p].length === 0) continue;
+      await this.spillStore.appendChunk(this.partitionHandle(p), partialGroupsToChunk(partitions[p]));
+      this.spilledPartitions.add(p);
+    }
+
+    this.groups.clear();
+    this.memoryBudget.reset();
   }
 
   async init(): Promise<void> {}
@@ -116,6 +150,7 @@ export class HashAggregateOperator {
       }
     }
 
+    const keyParts: EvalValue[] = new Array(groupByCount);
     for (let i = 0; i < size; i++) {
       let key: GroupKey;
       if (groupByCount === 0) {
@@ -123,12 +158,8 @@ export class HashAggregateOperator {
       } else if (groupByCount === 1) {
         key = groupByVals[0][i] as GroupKey;
       } else {
-        const parts: string[] = new Array(groupByCount);
-        for (let g = 0; g < groupByCount; g++) {
-          const v = groupByVals[g][i];
-          parts[g] = typeof v === 'bigint' ? v.toString() : String(v);
-        }
-        key = parts.join('|');
+        for (let g = 0; g < groupByCount; g++) keyParts[g] = groupByVals[g][i];
+        key = encodeCompositeKey(keyParts);
       }
 
       let group = this.groups.get(key);
@@ -146,9 +177,52 @@ export class HashAggregateOperator {
         group.accumulators[a].add(aggVals[a][i]);
       }
     }
+
+    this.memoryBudget.reset();
+    this.memoryBudget.admit(this.groups.size);
+    if (this.spillStore && this.memoryBudget.exceeded) {
+      await this.spillResidentGroups();
+    }
   }
 
   async finalize(): Promise<DataChunk[]> {
+    if (this.spillStore && this.spilledPartitions.size > 0) {
+      return this.finalizeSpilled(this.spillStore);
+    }
+    return this.emitResidentGroups();
+  }
+
+  async finalizeSpilled(spillStore: ChunkSpillStore): Promise<DataChunk[]> {
+    await this.spillResidentGroups();
+
+    const chunks: DataChunk[] = [];
+    const ordered = [...this.spilledPartitions].sort((a, b) => a - b);
+
+    for (const partition of ordered) {
+      this.groups.clear();
+      for await (const spilled of spillStore.readChunks(this.partitionHandle(partition))) {
+        this.absorbPartials(chunkToPartialGroups(spilled).map((record) => ({
+          key: this.groupKeyOf(record.groupValues),
+          groupValues: record.groupValues,
+          states: record.states,
+        })));
+      }
+      for (const chunk of this.emitResidentGroups()) chunks.push(chunk);
+    }
+
+    this.groups.clear();
+    await spillStore.clearAll();
+    return chunks;
+  }
+
+  groupKeyOf(groupValues: ColumnValue[]): GroupKey {
+    if (groupValues.length === 0) return GLOBAL_GROUP_KEY;
+    if (groupValues.length === 1) return groupValues[0] as GroupKey;
+
+    return encodeCompositeKey(groupValues);
+  }
+
+  emitResidentGroups(): DataChunk[] {
     const groupCount = this.groups.size;
     if (groupCount === 0) {
       if (this.groupByExtractors.length === 0) {
@@ -185,8 +259,8 @@ export class HashAggregateOperator {
       for (let r = 0; r < batchSize; r++) {
         const group = allGroups[start + r];
         for (let g = 0; g < groupByCount; g++) {
-          const val = group.groupValues[g];
-          columns[g].set(r, typeof val === 'bigint' ? Number(val) : val);
+          const value = group.groupValues[g];
+          columns[g].set(r, typeof value === 'bigint' ? Number(value) : value);
         }
         for (let a = 0; a < aggCount; a++) {
           columns[groupByCount + a].set(r, group.accumulators[a].result());

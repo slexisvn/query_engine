@@ -17,6 +17,7 @@ import type {
   ExecColumn,
 } from './execution-types.js';
 import { resolveColumnIndex } from './column-resolve.js';
+import { binaryValueOp, unaryValueOp, normalizeComparable } from './value-ops.js';
 
 const LIKE_CACHE_MAX = 256;
 
@@ -46,9 +47,9 @@ export function compileExpression(expr: BoundExpr | null, columnMapping: ColumnM
 
     case BoundExprKind.UNARY: {
       const operand = compileExpression(expr.operand, columnMapping);
-      if (expr.op === '-') return (c: DataChunk, r: number) => { const v = operand(c, r); return v == null ? null : -(v as number); };
-      if (expr.op === 'NOT') return (c: DataChunk, r: number) => { const v = operand(c, r); return v == null ? null : !(v as boolean); };
-      return operand;
+      const apply = unaryValueOp(expr.op);
+      if (!apply) return operand;
+      return (c: DataChunk, r: number) => apply(operand(c, r));
     }
 
     case BoundExprKind.BETWEEN: {
@@ -210,67 +211,10 @@ export function compileExpression(expr: BoundExpr | null, columnMapping: ColumnM
   }
 }
 
-function addInterval(epochDays: number, amount: number, unit: string): number {
-  if (unit === 'DAY') return epochDays + amount;
-  const d = epochDaysToDate(epochDays);
-  if (unit === 'YEAR') {
-    return dateToEpochDays(d.year + amount, d.month, Math.min(d.day, daysInMonth(d.year + amount, d.month)));
-  }
-  if (unit === 'MONTH') {
-    let newMonth = d.month + amount;
-    let newYear = d.year;
-    while (newMonth > 12) { newMonth -= 12; newYear++; }
-    while (newMonth < 1) { newMonth += 12; newYear--; }
-    return dateToEpochDays(newYear, newMonth, Math.min(d.day, daysInMonth(newYear, newMonth)));
-  }
-  return epochDays + amount;
-}
-
-function daysInMonth(year: number, month: number): number {
-  return new Date(year, month, 0).getDate();
-}
-
-function toNum(val: EvalValue): number {
-  return typeof val === 'bigint' ? Number(val) : (val as number);
-}
-
-function normalizeComparable(val: EvalValue): EvalValue {
-  return typeof val === 'bigint' ? Number(val) : val;
-}
-
-function numOp(a: EvalValue, b: EvalValue, fn: (x: number, y: number) => number): number {
-  return fn(toNum(a), toNum(b));
-}
-
 function compileBinaryOp(op: string, left: CompiledExpr, right: CompiledExpr): CompiledExpr {
-  switch (op) {
-    case '=': return (c: DataChunk, r: number) => { const l = left(c, r), rv = right(c, r); return (l == null || rv == null) ? null : toNum(l) == toNum(rv); };
-    case '<>': return (c: DataChunk, r: number) => { const l = left(c, r), rv = right(c, r); return (l == null || rv == null) ? null : toNum(l) != toNum(rv); };
-    case '<': return (c: DataChunk, r: number) => { const l = left(c, r), rv = right(c, r); return (l == null || rv == null) ? null : toNum(l) < toNum(rv); };
-    case '>': return (c: DataChunk, r: number) => { const l = left(c, r), rv = right(c, r); return (l == null || rv == null) ? null : toNum(l) > toNum(rv); };
-    case '<=': return (c: DataChunk, r: number) => { const l = left(c, r), rv = right(c, r); return (l == null || rv == null) ? null : toNum(l) <= toNum(rv); };
-    case '>=': return (c: DataChunk, r: number) => { const l = left(c, r), rv = right(c, r); return (l == null || rv == null) ? null : toNum(l) >= toNum(rv); };
-    case 'AND': return (c: DataChunk, r: number) => { const l = left(c, r), rv = right(c, r); if (l === false || rv === false) return false; if (l == null || rv == null) return null; return true; };
-    case 'OR': return (c: DataChunk, r: number) => { const l = left(c, r), rv = right(c, r); if (l === true || rv === true) return true; if (l == null || rv == null) return null; return false; };
-    case '+': return (c: DataChunk, r: number) => {
-      const l = left(c, r), rv = right(c, r);
-      if (l === null || rv === null) return null;
-      if ((rv as IntervalValue)?._isInterval) return addInterval(toNum(l), (rv as IntervalValue).value, (rv as IntervalValue).unit);
-      if ((l as IntervalValue)?._isInterval) return addInterval(toNum(rv), (l as IntervalValue).value, (l as IntervalValue).unit);
-      return numOp(l, rv, (a: number, b: number) => a + b);
-    };
-    case '-': return (c: DataChunk, r: number) => {
-      const l = left(c, r), rv = right(c, r);
-      if (l === null || rv === null) return null;
-      if ((rv as IntervalValue)?._isInterval) return addInterval(toNum(l), -(rv as IntervalValue).value, (rv as IntervalValue).unit);
-      return numOp(l, rv, (a: number, b: number) => a - b);
-    };
-    case '*': return (c: DataChunk, r: number) => { const l = left(c, r), rv = right(c, r); return l !== null && rv !== null ? numOp(l, rv, (a: number, b: number) => a * b) : null; };
-    case '/': return (c: DataChunk, r: number) => { const l = left(c, r), rv = right(c, r); return l !== null && rv !== null && (rv as number) !== 0 ? numOp(l, rv, (a: number, b: number) => a / b) : null; };
-    case '%': return (c: DataChunk, r: number) => { const l = left(c, r), rv = right(c, r); return l !== null && rv !== null ? numOp(l, rv, (a: number, b: number) => a % b) : null; };
-    case '||': return (c: DataChunk, r: number) => { const l = left(c, r), rv = right(c, r); return l !== null && rv !== null ? String(l) + String(rv) : null; };
-    default: return () => null;
-  }
+  const apply = binaryValueOp(op);
+  if (!apply) return () => null;
+  return (c: DataChunk, r: number) => apply(left(c, r), right(c, r));
 }
 
 function compileFunction(name: string, args: CompiledExpr[]): CompiledExpr {

@@ -90,7 +90,7 @@ export class FragmentExecutor {
       await this._executePlan(fragment.planRoot, sink, receivers, cancelToken);
 
       if (sender && !cancelToken.cancelled) {
-        for (const chunk of sink.chunks) {
+        for await (const chunk of sink) {
           await sender.consume(chunk);
         }
         await sender.finalize();
@@ -132,7 +132,7 @@ export class FragmentExecutor {
   ): Promise<void> {
     const executor = this._localExecutor;
     (executor as QueryExecutor & ExchangeReceiverHost)._exchangeReceivers = receivers;
-    const compiled: CompiledPipeline = await executor.buildPipeline(planRoot);
+    const compiled: CompiledPipeline = await executor.buildLogicalPipeline(planRoot);
     (executor as QueryExecutor & ExchangeReceiverHost)._exchangeReceivers = null;
 
     const { PipelineGraph } = await import('../../execution/pipeline.js');

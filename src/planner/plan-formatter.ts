@@ -1,4 +1,4 @@
-import { PlanNodeType, JoinType, PhysicalStrategy, type LogicalPlanNode } from './logical-plan.js';
+import { PlanNodeType, JoinType, type LogicalPlanNode } from './logical-plan.js';
 import { BoundExprKind, type BoundExpr, type BoundAggregateNode, type BoundWindowNode } from '../binder/expression-binder.js';
 
 export function formatExpression(expr?: BoundExpr | null): string {
@@ -45,23 +45,13 @@ function formatNode(node: LogicalPlanNode): string {
       const exprs = node.expressions.map(e => formatExpression(e)).join(', ');
       return `Project (${exprs})`;
     case PlanNodeType.JOIN: {
-      let joinTypeStr = node.joinType === JoinType.INNER ? '' : `${node.joinType} `;
-      let physicalPrefix = '';
-      if (node.physicalStrategy === PhysicalStrategy.HASH) physicalPrefix = 'Hash ';
-      else if (node.physicalStrategy === PhysicalStrategy.MERGE) physicalPrefix = 'Merge ';
-
-      let joinStr = `${physicalPrefix}${joinTypeStr}Join`;
+      const joinTypeStr = node.joinType === JoinType.INNER ? '' : `${node.joinType} `;
+      let joinStr = `${joinTypeStr}Join`;
       if (node.condition) joinStr += ` (condition: ${formatExpression(node.condition)})`;
       return joinStr;
     }
     case PlanNodeType.AGGREGATE: {
-      let physicalPrefix = '';
-      if (node.physicalStrategy === PhysicalStrategy.HASH) physicalPrefix = 'Hash ';
-      else if (node.physicalStrategy === PhysicalStrategy.STREAM) physicalPrefix = 'Stream ';
-      else if (node.physicalStrategy === PhysicalStrategy.PERFECT_HASH) physicalPrefix = 'Perfect Hash ';
-      else if (node.physicalStrategy === PhysicalStrategy.UNGROUPED) physicalPrefix = 'Ungrouped ';
-
-      let aggStr = `${physicalPrefix}Aggregate`;
+      let aggStr = 'Aggregate';
       if (node.groupBy && node.groupBy.length > 0) {
         aggStr += ` (group by: ${node.groupBy.map(g => formatExpression(g)).join(', ')})`;
       }

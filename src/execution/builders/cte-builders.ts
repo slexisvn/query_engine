@@ -1,3 +1,4 @@
+import type { PhysicalPlanNode } from '../physical-plan.js';
 import { DependentJoinOperator } from '../operators/dependent-join.js';
 import { Column } from '../../storage/column.js';
 import { DataChunk } from '../../storage/chunk.js';
@@ -19,25 +20,27 @@ import type {
   LogicalDependentJoinNode,
 } from '../../planner/logical-plan.js';
 
-interface CTEResult {
+export interface MaterializedCTE {
   chunks: DataChunk[];
   schema: ExecSchema;
   columnMapping: ColumnMapping;
 }
 
 interface ExecutorLike {
-  buildPipeline(node: LogicalPlanNode): Promise<CompiledPipeline>;
+  buildPipeline(node: PhysicalPlanNode): Promise<CompiledPipeline>;
+  buildLogicalPipeline(node: LogicalPlanNode): Promise<CompiledPipeline>;
   buildSchemaMapping(schema: ExecSchema, alias: string): ColumnMapping;
   findCTEPlan(name: string): LogicalPlanNode | null;
-  cteResults: Map<string, CTEResult>;
+  cteResults: Map<string, MaterializedCTE>;
   cteDefinitions: Map<string, LogicalPlanNode>;
 }
 
-export async function buildCTEAnchor(executor: ExecutorLike, node: LogicalCTEAnchorNode): Promise<CompiledPipeline> {
-  const producer = await executor.buildPipeline(node.children[0]);
+export async function buildCTEAnchor(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalCTEAnchorNode;
+  const producer = await executor.buildPipeline(physical.children[0]);
   executor.cteDefinitions.set(node.cteName.toUpperCase(), node.children[0]);
 
-  const consumer = await executor.buildPipeline(node.children[1]);
+  const consumer = await executor.buildPipeline(physical.children[1]);
 
   return {
     schema: consumer.schema,
@@ -57,15 +60,17 @@ export async function buildCTEAnchor(executor: ExecutorLike, node: LogicalCTEAnc
   };
 }
 
-export async function buildCTEScan(executor: ExecutorLike, node: LogicalCTEScanNode): Promise<CompiledPipeline> {
+export async function buildCTEScan(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalCTEScanNode;
   const ctePlan = executor.findCTEPlan(node.cteName);
   if (!ctePlan) throw new Error(`CTE not found: ${node.cteName}`);
 
-  const compiledCTE = await executor.buildPipeline(ctePlan);
+  const compiledCTE = await executor.buildLogicalPipeline(ctePlan);
+  const schema: ExecSchema = compiledCTE.schema.map((col) => ({ ...col, tableAlias: node.alias }));
 
   return {
-    schema: compiledCTE.schema,
-    columnMapping: compiledCTE.columnMapping,
+    schema,
+    columnMapping: executor.buildSchemaMapping(schema, node.alias),
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       const source: SourceGenerator = async function* () {
         let stored = executor.cteResults.get(node.cteName.toUpperCase());
@@ -105,14 +110,16 @@ export async function buildCTEScan(executor: ExecutorLike, node: LogicalCTEScanN
           await currentSink.consume(chunk);
           yield chunk;
         }
+        if (currentSink.finalize) await currentSink.finalize();
       };
       graph.setSource(currentPipelineId, source);
     }
   };
 }
 
-export async function buildMaterialize(executor: ExecutorLike, node: LogicalMaterializeNode): Promise<CompiledPipeline> {
-  const child = await executor.buildPipeline(node.children[0]);
+export async function buildMaterialize(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalMaterializeNode;
+  const child = await executor.buildPipeline(physical.children[0]);
   return {
     schema: child.schema,
     columnMapping: child.columnMapping,
@@ -122,8 +129,9 @@ export async function buildMaterialize(executor: ExecutorLike, node: LogicalMate
   };
 }
 
-export async function buildDependentJoin(executor: ExecutorLike, node: LogicalDependentJoinNode): Promise<CompiledPipeline> {
-  const outer = await executor.buildPipeline(node.children[0]);
+export async function buildDependentJoin(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalDependentJoinNode;
+  const outer = await executor.buildPipeline(physical.children[0]);
   const dummyOp = new DependentJoinOperator(node.subqueryType, outer.schema);
 
   return {
@@ -149,7 +157,7 @@ export async function buildDependentJoin(executor: ExecutorLike, node: LogicalDe
               await runtimeOp.processOuterRow(outerRow, cachedInnerChunks);
               continue;
             }
-            const innerPipeline = await executor.buildPipeline(node.children[1]);
+            const innerPipeline = await executor.buildPipeline(physical.children[1]);
             const innerChunks: DataChunk[] = [];
             const innerGraph = new PipelineGraph();
             const innerSink: Sink = { consume: async (c: DataChunk) => { innerChunks.push(c); } };

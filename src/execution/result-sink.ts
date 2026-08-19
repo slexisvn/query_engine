@@ -1,6 +1,10 @@
 import { Config } from '../config.js';
+import { RowMemoryBudget } from './memory-budget.js';
 import type { DataChunk } from '../storage/chunk.js';
+import type { ChunkSpillStore } from '../storage/spill-manager/spill-manager.js';
 import type { Sink } from './execution-types.js';
+
+const MATERIALIZED_HANDLE = 'result';
 
 export class ResultSink implements Sink {
   _streaming: boolean;
@@ -15,8 +19,12 @@ export class ResultSink implements Sink {
   _producerResolve: (() => void) | null;
   _consumerResolve: (() => void) | null;
   _collected: DataChunk[];
+  _spillStore: ChunkSpillStore | null;
+  _memoryBudget: RowMemoryBudget;
+  _spilledChunks: number;
+  _spillWrites: Promise<void>;
 
-  constructor(streaming: boolean = false) {
+  constructor(streaming: boolean = false, spillStore: ChunkSpillStore | null = null) {
     this._streaming = streaming;
     this._capacity = Config.sinkQueueCapacity;
     this._queue = new Array(this._capacity);
@@ -29,6 +37,10 @@ export class ResultSink implements Sink {
     this._producerResolve = null;
     this._consumerResolve = null;
     this._collected = [];
+    this._spillStore = spillStore;
+    this._memoryBudget = new RowMemoryBudget();
+    this._spilledChunks = 0;
+    this._spillWrites = Promise.resolve();
   }
 
   async init(): Promise<void> {}
@@ -40,7 +52,7 @@ export class ResultSink implements Sink {
     this._totalRows += chunk.size;
 
     if (!this._streaming) {
-      this._collected.push(chunk);
+      await this.collectChunk(chunk);
       return;
     }
 
@@ -61,6 +73,37 @@ export class ResultSink implements Sink {
       this._consumerResolve = null;
       resolve();
     }
+  }
+
+  async collectChunk(chunk: DataChunk): Promise<void> {
+    if (this._collected.length === 0) {
+      this._memoryBudget.adoptSchema(chunk.columns.map((column) => column.dataType));
+    }
+
+    this._collected.push(chunk);
+    this._memoryBudget.admit(chunk.size);
+
+    if (this._spillStore && this._memoryBudget.exceeded) {
+      await this.spillCollected(this._spillStore);
+    }
+  }
+
+  async spillCollected(spillStore: ChunkSpillStore): Promise<void> {
+    const pending = this._collected;
+    if (pending.length === 0) return;
+    this._collected = [];
+    this._memoryBudget.reset();
+    this._spilledChunks += pending.length;
+
+    const writes = this._spillWrites.then(async () => {
+      for (const chunk of pending) await spillStore.appendChunk(MATERIALIZED_HANDLE, chunk);
+    });
+    this._spillWrites = writes;
+    await writes;
+  }
+
+  get spilledChunkCount(): number {
+    return this._spilledChunks;
   }
 
   async finalize(): Promise<void> {
@@ -91,8 +134,21 @@ export class ResultSink implements Sink {
     return this._totalRows;
   }
 
-  get chunks(): DataChunk[] {
+  get residentChunks(): DataChunk[] {
     return this._collected;
+  }
+
+  materializedIterator(): AsyncIterator<DataChunk> {
+    const sink = this;
+    const drain = async function* (): AsyncGenerator<DataChunk> {
+      await sink._spillWrites;
+      if (sink._spillStore && sink._spilledChunks > 0) {
+        for await (const chunk of sink._spillStore.readChunks(MATERIALIZED_HANDLE)) yield chunk;
+      }
+      for (const chunk of sink._collected) yield chunk;
+      if (sink._spillStore && sink._spilledChunks > 0) await sink._spillStore.clearAll();
+    };
+    return drain()[Symbol.asyncIterator]();
   }
 
   _dequeue(): DataChunk | undefined {
@@ -112,16 +168,7 @@ export class ResultSink implements Sink {
 
   [Symbol.asyncIterator](): AsyncIterator<DataChunk> {
     if (!this._streaming) {
-      let index = 0;
-      const collected = this._collected;
-      return {
-        async next() {
-          if (index < collected.length) {
-            return { done: false, value: collected[index++] };
-          }
-          return { done: true, value: undefined };
-        }
-      };
+      return this.materializedIterator();
     }
 
     const sink = this;

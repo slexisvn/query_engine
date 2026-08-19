@@ -1,3 +1,5 @@
+import type { ExecutionCatalog } from '../execution-catalog.js';
+import type { PhysicalPlanNode } from '../physical-plan.js';
 import { ScanOperator } from '../operators/scan.js';
 import { IndexScanOperator } from '../operators/index-scan.js';
 import { DataChunk } from '../../storage/chunk.js';
@@ -18,24 +20,19 @@ import type {
   LogicalEmptyNode,
 } from '../../planner/logical-plan.js';
 import type { ColumnInfo } from '../../binder/scope.js';
+import { isPagedTableStorage, type TableStorage } from '../../storage/table-storage.js';
 
-type ScanStorage = ConstructorParameters<typeof ScanOperator>[0];
-type IndexStorage = ConstructorParameters<typeof IndexScanOperator>[1];
-type IndexBTree = ConstructorParameters<typeof IndexScanOperator>[0];
 
-interface CatalogLike {
-  getTableStorage(name: string): (ScanStorage & IndexStorage) | null;
-  getIndexForColumn(table: string, column: string): IndexBTree | null;
-}
 
 interface ExecutorLike {
-  catalog: CatalogLike;
-  buildPipeline(node: LogicalPlanNode): Promise<CompiledPipeline>;
+  catalog: ExecutionCatalog;
+  buildPipeline(node: PhysicalPlanNode): Promise<CompiledPipeline>;
   resolveProjectedColumnIndexes(schema: ExecSchema, planColumns: ColumnInfo[] | null): number[] | null;
   buildSchemaMapping(schema: ExecSchema, alias: string): ColumnMapping;
 }
 
-export async function buildScan(executor: ExecutorLike, node: LogicalScanNode): Promise<CompiledPipeline> {
+export async function buildScan(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalScanNode;
   const storage = executor.catalog.getTableStorage(node.table);
   if (!storage) throw new Error(`No storage for table: ${node.table}`);
 
@@ -66,9 +63,11 @@ export async function buildScan(executor: ExecutorLike, node: LogicalScanNode): 
   };
 }
 
-export async function buildIndexScan(executor: ExecutorLike, node: LogicalIndexScanNode): Promise<CompiledPipeline> {
+export async function buildIndexScan(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalIndexScanNode;
   const storage = executor.catalog.getTableStorage(node.table);
   if (!storage) throw new Error(`No storage for table: ${node.table}`);
+  if (!isPagedTableStorage(storage)) throw new Error(`Index scan requires paged storage for table: ${node.table}`);
 
   const btree = executor.catalog.getIndexForColumn(node.table, node.columnName);
   if (!btree) throw new Error(`No index for ${node.table}.${node.columnName}`);
@@ -101,7 +100,8 @@ export async function buildIndexScan(executor: ExecutorLike, node: LogicalIndexS
   };
 }
 
-export async function buildSingleRow(executor: ExecutorLike, node: LogicalSingleRowNode): Promise<CompiledPipeline> {
+export async function buildSingleRow(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalSingleRowNode;
   return {
     schema: [],
     columnMapping: new Map(),
@@ -117,8 +117,9 @@ export async function buildSingleRow(executor: ExecutorLike, node: LogicalSingle
   };
 }
 
-export async function buildEmpty(executor: ExecutorLike, node: LogicalEmptyNode): Promise<CompiledPipeline> {
-  const child = await executor.buildPipeline(node.children![0]);
+export async function buildEmpty(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const node = physical.logical as LogicalEmptyNode;
+  const child = await executor.buildPipeline(physical.children[0]);
   return {
     schema: child.schema,
     columnMapping: child.columnMapping,

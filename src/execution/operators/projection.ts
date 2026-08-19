@@ -9,6 +9,7 @@ import { Config } from '../../config.js';
 import { setBit, clearBit } from '../../utils/bitmap.js';
 import type { CompiledExpr, ColumnMapping } from '../execution-types.js';
 import { resolveColumnIndex } from '../column-resolve.js';
+import { compileColumnarProjection, type ColumnarProjection } from '../columnar-projection.js';
 
 interface ParallelDispatchLike {
   canParallelize(op: string, dt: DataType, n: number): boolean;
@@ -67,6 +68,7 @@ export class ProjectionOperator {
   columnMapping: ColumnMapping | null;
   parallelDispatch: ParallelDispatchLike | null;
   colRefIndices: number[];
+  columnarProjections: (ColumnarProjection | null)[];
 
   constructor(expressions: BoundExpr[], evaluators: CompiledExpr[], resultTypes: DataType[] | null = null, columnMapping: ColumnMapping | null = null, parallelDispatch: ParallelDispatchLike | null) {
     this.expressions = expressions;
@@ -81,6 +83,8 @@ export class ProjectionOperator {
       }
       return -1;
     });
+
+    this.columnarProjections = expressions.map((expr) => compileColumnarProjection(expr, columnMapping));
   }
 
   async init(): Promise<void> {}
@@ -108,6 +112,15 @@ export class ProjectionOperator {
         const wasmCol = await tryWasmProject(this.expressions[e], chunk, this.columnMapping);
         if (wasmCol) {
           outputCols.push(wasmCol);
+          continue;
+        }
+      }
+
+      const columnar = this.columnarProjections[e];
+      if (columnar && dataType === DataType.FLOAT64) {
+        const vectorCol = columnar(chunk);
+        if (vectorCol) {
+          outputCols.push(vectorCol);
           continue;
         }
       }

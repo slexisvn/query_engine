@@ -16,12 +16,12 @@ interface BTreeLike {
   range(low: IndexScanKey, high: IndexScanKey, lowInclusive: boolean, highInclusive: boolean): Generator<RowLocationLike>;
 }
 
-interface BufferPoolLike {
+interface PageCacheLike {
   fetchPage(pageId: string, bypassCache: boolean): Promise<DataChunk | null>;
 }
 
 interface IndexTableLike {
-  bufferPool: BufferPoolLike;
+  pageCache: PageCacheLike;
   getSchema(): ExecSchema;
 }
 
@@ -73,7 +73,7 @@ export class IndexScanOperator {
     let pendingRows: ColumnValue[][] = [];
 
     for (const [pageId, rowIndices] of pageGroups) {
-      const page = await this.table.bufferPool.fetchPage(pageId, true);
+      const page = await this.table.pageCache.fetchPage(pageId, true);
 
       for (const rowIdx of rowIndices) {
         const row: ColumnValue[] = [];

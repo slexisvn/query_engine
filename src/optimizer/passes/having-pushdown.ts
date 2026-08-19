@@ -3,7 +3,7 @@ import { PlanRewriter } from '../../planner/plan-visitor.js';
 import { PlanNodeType, type LogicalPlanNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
 import { type BoundExpr } from '../../binder/expression-binder.js';
 import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
-import { containsAggregate } from './expr-walk.js';
+import { containsAggregate } from '../expr-walk.js';
 
 export class HavingPushdown extends OptimizationPass {
   override get name() { return 'HavingPushdown'; }

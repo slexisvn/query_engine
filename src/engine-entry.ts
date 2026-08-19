@@ -2,7 +2,6 @@ import { QueryEngine } from './engine/query-engine.js';
 import { Catalog } from './catalog/catalog.js';
 import { InMemoryRelation } from './dataframe/in-memory-relation.js';
 import type { ColumnSchema, ColumnValue } from './storage/data-type.js';
-import type { Table } from './storage/table.js';
 
 export type RowInput = Record<string, ColumnValue> | ColumnValue[];
 
@@ -19,7 +18,7 @@ export function registerTable(engine: QueryEngine, name: string, rows: RowInput[
   const relation = InMemoryRelation.fromRows(rows, declaredSchema);
   const schema = relation.getSchema();
   engine.catalog.registerTable(name, schema);
-  engine.catalog.registerTableStorage(name, relation as object as Table);
+  engine.catalog.registerTableStorage(name, relation);
   return schema;
 }
 
@@ -39,6 +38,6 @@ export async function registerStreamingTable(engine: QueryEngine, name: string, 
 
   const schema = relation.getSchema();
   engine.catalog.registerTable(name, schema);
-  engine.catalog.registerTableStorage(name, relation as object as Table);
+  engine.catalog.registerTableStorage(name, relation);
   return schema;
 }

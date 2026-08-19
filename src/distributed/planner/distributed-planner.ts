@@ -29,6 +29,7 @@ import type {
 import type { BoundExpr, BoundBinaryNode } from '../../binder/expression-binder.js';
 import type { ColumnInfo } from '../../binder/scope.js';
 import { splitAnd } from './expr-utils.js';
+import { chooseJoinBuildSide } from '../../optimizer/join-build-side.js';
 
 interface OutputPartitioningLocal {
   exchangeType: string;
@@ -422,8 +423,13 @@ export class DistributedPlanner {
   }
 
   _joinOutputSchema(node: LogicalJoinNode): DistributedScanSchemaColumn[] {
-    const buildChild = node._buildSide === 'right' ? node.children[1] : node.children[0];
-    const probeChild = node._buildSide === 'right' ? node.children[0] : node.children[1];
+    const buildSide = chooseJoinBuildSide(
+      node.joinType,
+      node.children[0]._cardinality ?? 0,
+      node.children[1]._cardinality ?? 0,
+    );
+    const buildChild = buildSide === 'right' ? node.children[1] : node.children[0];
+    const probeChild = buildSide === 'right' ? node.children[0] : node.children[1];
     return [...this._deriveSubtreeSchema(buildChild), ...this._deriveSubtreeSchema(probeChild)];
   }
 

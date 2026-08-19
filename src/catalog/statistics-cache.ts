@@ -1,16 +1,10 @@
+import type { TableStorage } from '../storage/table-storage.js';
 import { StatisticsCollector } from './statistics.js';
 import type { TableStatistics } from './statistics.js';
 import type { ColumnSchema, ColumnValue } from '../storage/data-type.js';
 
-interface TableStorageLike {
-  rowCount(): number;
-  getSchema(): ColumnSchema[];
-  getColumnIndex(name: string): number;
-  scan(): AsyncIterable<{ size: number; getValue(row: number, col: number): ColumnValue }>;
-}
-
 interface CatalogLike {
-  getTableStorage(name: string): TableStorageLike | null;
+  getTableStorage(name: string): TableStorage | null;
   listTables(): string[];
 }
 
