@@ -35,7 +35,7 @@ interface SchemaFieldLike {
   tableAlias: string;
   name: string;
   index: number;
-  dataType: string | null;
+  dataType: DataType | null;
 }
 
 interface SchemaLike {
@@ -55,7 +55,7 @@ type BinaryTypeFn = (left: DataType, right: DataType) => DataType;
 interface ColBindResult {
   expr: BoundExpr;
   outputName: string | null;
-  dataType: string | null;
+  dataType: DataType | null;
 }
 
 function deriveName(expr: BoundExpr | null): string | null {

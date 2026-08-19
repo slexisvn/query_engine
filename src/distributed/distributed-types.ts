@@ -392,6 +392,7 @@ export interface GatherPlacementResult {
 
 export interface FragmentizeContext {
   coordinatorId: NodeId;
+  scanFilter?: BoundExpr | null;
 }
 
 export enum QueryStatus {

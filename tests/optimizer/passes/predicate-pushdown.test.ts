@@ -147,7 +147,7 @@ describe('PredicatePushdown', () => {
         scan('a'),
         scan('b')
       );
-      const isNullPred = { kind: BoundExprKind.IS_NULL, operand: colRef('b', 'val'), negated: false };
+      const isNullPred = { kind: BoundExprKind.IS_NULL, expr: colRef('b', 'val'), negated: false };
       const plan = LogicalFilter(isNullPred, join);
 
       const result = pass.apply(plan);

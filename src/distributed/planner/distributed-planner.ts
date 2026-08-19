@@ -30,6 +30,7 @@ import type { BoundExpr, BoundBinaryNode } from '../../binder/expression-binder.
 import type { ColumnInfo } from '../../binder/scope.js';
 import { splitAnd } from './expr-utils.js';
 import { chooseJoinBuildSide } from '../../optimizer/join-build-side.js';
+import type { DataType } from '../../storage/data-type.js';
 
 interface OutputPartitioningLocal {
   exchangeType: string;
@@ -63,7 +64,7 @@ interface ProjectExprLike {
   alias?: string;
   name?: string;
   columnName?: string;
-  dataType?: string | null;
+  dataType?: DataType | null;
   resultType?: string | null;
 }
 
@@ -494,8 +495,7 @@ export class DistributedPlanner {
       return { plan: node, exchangeInputs: [], workerNodes: [] };
     }
 
-    const filter = this._findFilterAbove(node);
-    const partitionIds = this._pruner.prune(tableName, filter, this._partitionMap as PrunerPartitionMapArg);
+    const partitionIds = this._pruner.prune(tableName, context.scanFilter ?? null, this._partitionMap as PrunerPartitionMapArg);
     const workerNodes = this._clusterManager.getWorkerNodes();
     const targetNodes = this._selectNodesForPartitions(tableName, partitionIds, workerNodes);
 
@@ -507,8 +507,8 @@ export class DistributedPlanner {
   }
 
   _processJoin(node: LogicalJoinNode, context: FragmentizeContext): FragmentProcessResult {
-    const leftResult = this._processNode(node.children[0], context);
-    const rightResult = this._processNode(node.children[1], context);
+    const leftResult = this._processNode(node.children[0], this._contextForChild(node, node.children[0], context));
+    const rightResult = this._processNode(node.children[1], this._contextForChild(node, node.children[1], context));
 
     const exchange = this._exchangePlacement.determineJoinExchange(node);
 
@@ -540,7 +540,7 @@ export class DistributedPlanner {
   }
 
   _processPartialAggregate(node: LogicalPartialAggregateNode, context: FragmentizeContext): FragmentProcessResult {
-    const childResult = this._processNode(node.children[0], context);
+    const childResult = this._processNode(node.children[0], this._contextForChild(node, node.children[0], context));
     const newNode = {
       ...node,
       children: [childResult.plan],
@@ -553,7 +553,7 @@ export class DistributedPlanner {
   }
 
   _processFinalAggregate(node: LogicalFinalAggregateNode, context: FragmentizeContext): FragmentProcessResult {
-    const childResult = this._processNode(node.children[0], context);
+    const childResult = this._processNode(node.children[0], this._contextForChild(node, node.children[0], context));
     const newNode = {
       ...node,
       children: [childResult.plan],
@@ -562,7 +562,7 @@ export class DistributedPlanner {
   }
 
   _processExchange(node: LogicalExchangeNode, context: FragmentizeContext): FragmentProcessResult {
-    const childResult = this._processNode(node.children[0], context);
+    const childResult = this._processNode(node.children[0], this._contextForChild(node, node.children[0], context));
     const workerNodes = childResult.workerNodes || [];
 
     if (workerNodes.length === 0) {
@@ -599,7 +599,7 @@ export class DistributedPlanner {
   }
 
   _processMergeExchange(node: LogicalMergeExchangeNode, context: FragmentizeContext): FragmentProcessResult {
-    const childResult = this._processNode(node.children[0], context);
+    const childResult = this._processNode(node.children[0], this._contextForChild(node, node.children[0], context));
 
     const exchangeInputs: ExchangeInput[] = childResult.exchangeInputs.map(input => ({
       ...input,
@@ -616,13 +616,21 @@ export class DistributedPlanner {
     return { plan: newNode as LogicalPlanNode, exchangeInputs, workerNodes: [] };
   }
 
+  _contextForChild(parent: LogicalPlanNode, child: LogicalPlanNode, context: FragmentizeContext): FragmentizeContext {
+    const scansDirectly = child.type === PlanNodeType.SCAN || child.type === PlanNodeType.INDEX_SCAN;
+    if (parent.type === PlanNodeType.FILTER && scansDirectly) {
+      return { ...context, scanFilter: parent.condition };
+    }
+    return context.scanFilter === undefined ? context : { ...context, scanFilter: null };
+  }
+
   _processGeneric(node: LogicalPlanNode, context: FragmentizeContext): FragmentProcessResult {
     const children = getChildren(node);
     if (children.length === 0) {
       return { plan: node, exchangeInputs: [], workerNodes: [] };
     }
 
-    const childResults = children.map(child => this._processNode(child, context));
+    const childResults = children.map(child => this._processNode(child, this._contextForChild(node, child, context)));
     const allExchangeInputs: ExchangeInput[] = [];
     const newChildren: LogicalPlanNode[] = [];
     let mergedWorkerNodes: NodeId[] = [];
@@ -637,10 +645,6 @@ export class DistributedPlanner {
 
     const newNode = { ...node, children: newChildren };
     return { plan: newNode as LogicalPlanNode, exchangeInputs: allExchangeInputs, workerNodes: mergedWorkerNodes };
-  }
-
-  _findFilterAbove(_node: LogicalPlanNode): BoundExpr | null {
-    return null;
   }
 
   _selectNodesForPartitions(tableName: string, partitionIds: Set<PartitionId>, workerNodes: NodeLike[]): NodeId[] {

@@ -1,5 +1,5 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanRewriter } from '../../planner/plan-visitor.js';
+import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { PlanNodeType, type LogicalPlanNode, type LogicalLimitNode, type LogicalTopNNode, type LogicalSortNode } from '../../planner/logical-plan.js';
 
 export class TopNFusion extends OptimizationPass {
@@ -22,8 +22,6 @@ class TopNFusionRewriter extends PlanRewriter {
         count: node.count,
         offset: node.offset || 0,
         children: child.children,
-        _sortedBy: child._sortedBy,
-        _cardinality: Math.min(node.count, child._cardinality || Infinity),
       };
       return topN;
     }
@@ -36,8 +34,6 @@ class TopNFusionRewriter extends PlanRewriter {
         count: node.count,
         offset: node.offset || 0,
         children: sort.children,
-        _sortedBy: sort._sortedBy,
-        _cardinality: Math.min(node.count, sort._cardinality || Infinity),
       };
       return { ...child, children: [topN] };
     }

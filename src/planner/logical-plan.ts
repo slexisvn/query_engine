@@ -437,3 +437,15 @@ export function planToString(node: LogicalPlanNode, indent: number = 0): string 
   }
   return str;
 }
+
+export function collectScannedTables(node: LogicalPlanNode, into: Set<string> = new Set()): Set<string> {
+  const stack: LogicalPlanNode[] = [node];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current.type === PlanNodeType.SCAN || current.type === PlanNodeType.INDEX_SCAN) {
+      into.add(current.table.toUpperCase());
+    }
+    for (const child of getChildren(current)) stack.push(child);
+  }
+  return into;
+}

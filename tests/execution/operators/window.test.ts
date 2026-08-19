@@ -311,3 +311,52 @@ describe('WindowOperator', () => {
     });
   });
 });
+
+describe('WindowOperator over filtered input', () => {
+  it('reads the rows a selection vector selects, not the raw positions', async () => {
+    const chunk = makeChunk([
+      { type: 'INT32', values: [1, 2, 3, 4, 5] },
+      { type: 'VARCHAR', values: ['A', 'B', 'A', 'B', 'A'] },
+      { type: 'INT32', values: [10, 20, 30, 40, 50] },
+    ]);
+    chunk.setSelectionVector(new Uint32Array([1, 3]), 2);
+
+    const op = buildOperator([chunk], schema, [{
+      name: 'ROW_NUMBER',
+      args: [],
+      partitionBy: [{ colIdx: 1 }],
+      orderBy: [{ expr: { colIdx: 0 }, direction: 'ASC' }],
+      resultType: 'INT64',
+    }]);
+
+    const rows = (await op.execute([chunk])).flatMap(c => c.toRows());
+
+    expect(rows.map(r => r[0])).toEqual([2, 4]);
+    expect(rows.map(r => r[1])).toEqual(['B', 'B']);
+    expect(rows.map(r => r[3])).toEqual([1, 2]);
+  });
+
+  it('partitions filtered rows by their own values', async () => {
+    const chunk = makeChunk([
+      { type: 'INT32', values: [1, 2, 3, 4] },
+      { type: 'VARCHAR', values: ['A', 'B', 'B', 'A'] },
+      { type: 'INT32', values: [10, 20, 30, 40] },
+    ]);
+    chunk.setSelectionVector(new Uint32Array([1, 2, 3]), 3);
+
+    const op = buildOperator([chunk], schema, [{
+      name: 'ROW_NUMBER',
+      args: [],
+      partitionBy: [{ colIdx: 1 }],
+      orderBy: [{ expr: { colIdx: 0 }, direction: 'ASC' }],
+      resultType: 'INT64',
+    }]);
+
+    const rows = (await op.execute([chunk])).flatMap(c => c.toRows());
+    const byId = new Map(rows.map(r => [r[0], r[3]]));
+
+    expect(byId.get(2)).toBe(1);
+    expect(byId.get(3)).toBe(2);
+    expect(byId.get(4)).toBe(1);
+  });
+});

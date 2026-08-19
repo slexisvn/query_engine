@@ -1,8 +1,9 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanRewriter } from '../../planner/plan-visitor.js';
+import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { PlanNodeType, setChildren, type LogicalPlanNode, type LogicalFilterNode, type LogicalProjectNode, type LogicalJoinNode, type LogicalEmptyNode, type ProjectedExpr } from '../../planner/logical-plan.js';
-import { BoundExprKind, BoundLiteral, type BoundExpr, type BoundBinaryNode, type LiteralValue } from '../../binder/expression-binder.js';
+import { BoundExprKind, BoundLiteral, getExprType, type BoundExpr, type BoundBinaryNode, type LiteralValue } from '../../binder/expression-binder.js';
 import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
+import { DataType } from '../../storage/data-type.js';
 
 export class ExpressionSimplifier extends OptimizationPass {
   override get name() { return 'ExpressionSimplifier'; }
@@ -75,12 +76,12 @@ export function simplifyExpression(expr: BoundExpr | null): BoundExpr | null {
       const op = expr.op.toUpperCase();
 
             if (op === 'AND') {
-        if (isLiteral(left, false) || isLiteral(right, false)) return BoundLiteral(false, 'BOOLEAN');
+        if (isLiteral(left, false) || isLiteral(right, false)) return BoundLiteral(false, DataType.BOOLEAN);
         if (isLiteral(left, true)) return right;
         if (isLiteral(right, true)) return left;
         if (exprEquals(left, right)) return left;
       } else if (op === 'OR') {
-        if (isLiteral(left, true) || isLiteral(right, true)) return BoundLiteral(true, 'BOOLEAN');
+        if (isLiteral(left, true) || isLiteral(right, true)) return BoundLiteral(true, DataType.BOOLEAN);
         if (isLiteral(left, false)) return right;
         if (isLiteral(right, false)) return left;
         if (exprEquals(left, right)) return left;
@@ -102,19 +103,19 @@ export function simplifyExpression(expr: BoundExpr | null): BoundExpr | null {
         if (left.kind === BoundExprKind.LITERAL && right.kind === BoundExprKind.LITERAL) {
           const lVal = left.value as number;
           const rVal = right.value as number;
-          const exprType = (expr as { dataType?: string | null }).dataType ?? null;
+          const exprType = getExprType(expr);
           if (lVal !== null && rVal !== null) {
             try {
-              if (op === '+') return BoundLiteral(lVal + rVal, typeof (lVal + rVal) === 'number' ? 'FLOAT64' : exprType);
-              if (op === '-') return BoundLiteral(lVal - rVal, typeof (lVal - rVal) === 'number' ? 'FLOAT64' : exprType);
-              if (op === '*') return BoundLiteral(lVal * rVal, typeof (lVal * rVal) === 'number' ? 'FLOAT64' : exprType);
-              if (op === '/') return BoundLiteral(lVal / rVal, 'FLOAT64');
-              if (op === '=') return BoundLiteral(lVal === rVal, 'BOOLEAN');
-              if (op === '!=') return BoundLiteral(lVal !== rVal, 'BOOLEAN');
-              if (op === '>') return BoundLiteral(lVal > rVal, 'BOOLEAN');
-              if (op === '>=') return BoundLiteral(lVal >= rVal, 'BOOLEAN');
-              if (op === '<') return BoundLiteral(lVal < rVal, 'BOOLEAN');
-              if (op === '<=') return BoundLiteral(lVal <= rVal, 'BOOLEAN');
+              if (op === '+') return BoundLiteral(lVal + rVal, typeof (lVal + rVal) === 'number' ? DataType.FLOAT64 : exprType);
+              if (op === '-') return BoundLiteral(lVal - rVal, typeof (lVal - rVal) === 'number' ? DataType.FLOAT64 : exprType);
+              if (op === '*') return BoundLiteral(lVal * rVal, typeof (lVal * rVal) === 'number' ? DataType.FLOAT64 : exprType);
+              if (op === '/') return BoundLiteral(lVal / rVal, DataType.FLOAT64);
+              if (op === '=') return BoundLiteral(lVal === rVal, DataType.BOOLEAN);
+              if (op === '!=') return BoundLiteral(lVal !== rVal, DataType.BOOLEAN);
+              if (op === '>') return BoundLiteral(lVal > rVal, DataType.BOOLEAN);
+              if (op === '>=') return BoundLiteral(lVal >= rVal, DataType.BOOLEAN);
+              if (op === '<') return BoundLiteral(lVal < rVal, DataType.BOOLEAN);
+              if (op === '<=') return BoundLiteral(lVal <= rVal, DataType.BOOLEAN);
             } catch (e) {
             }
           }
@@ -131,8 +132,8 @@ export function simplifyExpression(expr: BoundExpr | null): BoundExpr | null {
       const op = expr.op.toUpperCase();
 
             if (op === 'NOT') {
-        if (isLiteral(operand, true)) return BoundLiteral(false, 'BOOLEAN');
-        if (isLiteral(operand, false)) return BoundLiteral(true, 'BOOLEAN');
+        if (isLiteral(operand, true)) return BoundLiteral(false, DataType.BOOLEAN);
+        if (isLiteral(operand, false)) return BoundLiteral(true, DataType.BOOLEAN);
         if (operand.kind === BoundExprKind.UNARY && operand.op.toUpperCase() === 'NOT') {
           return operand.operand;
         }
@@ -187,7 +188,7 @@ export function simplifyExpression(expr: BoundExpr | null): BoundExpr | null {
       const sourceVal = source.kind === BoundExprKind.LITERAL ? (source.value as LiteralValue | Date) : null;
       if (sourceVal instanceof Date) {
         const extracted = extractFromDate(sourceVal, expr.field);
-        if (extracted !== null) return BoundLiteral(extracted, 'INT32');
+        if (extracted !== null) return BoundLiteral(extracted, DataType.INT32);
       }
       if (source !== expr.source) return { ...expr, source };
       return expr;
@@ -236,14 +237,14 @@ function factorCommonConjuncts(left: BoundExpr, right: BoundExpr): BoundExpr | n
   if (common.length === 0) return null;
 
   const rightRest = rightConjuncts.filter(expr => !commonKeys.has(exprKey(expr)));
-  const leftRemainder = combineConjuncts(leftRest) || BoundLiteral(true, 'BOOLEAN');
-  const rightRemainder = combineConjuncts(rightRest) || BoundLiteral(true, 'BOOLEAN');
+  const leftRemainder = combineConjuncts(leftRest) || BoundLiteral(true, DataType.BOOLEAN);
+  const rightRemainder = combineConjuncts(rightRest) || BoundLiteral(true, DataType.BOOLEAN);
   const residualOr: BoundBinaryNode = {
     kind: BoundExprKind.BINARY,
     op: 'OR',
     left: leftRemainder,
     right: rightRemainder,
-    resultType: 'BOOLEAN',
+    resultType: DataType.BOOLEAN,
   };
 
   return combineConjuncts([...common, residualOr]);

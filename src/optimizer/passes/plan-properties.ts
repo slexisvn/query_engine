@@ -1,10 +1,9 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanNodeType, JoinType, type LogicalPlanNode, type LogicalSortNode } from '../../planner/logical-plan.js';
-import { PlanRewriter } from '../../planner/plan-visitor.js';
+import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { DefaultCardinalityEstimator, type TableStats } from '../join-order/cardinality.js';
 import { columnKeyOf, inferSortOrder } from '../sort-properties.js';
-
-const DEFAULT_CARDINALITY = 1000;
+import { Config } from '../../config.js';
 
 export const PLAN_PROPERTIES_PASS = 'PlanProperties';
 
@@ -35,21 +34,24 @@ class PlanPropertiesRewriter extends PlanRewriter {
 
   override rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
     const rewritten = this.rewriteChildren(node);
-    rewritten._cardinality = this.estimateCardinality(rewritten);
-    rewritten._sortedBy = inferSortOrder(rewritten);
-    return rewritten;
+    return {
+      ...rewritten,
+      _cardinality: this.estimateCardinality(rewritten),
+      _sortedBy: inferSortOrder(rewritten),
+    };
   }
 
   override rewriteSort(node: LogicalSortNode): LogicalPlanNode {
     const rewritten = this.rewriteChildren(node);
     const childCard = childCardinality(rewritten);
 
-    rewritten._cardinality = rewritten.limit ? Math.min(rewritten.limit, childCard) : childCard;
-    rewritten._sortedBy = rewritten.orderKeys
-      .map(key => ({ key: columnKeyOf(key.expr), direction: (key.direction || 'ASC').toUpperCase() }))
-      .filter((entry): entry is { key: string; direction: string } => !!entry.key);
-
-    return rewritten;
+    return {
+      ...rewritten,
+      _cardinality: rewritten.limit ? Math.min(rewritten.limit, childCard) : childCard,
+      _sortedBy: rewritten.orderKeys
+        .map(key => ({ key: columnKeyOf(key.expr), direction: (key.direction || 'ASC').toUpperCase() }))
+        .filter((entry): entry is { key: string; direction: string } => !!entry.key),
+    };
   }
 
   estimateCardinality(node: LogicalPlanNode): number {
@@ -64,17 +66,18 @@ class PlanPropertiesRewriter extends PlanRewriter {
       case PlanNodeType.AGGREGATE:
         return this.cardEstimator.estimateAggregate(childCardinality(node), node.groupBy?.length || 0, node.groupBy || []);
       case PlanNodeType.LIMIT:
+      case PlanNodeType.TOP_N:
         return Math.min(node.count || childCardinality(node), childCardinality(node));
       case PlanNodeType.DISTINCT:
         return Math.max(1, Math.round(Math.sqrt(childCardinality(node))));
       default:
-        return node.children?.length ? childCardinality(node) : DEFAULT_CARDINALITY;
+        return node.children?.length ? childCardinality(node) : Config.defaultCardinality;
     }
   }
 
   estimateJoinCardinality(node: LogicalPlanNode & { type: PlanNodeType.JOIN }): number {
-    const leftCard = node.children[0]._cardinality ?? DEFAULT_CARDINALITY;
-    const rightCard = node.children[1]._cardinality ?? DEFAULT_CARDINALITY;
+    const leftCard = node.children[0]._cardinality ?? Config.defaultCardinality;
+    const rightCard = node.children[1]._cardinality ?? Config.defaultCardinality;
 
     switch (node.joinType) {
       case JoinType.SEMI:
@@ -94,5 +97,5 @@ class PlanPropertiesRewriter extends PlanRewriter {
 }
 
 function childCardinality(node: LogicalPlanNode): number {
-  return node.children?.[0]?._cardinality ?? DEFAULT_CARDINALITY;
+  return node.children?.[0]?._cardinality ?? Config.defaultCardinality;
 }

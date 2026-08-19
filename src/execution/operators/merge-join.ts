@@ -1,15 +1,18 @@
 import { DataChunk } from '../../storage/chunk.js';
 import { Column } from '../../storage/column.js';
 import { JoinType } from '../../planner/logical-plan.js';
+import { Config } from '../../config.js';
 import { DataType, type ColumnValue } from '../../storage/data-type.js';
 import type { CompiledExpr, EvalValue } from '../execution-types.js';
 import { materializeRow } from './join-core.js';
+import type { SortKey } from './sort.js';
 
 type JoinKey = EvalValue | EvalValue[];
 
+export type SortedChunkSource = () => AsyncIterable<DataChunk>;
+
 interface JoinRow {
-  chunk: DataChunk;
-  idx: number;
+  row: ColumnValue[];
   key: JoinKey;
 }
 
@@ -25,260 +28,305 @@ interface RowAdapter {
 
 type RowEvaluator = (adapter: RowAdapter, rowIdx: number) => EvalValue;
 
-function isNullKey(key: JoinKey): boolean {
+function isNullJoinKey(key: JoinKey): boolean {
   if (key === null || key === undefined) return true;
-  return Array.isArray(key) && key.some((k) => k === null || k === undefined);
+  return Array.isArray(key) && key.some((part) => part === null || part === undefined);
+}
+
+export function mergeJoinSortKeys(keyExtractors: CompiledExpr[]): SortKey[] {
+  const nullsFirst: SortKey = {
+    eval: (chunk, rowIdx) => (isNullJoinKey(keyExtractors.map((extract) => extract(chunk, rowIdx))) ? 0 : 1),
+    direction: 'ASC',
+  };
+  return [nullsFirst, ...keyExtractors.map((extract) => ({ eval: extract, direction: 'ASC' }))];
+}
+
+function compareScalars(a: EvalValue, b: EvalValue): number {
+  const left = typeof a === 'bigint' ? Number(a) : a;
+  const right = typeof b === 'bigint' ? Number(b) : b;
+  if ((left as number) < (right as number)) return -1;
+  if ((left as number) > (right as number)) return 1;
+  return 0;
+}
+
+function compareJoinKeys(k1: JoinKey, k2: JoinKey): number {
+  if (Array.isArray(k1)) {
+    const left = k1;
+    const right = k2 as EvalValue[];
+    for (let i = 0; i < left.length; i++) {
+      const cmp = compareScalars(left[i], right[i]);
+      if (cmp !== 0) return cmp;
+    }
+    return 0;
+  }
+  return compareScalars(k1 as EvalValue, k2 as EvalValue);
+}
+
+class SortedRowCursor {
+  current: JoinRow | null;
+  private iterator: AsyncIterator<DataChunk>;
+  private chunk: DataChunk | null;
+  private index: number;
+  private extractors: CompiledExpr[];
+  private label: string;
+
+  constructor(source: SortedChunkSource, extractors: CompiledExpr[], label: string) {
+    this.iterator = source()[Symbol.asyncIterator]();
+    this.chunk = null;
+    this.index = 0;
+    this.extractors = extractors;
+    this.label = label;
+    this.current = null;
+  }
+
+  async advance(): Promise<void> {
+    const previous = this.current;
+
+    while (this.chunk === null || this.index >= this.chunk.size) {
+      const next = await this.iterator.next();
+      if (next.done) {
+        this.current = null;
+        return;
+      }
+      this.chunk = next.value;
+      this.index = 0;
+    }
+
+    const chunk = this.chunk;
+    const rowIndex = chunk.activeRowIndex(this.index);
+    this.index++;
+
+    this.current = {
+      row: materializeRow(chunk, rowIndex),
+      key: this.extractors.length === 1
+        ? this.extractors[0](chunk, rowIndex)
+        : this.extractors.map((extract) => extract(chunk, rowIndex)),
+    };
+
+    this.assertNonDescending(previous, this.current);
+  }
+
+  private assertNonDescending(previous: JoinRow | null, next: JoinRow): void {
+    if (previous === null || isNullJoinKey(previous.key)) return;
+    if (isNullJoinKey(next.key)) return;
+    if (compareJoinKeys(previous.key, next.key) <= 0) return;
+    throw new Error(`Merge join received unsorted ${this.label} input`);
+  }
+}
+
+async function collectGroup(cursor: SortedRowCursor, key: JoinKey): Promise<JoinRow[]> {
+  const group: JoinRow[] = [];
+  while (cursor.current && !isNullJoinKey(cursor.current.key) && compareJoinKeys(cursor.current.key, key) === 0) {
+    group.push(cursor.current);
+    await cursor.advance();
+  }
+  return group;
 }
 
 export class MergeJoinOperator {
-  buildChunks: DataChunk[];
-  probeChunks: DataChunk[];
+  buildSource: SortedChunkSource;
+  probeSource: SortedChunkSource;
   buildKeyExtractors: CompiledExpr[];
   probeKeyExtractors: CompiledExpr[];
-  buildColCount: number;
-  probeColCount: number;
+  buildTypes: DataType[];
+  probeTypes: DataType[];
   joinType: JoinType;
   conditionEvaluator: CompiledExpr | null;
 
-  constructor(buildChunks: DataChunk[], probeChunks: DataChunk[], buildKeyExtractors: CompiledExpr[], probeKeyExtractors: CompiledExpr[], buildColCount: number, probeColCount: number, joinType: JoinType = JoinType.INNER, conditionEvaluator: CompiledExpr | null = null) {
-    this.buildChunks = buildChunks;
-    this.probeChunks = probeChunks;
+  private output: ColumnValue[][];
+  private adapter: RowAdapter | null;
+  private evaluateCondition: RowEvaluator | null;
+  private buildHasNullKey: boolean;
+
+  constructor(
+    buildSource: SortedChunkSource,
+    probeSource: SortedChunkSource,
+    buildKeyExtractors: CompiledExpr[],
+    probeKeyExtractors: CompiledExpr[],
+    buildTypes: DataType[],
+    probeTypes: DataType[],
+    joinType: JoinType = JoinType.INNER,
+    conditionEvaluator: CompiledExpr | null = null,
+  ) {
+    this.buildSource = buildSource;
+    this.probeSource = probeSource;
     this.buildKeyExtractors = buildKeyExtractors;
     this.probeKeyExtractors = probeKeyExtractors;
-    this.buildColCount = buildColCount;
-    this.probeColCount = probeColCount;
+    this.buildTypes = buildTypes;
+    this.probeTypes = probeTypes;
     this.joinType = joinType;
     this.conditionEvaluator = conditionEvaluator;
+    this.output = [];
+    this.adapter = conditionEvaluator ? this.createAdapter() : null;
+    this.evaluateCondition = conditionEvaluator as RowEvaluator | null;
+    this.buildHasNullKey = false;
   }
 
-  async execute(): Promise<DataChunk[]> {
-    const isSemiAnti = this.joinType === JoinType.SEMI || this.joinType === JoinType.ANTI;
-    const isMark = this.joinType === JoinType.MARK;
+  get buildColCount(): number {
+    return this.buildTypes.length;
+  }
 
-    const buildAll = this._flattenAndExtractKeys(this.buildChunks, this.buildKeyExtractors);
-    const probeAll = this._flattenAndExtractKeys(this.probeChunks, this.probeKeyExtractors);
+  get probeColCount(): number {
+    return this.probeTypes.length;
+  }
 
-    const buildRows = buildAll.filter((r) => !isNullKey(r.key));
-    const probeRows = probeAll.filter((r) => !isNullKey(r.key));
-    const buildNull = buildAll.filter((r) => isNullKey(r.key));
-    const probeNull = probeAll.filter((r) => isNullKey(r.key));
-    const markUnmatched = buildNull.length > 0 ? null : false;
+  get emitsProbeOnly(): boolean {
+    return this.joinType === JoinType.SEMI || this.joinType === JoinType.ANTI;
+  }
 
-    buildRows.sort((a, b) => this._compareKeys(a.key, b.key));
-    probeRows.sort((a, b) => this._compareKeys(a.key, b.key));
+  get emitsMark(): boolean {
+    return this.joinType === JoinType.MARK;
+  }
 
-    const outputRows: ColumnValue[][] = [];
-    const adapter = this.conditionEvaluator ? this.createAdapter() : null;
-    const evalCondition = this.conditionEvaluator as RowEvaluator | null;
+  get keepsUnmatchedBuild(): boolean {
+    return this.joinType === JoinType.LEFT
+      || this.joinType === JoinType.RIGHT
+      || this.joinType === JoinType.FULL;
+  }
 
-    let b = 0;
-    let p = 0;
+  get unmatchedMark(): ColumnValue {
+    return this.buildHasNullKey ? null : false;
+  }
 
-    while (b < buildRows.length && p < probeRows.length) {
-      const bRow = buildRows[b];
-      const pRow = probeRows[p];
+  async *execute(): AsyncGenerator<DataChunk> {
+    const build = new SortedRowCursor(this.buildSource, this.buildKeyExtractors, 'build side');
+    const probe = new SortedRowCursor(this.probeSource, this.probeKeyExtractors, 'probe side');
 
-      const cmp = this._compareKeys(bRow.key, pRow.key);
+    await build.advance();
+    await probe.advance();
+
+    while (build.current && isNullJoinKey(build.current.key)) {
+      this.buildHasNullKey = true;
+      this.emitUnmatchedBuild(build.current);
+      yield* this.drain();
+      await build.advance();
+    }
+
+    while (probe.current && isNullJoinKey(probe.current.key)) {
+      this.emitUnmatchedProbe(probe.current, null);
+      yield* this.drain();
+      await probe.advance();
+    }
+
+    while (build.current && probe.current) {
+      const cmp = compareJoinKeys(build.current.key, probe.current.key);
 
       if (cmp < 0) {
-        if (this.joinType === JoinType.LEFT || this.joinType === JoinType.FULL) {
-          outputRows.push(this._combineRowWithNulls(bRow, true));
-        }
-        b++;
+        this.emitUnmatchedBuild(build.current);
+        await build.advance();
       } else if (cmp > 0) {
-        if (isSemiAnti && this.joinType === JoinType.ANTI) {
-          outputRows.push(this._extractProbeRow(pRow));
-        } else if (isMark) {
-          outputRows.push(this._extractProbeRow(pRow).concat([markUnmatched]));
-        } else if (this.joinType === JoinType.RIGHT || this.joinType === JoinType.FULL) {
-          outputRows.push(this._combineRowWithNulls(pRow, false));
-        }
-        p++;
+        this.emitUnmatchedProbe(probe.current, this.unmatchedMark);
+        await probe.advance();
       } else {
-        let bEnd = b;
-        while (bEnd < buildRows.length && this._compareKeys(bRow.key, buildRows[bEnd].key) === 0) {
-          bEnd++;
-        }
-        let pEnd = p;
-        while (pEnd < probeRows.length && this._compareKeys(pRow.key, probeRows[pEnd].key) === 0) {
-          pEnd++;
-        }
-
-        if (isSemiAnti || isMark) {
-          for (let j = p; j < pEnd; j++) {
-            let matched = false;
-            for (let i = b; i < bEnd; i++) {
-              if (adapter) {
-                const row = this._combineRow(buildRows[i], probeRows[j]);
-                adapter.setRow(row);
-                if (!evalCondition!(adapter, 0)) continue;
-              }
-              matched = true;
-              break;
-            }
-            if (this.joinType === JoinType.SEMI && matched) {
-              outputRows.push(this._extractProbeRow(probeRows[j]));
-            } else if (this.joinType === JoinType.ANTI && !matched) {
-              outputRows.push(this._extractProbeRow(probeRows[j]));
-            } else if (isMark) {
-              outputRows.push(this._extractProbeRow(probeRows[j]).concat([matched ? true : markUnmatched]));
-            }
-          }
-        } else {
-          for (let i = b; i < bEnd; i++) {
-            let matchedAny = false;
-            for (let j = p; j < pEnd; j++) {
-              const row = this._combineRow(buildRows[i], probeRows[j]);
-              if (adapter) {
-                adapter.setRow(row);
-                if (!evalCondition!(adapter, 0)) continue;
-              }
-              outputRows.push(row);
-              matchedAny = true;
-            }
-            if (!matchedAny && (this.joinType === JoinType.LEFT || this.joinType === JoinType.FULL)) {
-              outputRows.push(this._combineRowWithNulls(buildRows[i], true));
-            }
-          }
-        }
-
-        b = bEnd;
-        p = pEnd;
+        const groupKey = build.current.key;
+        const buildGroup = await collectGroup(build, groupKey);
+        const probeGroup = await collectGroup(probe, groupKey);
+        this.emitGroup(buildGroup, probeGroup);
       }
+
+      yield* this.drain();
     }
 
-    while (b < buildRows.length) {
-      if (this.joinType === JoinType.LEFT || this.joinType === JoinType.FULL) {
-        outputRows.push(this._combineRowWithNulls(buildRows[b], true));
-      }
-      b++;
+    while (build.current) {
+      this.emitUnmatchedBuild(build.current);
+      yield* this.drain();
+      await build.advance();
     }
 
-    while (p < probeRows.length) {
-      if (isSemiAnti && this.joinType === JoinType.ANTI) {
-        outputRows.push(this._extractProbeRow(probeRows[p]));
-      } else if (isMark) {
-        outputRows.push(this._extractProbeRow(probeRows[p]).concat([markUnmatched]));
-      } else if (this.joinType === JoinType.RIGHT || this.joinType === JoinType.FULL) {
-        outputRows.push(this._combineRowWithNulls(probeRows[p], false));
-      }
-      p++;
+    while (probe.current) {
+      const mark = isNullJoinKey(probe.current.key) ? null : this.unmatchedMark;
+      this.emitUnmatchedProbe(probe.current, mark);
+      yield* this.drain();
+      await probe.advance();
     }
 
-    for (const bRow of buildNull) {
-      if (this.joinType === JoinType.LEFT || this.joinType === JoinType.FULL) {
-        outputRows.push(this._combineRowWithNulls(bRow, true));
-      }
-    }
-    for (const pRow of probeNull) {
-      if (isSemiAnti && this.joinType === JoinType.ANTI) {
-        outputRows.push(this._extractProbeRow(pRow));
-      } else if (isMark) {
-        outputRows.push(this._extractProbeRow(pRow).concat([null]));
-      } else if (this.joinType === JoinType.RIGHT || this.joinType === JoinType.FULL) {
-        outputRows.push(this._combineRowWithNulls(pRow, false));
-      }
-    }
-
-    if (outputRows.length === 0) return [];
-
-    const chunk = this._buildOutputChunk(outputRows);
-    return chunk ? [chunk] : [];
+    yield* this.flush();
   }
 
-  _flattenAndExtractKeys(chunks: DataChunk[], extractors: CompiledExpr[]): JoinRow[] {
-    const rows: JoinRow[] = [];
-    for (const chunk of chunks) {
-      for (let i = 0; i < chunk.size; i++) {
-        const idx = chunk.activeRowIndex(i);
-        const key: JoinKey = extractors.length === 1
-          ? extractors[0](chunk, idx)
-          : extractors.map((fn) => fn(chunk, idx));
-        rows.push({ chunk, idx, key });
+  emitGroup(buildGroup: JoinRow[], probeGroup: JoinRow[]): void {
+    if (this.emitsProbeOnly || this.emitsMark) {
+      for (const probeRow of probeGroup) {
+        const matched = buildGroup.some((buildRow) => this.conditionHolds(buildRow, probeRow));
+        if (this.joinType === JoinType.SEMI && matched) this.output.push(probeRow.row);
+        else if (this.joinType === JoinType.ANTI && !matched) this.output.push(probeRow.row);
+        else if (this.emitsMark) this.output.push([...probeRow.row, matched ? true : this.unmatchedMark]);
       }
+      return;
     }
-    return rows;
-  }
 
-  _compareKeys(k1: JoinKey, k2: JoinKey): number {
-    if (Array.isArray(k1)) {
-      const a1 = k1;
-      const a2 = k2 as EvalValue[];
-      for (let i = 0; i < a1.length; i++) {
-        const c1 = typeof a1[i] === 'bigint' ? Number(a1[i]) : a1[i];
-        const c2 = typeof a2[i] === 'bigint' ? Number(a2[i]) : a2[i];
-        if ((c1 as number) < (c2 as number)) return -1;
-        if ((c1 as number) > (c2 as number)) return 1;
+    for (const buildRow of buildGroup) {
+      let matchedAny = false;
+      for (const probeRow of probeGroup) {
+        if (!this.conditionHolds(buildRow, probeRow)) continue;
+        this.output.push([...buildRow.row, ...probeRow.row]);
+        matchedAny = true;
       }
-      return 0;
+      if (!matchedAny) this.emitUnmatchedBuild(buildRow);
     }
-    const c1 = typeof k1 === 'bigint' ? Number(k1) : k1;
-    const c2 = typeof k2 === 'bigint' ? Number(k2) : k2;
-    if ((c1 as number) < (c2 as number)) return -1;
-    if ((c1 as number) > (c2 as number)) return 1;
-    return 0;
   }
 
-  _combineRow(bRow: JoinRow, pRow: JoinRow): ColumnValue[] {
-    return materializeRow(bRow.chunk, bRow.idx).concat(materializeRow(pRow.chunk, pRow.idx));
+  conditionHolds(buildRow: JoinRow, probeRow: JoinRow): boolean {
+    if (!this.adapter || !this.evaluateCondition) return true;
+    this.adapter.setRow([...buildRow.row, ...probeRow.row]);
+    return !!this.evaluateCondition(this.adapter, 0);
   }
 
-  _extractProbeRow(rowObj: JoinRow): ColumnValue[] {
-    return materializeRow(rowObj.chunk, rowObj.idx);
+  emitUnmatchedBuild(buildRow: JoinRow): void {
+    if (!this.keepsUnmatchedBuild) return;
+    this.output.push([...buildRow.row, ...new Array<ColumnValue>(this.probeColCount).fill(null)]);
   }
 
-  _combineRowWithNulls(rowObj: JoinRow, isBuild: boolean): ColumnValue[] {
-    if (isBuild) {
-      const row = materializeRow(rowObj.chunk, rowObj.idx);
-      for (let c = 0; c < this.probeColCount; c++) row.push(null);
-      return row;
+  emitUnmatchedProbe(probeRow: JoinRow, mark: ColumnValue): void {
+    if (this.joinType === JoinType.ANTI) {
+      this.output.push(probeRow.row);
+      return;
     }
-    const row: ColumnValue[] = [];
-    for (let c = 0; c < this.buildColCount; c++) row.push(null);
-    return row.concat(materializeRow(rowObj.chunk, rowObj.idx));
+    if (this.emitsMark) {
+      this.output.push([...probeRow.row, mark]);
+      return;
+    }
+    if (this.joinType === JoinType.FULL) {
+      this.output.push([...new Array<ColumnValue>(this.buildColCount).fill(null), ...probeRow.row]);
+    }
   }
 
-  _buildOutputChunk(outputRows: ColumnValue[][]): DataChunk | null {
-    if (outputRows.length === 0) return null;
-    const isSemiAnti = this.joinType === JoinType.SEMI || this.joinType === JoinType.ANTI;
-    const isMark = this.joinType === JoinType.MARK;
-    const colCount = isSemiAnti ? this.probeColCount
-      : isMark ? this.probeColCount + 1
-      : this.buildColCount + this.probeColCount;
-    const columns: Column[] = [];
-
-    for (let c = 0; c < colCount; c++) {
-      let dt = DataType.VARCHAR;
-      if (isSemiAnti) {
-        if (this.probeChunks.length > 0 && c < this.probeChunks[0].columns.length) dt = this.probeChunks[0].columns[c].dataType;
-      } else if (isMark) {
-        if (c < this.probeColCount && this.probeChunks.length > 0 && c < this.probeChunks[0].columns.length) dt = this.probeChunks[0].columns[c].dataType;
-        else if (c === this.probeColCount) dt = DataType.BOOLEAN;
-      } else {
-        if (c < this.buildColCount && this.buildChunks.length > 0) dt = this.buildChunks[0].columns[c].dataType;
-        else if (c >= this.buildColCount && this.probeChunks.length > 0) dt = this.probeChunks[0].columns[c - this.buildColCount].dataType;
-      }
-      columns.push(new Column(dt, outputRows.length));
+  *drain(): Generator<DataChunk> {
+    while (this.output.length >= Config.flushBatchSize) {
+      yield this.toChunk(this.output.splice(0, Config.flushBatchSize));
     }
+  }
 
-    for (let r = 0; r < outputRows.length; r++) {
-      const row = outputRows[r];
-      for (let c = 0; c < colCount; c++) {
-        columns[c].set(r, row[c]);
-      }
+  *flush(): Generator<DataChunk> {
+    if (this.output.length === 0) return;
+    const rows = this.output;
+    this.output = [];
+    yield this.toChunk(rows);
+  }
+
+  outputTypes(): DataType[] {
+    if (this.emitsProbeOnly) return this.probeTypes;
+    if (this.emitsMark) return [...this.probeTypes, DataType.BOOLEAN];
+    return [...this.buildTypes, ...this.probeTypes];
+  }
+
+  toChunk(rows: ColumnValue[][]): DataChunk {
+    const columns = this.outputTypes().map((dataType) => new Column(dataType, rows.length));
+
+    for (let r = 0; r < rows.length; r++) {
+      for (let c = 0; c < columns.length; c++) columns[c].set(r, rows[r][c]);
     }
+    for (const column of columns) column.length = rows.length;
 
-    for (const col of columns) col.length = outputRows.length;
-    return new DataChunk(columns, outputRows.length);
+    return new DataChunk(columns, rows.length);
   }
 
   createAdapter(): RowAdapter {
-    const totalCols = this.buildColCount + this.probeColCount;
+    const totalCols = this.buildTypes.length + this.probeTypes.length;
     const columns: RowAdapterColumn[] = new Array(totalCols);
     const adapter: RowAdapter = {
       row: null,
       columns,
-      setRow(r: ColumnValue[]) { this.row = r; }
+      setRow(r: ColumnValue[]) { this.row = r; },
     };
     for (let c = 0; c < totalCols; c++) {
       columns[c] = { get: () => adapter.row![c] };

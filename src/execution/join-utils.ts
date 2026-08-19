@@ -1,6 +1,7 @@
 import { BoundExprKind } from '../binder/expression-binder.js';
 import type { BoundExpr, BoundColumnRefNode } from '../binder/expression-binder.js';
 import type { ColumnMapping } from './execution-types.js';
+import { DataType } from '../storage/data-type.js';
 
 export interface JoinKeyPair {
   buildKey: BoundColumnRefNode;
@@ -116,7 +117,7 @@ export function extractJoinKeys(condition: BoundExpr | null, leftMapping: Column
       op: 'AND',
       left: acc,
       right: p,
-      resultType: 'BOOLEAN',
+      resultType: DataType.BOOLEAN,
     }));
   }
 

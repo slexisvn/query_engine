@@ -17,6 +17,10 @@ export class GreedyJoinEnumerator implements JoinEnumerator {
     return 'GreedyJoinOrder';
   }
 
+  get exhaustive(): boolean {
+    return false;
+  }
+
   solve(): JoinOrderEntry | null {
     const remaining = new Map<number, JoinOrderEntry>();
     for (const rel of this.graph.relations) {

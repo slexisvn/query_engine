@@ -8,7 +8,7 @@ import type { ColumnValue, DataType } from '../../storage/data-type.js';
 import type { CompiledExpr } from '../execution-types.js';
 import { materializeActiveRow } from './join-core.js';
 
-interface SortKey {
+export interface SortKey {
   eval: CompiledExpr;
   direction: string;
 }
@@ -98,7 +98,7 @@ export class SortOperator {
     this.memoryBudget.reset();
   }
 
-  async finalize(): Promise<DataChunk[]> {
+  async *stream(): AsyncGenerator<DataChunk> {
     if (this.runCount === 0) {
       this.rows.sort((a, b) => this.compareRows(a, b));
       if (this.topN) {
@@ -107,10 +107,11 @@ export class SortOperator {
       if (this.offset > 0) {
         this.rows = this.rows.slice(this.offset);
       }
-      if (this.rows.length === 0) return [];
-      const chunk = this.rowsToChunk(this.rows);
       await this.spillManager.clearAll();
-      return [chunk];
+      for (let start = 0; start < this.rows.length; start += Config.flushBatchSize) {
+        yield this.rowsToChunk(this.rows.slice(start, start + Config.flushBatchSize));
+      }
+      return;
     }
 
     if (this.rows.length > 0) {
@@ -140,7 +141,6 @@ export class SortOperator {
       }
     }
 
-    const resultChunks: DataChunk[] = [];
     let outRows: SortRow[] = [];
     let count = 0;
     let skipped = 0;
@@ -158,7 +158,7 @@ export class SortOperator {
       }
 
       if (outRows.length >= Config.flushBatchSize) {
-        resultChunks.push(this.rowsToChunk(outRows));
+        yield this.rowsToChunk(outRows);
         outRows = [];
       }
 
@@ -179,11 +179,10 @@ export class SortOperator {
     }
 
     if (outRows.length > 0) {
-      resultChunks.push(this.rowsToChunk(outRows));
+      yield this.rowsToChunk(outRows);
     }
 
     await this.spillManager.clearAll();
-    return resultChunks;
   }
 
   chunkToItems(chunk: DataChunk): SortRow[] {

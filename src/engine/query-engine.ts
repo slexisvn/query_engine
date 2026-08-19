@@ -17,7 +17,7 @@ import { BTreeIndex } from '../storage/btree.js';
 import { StatisticsCache } from '../catalog/statistics-cache.js';
 import { LRUCache } from '../utils/lru-cache.js';
 import { Config } from '../config.js';
-import { LogicalScan } from '../planner/logical-plan.js';
+import { LogicalScan, collectScannedTables } from '../planner/logical-plan.js';
 import { PLAN_PROPERTIES_PASS } from '../optimizer/passes/plan-properties.js';
 import type { LogicalPlanNode } from '../planner/logical-plan.js';
 import { DataFrame } from '../dataframe/dataframe.js';
@@ -149,6 +149,12 @@ export function setDefaultStorageBackend(factory: StorageBackendFactory): void {
   _defaultBackendFactory = factory;
 }
 
+function referencedTables(plan: LogicalPlanNode, cteMap: Map<string, LogicalPlanNode> | null): Set<string> {
+  const tables = collectScannedTables(plan);
+  for (const ctePlan of cteMap?.values() ?? []) collectScannedTables(ctePlan, tables);
+  return tables;
+}
+
 function serializeParams(params: readonly QueryParam[]): string {
   return params.map(param => (typeof param === 'bigint' ? `${param}n` : JSON.stringify(param))).join('\u0001');
 }
@@ -176,7 +182,6 @@ export class QueryEngine {
   precomputedStats: StatisticsMap | null;
   statsCache: StatisticsCache;
   optimizer: Optimizer;
-  _statsCollected?: boolean;
   _distributedPasses?: DistributedPassEntry[];
   _activeCancel?: AbortController | null;
   planCache: LRUCache<string, CompiledQuery>;
@@ -214,8 +219,8 @@ export class QueryEngine {
     this.tempManager.cleanup();
   }
 
-  async collectStatistics(): Promise<StatisticsMap | null> {
-    await this.statsCache.ensureAll();
+  async collectStatistics(tables: Iterable<string>): Promise<StatisticsMap | null> {
+    await this.statsCache.ensureFor(tables);
     const map = this.statsCache.toMap();
     return map.size > 0 ? map : null;
   }
@@ -243,18 +248,18 @@ export class QueryEngine {
 
   planCacheKey(sql: string, params: readonly QueryParam[]): string | null {
     if (this.distributed) return null;
-    return `${this.catalog.version}\u0000${this._statsCollected ? 1 : 0}\u0000${sql}\u0000${serializeParams(params)}`;
+    return `${this.catalog.version}\u0000${this.statsCache.generation}\u0000${sql}\u0000${serializeParams(params)}`;
   }
 
   async compile(sql: string, params: readonly QueryParam[] = []): Promise<CompileResult> {
-    await this._ensureStatistics();
-    const cacheKey = this.planCacheKey(sql, params);
-    const cached = cacheKey === null ? undefined : this.planCache.get(cacheKey);
+    const lookupKey = this.planCacheKey(sql, params);
+    const cached = lookupKey === null ? undefined : this.planCache.get(lookupKey);
     if (cached) return cached;
 
     const compiled = await this.compileUncached(sql, params);
-    if (cacheKey !== null && compiled.plan && !compiled.isExplain) {
-      this.planCache.set(cacheKey, compiled);
+    const storeKey = this.planCacheKey(sql, params);
+    if (storeKey !== null && compiled.plan && !compiled.isExplain) {
+      this.planCache.set(storeKey, compiled);
     }
     return compiled;
   }
@@ -280,7 +285,7 @@ export class QueryEngine {
     const logicalPlan = this.plan(bound);
     let cteMap = logicalPlan._cteMap || new Map<string, LogicalPlanNode>();
 
-    await this._ensureStatistics();
+    await this._ensureStatistics(referencedTables(logicalPlan, cteMap));
 
     const optimized = this.optimize(logicalPlan);
     cteMap = this.optimizeCTEMap(cteMap);
@@ -302,17 +307,17 @@ export class QueryEngine {
     }
   }
 
-  async _ensureStatistics(): Promise<void> {
-    if (!this.precomputedStats && !this._statsCollected) {
-      const collected = await this.collectStatistics();
-      if (collected) {
-        this.optimizer = this.createOptimizer(collected);
-        this.executor.setPhysicalPlanner(new PhysicalPlanner(collected));
-        this._statsCollected = true;
-        if (this._distributedPasses) {
-          this._applyDistributedPasses(this.optimizer, this._distributedPasses);
-        }
-      }
+  async _ensureStatistics(tables: Iterable<string>): Promise<void> {
+    if (this.precomputedStats) return;
+
+    const generationBefore = this.statsCache.generation;
+    const collected = await this.collectStatistics(tables);
+    if (!collected || this.statsCache.generation === generationBefore) return;
+
+    this.optimizer = this.createOptimizer(collected);
+    this.executor.setPhysicalPlanner(new PhysicalPlanner(collected));
+    if (this._distributedPasses) {
+      this._applyDistributedPasses(this.optimizer, this._distributedPasses);
     }
   }
 
@@ -381,7 +386,7 @@ ${physicalPlanToString(physical)}`;
   }
 
   async _runPlan(plan: LogicalPlanNode, outputColumns: OutputColumn[], streaming: boolean = false, cteMap: Map<string, LogicalPlanNode> | null = null): Promise<QueryResult> {
-    await this._ensureStatistics();
+    await this._ensureStatistics(referencedTables(plan, cteMap));
     const optimized = this.optimize(plan);
     this.executor.cteDefinitions = this.optimizeCTEMap(cteMap || new Map<string, LogicalPlanNode>());
     const { sink, columnNames } = await this.executor.execute(optimized, outputColumns as ExecutorColumns, streaming);

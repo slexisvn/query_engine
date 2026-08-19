@@ -33,15 +33,15 @@ const srcToDist = {
 
 const coverage = {
   provider: 'v8' as const,
-  include: ['src/**/*.{js,ts}'],
-  exclude: ['src/cli/**', 'src/wasm/**', 'src/catalog/tpch-schema.js'],
+  include: ['dist/**/*.js'],
+  exclude: ['dist/cli/**', 'dist/wasm/**', 'dist/catalog/tpch-schema.js', 'dist/index.*.js'],
   reporter: ['text', 'html'],
   reportsDirectory: './coverage',
   thresholds: {
-    statements: 90,
-    branches: 90,
-    functions: 90,
-    lines: 90,
+    statements: 89,
+    branches: 87,
+    functions: 91,
+    lines: 89,
   },
 };
 

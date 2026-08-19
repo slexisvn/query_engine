@@ -8,6 +8,7 @@ import { encodeCompositeKey } from '../composite-key.js';
 import { GLOBAL_GROUP_KEY } from './hash-aggregate.js';
 import type { BoundExpr } from '../../binder/expression-binder.js';
 import type { CompiledExpr, ColumnMapping, EvalValue } from '../execution-types.js';
+import { KernelOperand } from '../../wasm/wasm-types.js';
 
 interface Accumulator {
   add(val: EvalValue): void;
@@ -73,7 +74,7 @@ export class StreamAggregateOperator {
           if (!column.hasNulls) {
             acc.count += chunk.size;
           } else {
-            const kernel = globalDispatch.lookup('countBits', 'UINT8') as BitmapCountKernel | null;
+            const kernel = globalDispatch.lookup('countBits', KernelOperand.BITMAP) as BitmapCountKernel | null;
             if (!kernel) return null;
             const nonNullCount = await kernel(column.nullBitmap, chunk.size);
             acc.count += nonNullCount;
@@ -88,7 +89,7 @@ export class StreamAggregateOperator {
           if (column.dataType !== 'FLOAT64') return null;
 
           const rawData = (column.data as Float64Array).subarray(0, chunk.size);
-          const kernel = globalDispatch.lookup(resolved.kernelKey as string, resolved.dataType as string) as ScalarReduceKernel | null;
+          const kernel = globalDispatch.lookup(resolved.kernelKey!, resolved.operand!) as ScalarReduceKernel | null;
           if (!kernel) return null;
           const sum = await kernel(rawData);
 
@@ -96,7 +97,7 @@ export class StreamAggregateOperator {
           if (!column.hasNulls) {
             nonNullCount = chunk.size;
           } else {
-            const countKernel = globalDispatch.lookup('countBits', 'UINT8') as BitmapCountKernel | null;
+            const countKernel = globalDispatch.lookup('countBits', KernelOperand.BITMAP) as BitmapCountKernel | null;
             if (!countKernel) return null;
             nonNullCount = await countKernel(column.nullBitmap, chunk.size);
           }
@@ -112,9 +113,9 @@ export class StreamAggregateOperator {
           const column = chunk.columns[def._wasmColIndex] as Column;
           if (column && column.data) {
             const colType = column.dataType;
-            if (resolved.dataType === 'FLOAT64' && colType === 'FLOAT64') {
+            if (resolved.operand === 'FLOAT64' && colType === 'FLOAT64') {
               rawData = (column.data as Float64Array).subarray(0, chunk.size);
-            } else if (resolved.dataType === 'INT32' && (colType === 'INT32' || colType === 'DATE')) {
+            } else if (resolved.operand === 'INT32' && (colType === 'INT32' || colType === 'DATE')) {
               rawData = (column.data as Float64Array).subarray(0, chunk.size);
             }
           }
@@ -127,7 +128,7 @@ export class StreamAggregateOperator {
 
         if (!rawData) return null;
 
-        const kernel = globalDispatch.lookup(resolved.kernelKey as string, resolved.dataType as string) as ScalarReduceKernel | null;
+        const kernel = globalDispatch.lookup(resolved.kernelKey!, resolved.operand!) as ScalarReduceKernel | null;
         if (!kernel) return null;
         acc.add(await kernel(rawData));
       }

@@ -11,6 +11,7 @@ import { hashValue } from '../../utils/hash.js';
 import { resolveWasmAggKernel, type ScalarReduceKernel, type BitmapCountKernel } from './agg-wasm.js';
 import type { BoundExpr } from '../../binder/expression-binder.js';
 import type { CompiledExpr, ColumnMapping, EvalValue } from '../execution-types.js';
+import { KernelOperand } from '../../wasm/wasm-types.js';
 
 type AvgState = { sum: number; count: number };
 type AccumulatorState = ColumnValue | AvgState | ColumnValue[];
@@ -325,7 +326,7 @@ export class HashAggregateOperator {
         if (!column.hasNulls) {
           contributions[a] = { kind: 'count', n: size };
         } else {
-          const kernel = globalDispatch.lookup('countBits', 'UINT8') as BitmapCountKernel | null;
+          const kernel = globalDispatch.lookup('countBits', KernelOperand.BITMAP) as BitmapCountKernel | null;
           if (!kernel) return false;
           contributions[a] = { kind: 'count', n: await kernel(column.nullBitmap, size) };
         }
@@ -336,11 +337,11 @@ export class HashAggregateOperator {
       const column = chunk.columns[def._wasmColIndex] as Column;
       if (!column || !column.data || column.hasNulls) return false;
       const colType = column.dataType;
-      const matches = (resolved.dataType === 'FLOAT64' && colType === 'FLOAT64')
-        || (resolved.dataType === 'INT32' && (colType === 'INT32' || colType === 'DATE'));
+      const matches = (resolved.operand === 'FLOAT64' && colType === 'FLOAT64')
+        || (resolved.operand === 'INT32' && (colType === 'INT32' || colType === 'DATE'));
       if (!matches) return false;
 
-      const kernel = globalDispatch.lookup(resolved.kernelKey as string, resolved.dataType as string) as ScalarReduceKernel | null;
+      const kernel = globalDispatch.lookup(resolved.kernelKey!, resolved.operand!) as ScalarReduceKernel | null;
       if (!kernel) return false;
       const result = await kernel((column.data as Float64Array).subarray(0, size));
 

@@ -7,16 +7,6 @@ import { isFixedWidth } from '../../storage/data-type.js';
 import type { AnyTypedArray, ColumnValue, DataType } from '../../storage/data-type.js';
 import type { CompiledExpr, ColumnMapping } from '../execution-types.js';
 
-interface BoundComparisonNode {
-  kind: BoundExprKind.COMPARISON;
-  op: string;
-  left: BoundExpr;
-  right: BoundExpr;
-  dataType?: string | null;
-}
-
-type PredicateExpr = BoundExpr | BoundComparisonNode;
-
 const OP_TO_FILTER: Record<string, string> = {
   '=': 'filterEq',
   '<': 'filterLt',
@@ -57,12 +47,12 @@ interface OrFilterPlan {
 type FilterPlan = SimpleFilterPlan | BetweenFilterPlan | AndFilterPlan | OrFilterPlan;
 
 export class FilterOperator {
-  predicate: PredicateExpr | null;
+  predicate: BoundExpr | null;
   evaluator: CompiledExpr;
   columnMapping: ColumnMapping | null;
   parallelDispatch: ParallelExpressionDispatch | null;
 
-  constructor(predicate: PredicateExpr | null, evaluator: CompiledExpr, columnMapping: ColumnMapping | null, parallelDispatch: ParallelExpressionDispatch | null) {
+  constructor(predicate: BoundExpr | null, evaluator: CompiledExpr, columnMapping: ColumnMapping | null, parallelDispatch: ParallelExpressionDispatch | null) {
     this.predicate = predicate;
     this.evaluator = evaluator;
     this.columnMapping = columnMapping || null;
@@ -86,10 +76,10 @@ export class FilterOperator {
     return this._executeFallback(chunk);
   }
 
-  _analyze(expr: PredicateExpr | null): FilterPlan | null {
+  _analyze(expr: BoundExpr | null): FilterPlan | null {
     if (!expr) return null;
 
-    if (expr.kind === BoundExprKind.COMPARISON || expr.kind === BoundExprKind.BINARY) {
+    if (expr.kind === BoundExprKind.BINARY) {
       const logical = this._analyzeLogical(expr);
       if (logical) return logical;
       return this._analyzeComparison(expr);
@@ -102,7 +92,7 @@ export class FilterOperator {
     return null;
   }
 
-  _analyzeComparison(expr: PredicateExpr): FilterPlan | null {
+  _analyzeComparison(expr: BoundExpr): FilterPlan | null {
     const op = (expr as { op: string }).op;
     if (!OP_TO_FILTER[op]) return null;
 
@@ -124,7 +114,7 @@ export class FilterOperator {
     };
   }
 
-  _analyzeBetween(expr: PredicateExpr): FilterPlan | null {
+  _analyzeBetween(expr: BoundExpr): FilterPlan | null {
     const between = expr as { expr: BoundExpr | null; low: BoundExpr; high: BoundExpr };
     if (!between.expr || between.expr.kind !== BoundExprKind.COLUMN_REF) return null;
 
@@ -145,7 +135,7 @@ export class FilterOperator {
     };
   }
 
-  _analyzeLogical(expr: PredicateExpr): FilterPlan | null {
+  _analyzeLogical(expr: BoundExpr): FilterPlan | null {
     const op = (expr as { op: string }).op;
     if (op !== 'AND' && op !== 'OR') return null;
 
@@ -162,7 +152,7 @@ export class FilterOperator {
     };
   }
 
-  _extractColumnAndLiteral(expr: PredicateExpr): { columnRef: BoundColumnRefNode | null; literal: ColumnValue } {
+  _extractColumnAndLiteral(expr: BoundExpr): { columnRef: BoundColumnRefNode | null; literal: ColumnValue } {
     let columnRef: BoundColumnRefNode | null = null;
     let literal: ColumnValue = null;
 

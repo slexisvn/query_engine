@@ -72,6 +72,54 @@ describe('DistributedPlanner', () => {
     expect(() => planner.fragmentize(scan)).toThrow(/no workers are available/);
   });
 
+  describe('partition pruning', () => {
+    function lit(value) {
+      return { kind: BoundExprKind.LITERAL, value };
+    }
+
+    function eq(table, column, value) {
+      return { kind: BoundExprKind.BINARY, op: '=', left: colRef(table, column), right: lit(value) };
+    }
+
+    function leafWorkersFor(plan) {
+      return new Set(plan.getLeafFragments().flatMap(fragment => fragment.targetNodes));
+    }
+
+    it('narrows the scan to the partitions a point filter can reach', () => {
+      const scan = LogicalScan('ORDERS', ['ID', 'STATUS'], 'ORDERS');
+      const filtered = LogicalFilter(eq('ORDERS', 'ID', 7), scan);
+      const exchange = LogicalExchange(ExchangeType.GATHER, [], 0, filtered);
+
+      const plan = new DistributedPlanner(pm, cm).fragmentize(exchange);
+      expect(leafWorkersFor(plan).size).toBe(1);
+    });
+
+    it('keeps every worker when no filter constrains the partition key', () => {
+      const scan = LogicalScan('ORDERS', ['ID', 'STATUS'], 'ORDERS');
+      const filtered = LogicalFilter(eq('ORDERS', 'STATUS', 'OPEN'), scan);
+      const exchange = LogicalExchange(ExchangeType.GATHER, [], 0, filtered);
+
+      const plan = new DistributedPlanner(pm, cm).fragmentize(exchange);
+      expect(leafWorkersFor(plan).size).toBe(2);
+    });
+
+    it('does not apply a filter that sits above a join to the scans beneath it', () => {
+      const orders = LogicalScan('ORDERS', ['ID'], 'ORDERS');
+      const lineitem = LogicalScan('LINEITEM', ['ORDER_ID'], 'LINEITEM');
+      const join = LogicalJoin(JoinType.INNER, {
+        kind: BoundExprKind.BINARY,
+        op: '=',
+        left: colRef('ORDERS', 'ID'),
+        right: colRef('LINEITEM', 'ORDER_ID'),
+      }, orders, lineitem);
+      const filtered = LogicalFilter(eq('ORDERS', 'ID', 7), join);
+      const exchange = LogicalExchange(ExchangeType.GATHER, [], 0, filtered);
+
+      const plan = new DistributedPlanner(pm, cm).fragmentize(exchange);
+      expect(leafWorkersFor(plan).size).toBe(2);
+    });
+  });
+
   it('produces valid topological order', () => {
     const scan = LogicalScan('ORDERS', ['ID'], 'ORDERS');
     scan._cardinality = 1000;

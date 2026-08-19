@@ -1,5 +1,5 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanRewriter } from '../../planner/plan-visitor.js';
+import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { PlanNodeType, type LogicalPlanNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
 import { type BoundExpr } from '../../binder/expression-binder.js';
 import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';

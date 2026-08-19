@@ -14,6 +14,35 @@ import { colRef, lit, bin, eqJoin, scan, makeStats, planPhysical, annotate } fro
 import { Config } from '../../src/config.js';
 import { BloomFilter } from '../../src/utils/bloom-filter.js';
 
+describe('PhysicalPlanner property derivation', () => {
+  it('derives cardinality from statistics rather than trusting the annotation on the plan', () => {
+    const stats = makeStats({ A: { rowCount: 50000 } });
+    const stale = { ...scan('A'), _cardinality: 7 };
+
+    expect(new PhysicalPlanner(stats).plan(stale).cardinality).toBe(50000);
+  });
+
+  it('ignores a sort order the plan claims but its shape does not support', () => {
+    const stats = makeStats({ A: { rowCount: 100000 }, B: { rowCount: 100000 } });
+    const left = { ...scan('A'), _sortedBy: [{ key: 'A.ID', direction: 'ASC' }] };
+    const right = { ...scan('B'), _sortedBy: [{ key: 'B.ID', direction: 'ASC' }] };
+
+    const physical = new PhysicalPlanner(stats).plan(LogicalJoin(JoinType.INNER, eqJoin('A', 'id', 'B', 'id'), left, right));
+
+    expect(physical.type).toBe(PhysicalNodeType.HASH_JOIN);
+  });
+
+  it('keeps the sort order a real Sort node establishes', () => {
+    const stats = makeStats({ A: { rowCount: 100000 }, B: { rowCount: 100000 } });
+    const left = LogicalSort([{ expr: colRef('A', 'id'), direction: 'ASC' }], scan('A'));
+    const right = LogicalSort([{ expr: colRef('B', 'id'), direction: 'ASC' }], scan('B'));
+
+    const physical = new PhysicalPlanner(stats).plan(LogicalJoin(JoinType.INNER, eqJoin('A', 'id', 'B', 'id'), left, right));
+
+    expect(physical.type).toBe(PhysicalNodeType.MERGE_JOIN);
+  });
+});
+
 describe('PhysicalPlanner join selection', () => {
   it('defaults to a hash join for an inner equi-join', () => {
     const stats = makeStats({ A: { rowCount: 10000 }, B: { rowCount: 10000 } });
@@ -66,6 +95,26 @@ describe('PhysicalPlanner join selection', () => {
     const physical = planPhysical(LogicalJoin(JoinType.INNER, condition, scan('A'), scan('B')), stats);
 
     expect(physical.type).toBe(PhysicalNodeType.NESTED_LOOP_JOIN);
+  });
+
+  it('costs a non-equi join by its comparison count, not as if it were hashable', () => {
+    const nonEquiCostAt = (rows) => planPhysical(
+      LogicalJoin(JoinType.INNER, bin(colRef('A', 'id'), '<', colRef('B', 'id')), scan('A'), scan('B')),
+      makeStats({ A: { rowCount: rows }, B: { rowCount: rows } }),
+    ).cost;
+
+    const single = nonEquiCostAt(2000);
+    const doubled = nonEquiCostAt(4000);
+
+    expect(doubled / single).toBeGreaterThan(3.5);
+  });
+
+  it('drops the nested loop candidate once its inputs cannot be held in memory', () => {
+    const stats = makeStats({ A: { rowCount: Config.nestedLoopMaxRows }, B: { rowCount: Config.nestedLoopMaxRows } });
+    const condition = bin(colRef('A', 'id'), '<', colRef('B', 'id'));
+    const physical = planPhysical(LogicalJoin(JoinType.INNER, condition, scan('A'), scan('B')), stats);
+
+    expect(physical.type).toBe(PhysicalNodeType.HASH_JOIN);
   });
 
   it('chooses a hash join for a large non-equi join', () => {

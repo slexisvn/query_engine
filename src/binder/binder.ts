@@ -8,7 +8,7 @@ export interface TableMeta { name: string; columns: ColumnInfo[]; }
 
 export interface CatalogLike { getTable(name: string): TableMeta | undefined; }
 
-export interface OutputColumn { name: string; expr: BE.BoundExpr; dataType: string | null; }
+export interface OutputColumn { name: string; expr: BE.BoundExpr; dataType: DataType | null; }
 
 export interface BoundSelectItem { expr: BE.BoundExpr; alias: string | null; inferredName: string | null; }
 
@@ -54,7 +54,7 @@ interface CteInfo { name: string; columns: ColumnInfo[]; bound: BoundQuery; }
 
 interface JoinSide { type?: string; columns?: ColumnInfo[]; alias?: string; tableName?: string; cteName?: string; }
 
-function valueDataType(value: BE.LiteralValue): string | null {
+function valueDataType(value: BE.LiteralValue): DataType | null {
   switch (typeof value) {
     case 'boolean': return DataType.BOOLEAN;
     case 'bigint': return DataType.INT64;
@@ -617,7 +617,7 @@ export class Binder {
     return null;
   }
 
-  inferArithmeticType(left: string | null, right: string | null): string {
+  inferArithmeticType(left: DataType | null, right: DataType | null): DataType {
     if (left === DataType.FLOAT64 || right === DataType.FLOAT64) return DataType.FLOAT64;
     if (left === DataType.DECIMAL || right === DataType.DECIMAL) return DataType.DECIMAL;
     if (left === DataType.INT64 || right === DataType.INT64) return DataType.INT64;
@@ -625,7 +625,7 @@ export class Binder {
     return DataType.INT32;
   }
 
-  inferAggregateType(name: string, args: BE.BoundExpr[]): string {
+  inferAggregateType(name: string, args: BE.BoundExpr[]): DataType {
     switch (name.toUpperCase()) {
       case 'COUNT':
       case 'COUNT_STAR':
@@ -642,7 +642,7 @@ export class Binder {
     }
   }
 
-  inferFunctionType(name: string, args: BE.BoundExpr[]): string | null {
+  inferFunctionType(name: string, args: BE.BoundExpr[]): DataType | null {
     switch (name.toUpperCase()) {
       case 'SUBSTRING': case 'TRIM': case 'UPPER': case 'LOWER': case 'REPLACE':
         return DataType.VARCHAR;
@@ -664,7 +664,7 @@ export class Binder {
     }
   }
 
-  inferWindowType(name: string, args: BE.BoundExpr[]): string | null {
+  inferWindowType(name: string, args: BE.BoundExpr[]): DataType | null {
     switch (name.toUpperCase()) {
       case 'ROW_NUMBER': case 'RANK': case 'DENSE_RANK':
         return DataType.INT64;
@@ -677,7 +677,7 @@ export class Binder {
     }
   }
 
-  resolveTypeName(typeName: AST.TypeNameNode): string {
+  resolveTypeName(typeName: AST.TypeNameNode): DataType {
     return normalizeTypeName(typeName.name);
   }
 }

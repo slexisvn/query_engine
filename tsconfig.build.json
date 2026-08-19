@@ -5,7 +5,7 @@
     "outDir": "dist",
     "rootDir": "src",
     "declaration": true,
-    "sourceMap": false
+    "sourceMap": true
   },
   "include": ["src/**/*.ts", "src/**/*.js"],
   "exclude": ["node_modules", "dist", "build", "src/wasm/assembly", "**/*.test.js"]

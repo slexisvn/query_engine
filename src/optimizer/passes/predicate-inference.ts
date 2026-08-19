@@ -1,9 +1,9 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanNodeType, JoinType, LogicalFilter, getChildren, setChildren, type LogicalPlanNode, type LogicalFilterNode, type LogicalJoinNode } from '../../planner/logical-plan.js';
-import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { BoundExprKind, BoundBinary, BoundLiteral, BoundInList, type BoundExpr, type LiteralValue } from '../../binder/expression-binder.js';
+import { PlanRewriter } from '../../planner/plan-rewriter.js';
+import { BoundExprKind, BoundBinary, BoundLiteral, BoundInList, walkExpr, getExprType, type BoundExpr, type LiteralValue } from '../../binder/expression-binder.js';
 import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
-import { walkExpr } from '../expr-walk.js';
+import { DataType } from '../../storage/data-type.js';
 
 interface RangeBound { op: string; literal: BoundExpr; }
 
@@ -133,7 +133,7 @@ function inferNewPredicates(predicates: BoundExpr[]): BoundExpr[] {
       const colExpr = findColExpr(predicates, eqColK);
       if (!colExpr) continue;
 
-      const newPred = BoundBinary('=', colExpr, litExpr, 'BOOLEAN');
+      const newPred = BoundBinary('=', colExpr, litExpr, DataType.BOOLEAN);
       const key = predKey(newPred);
       if (!existingKeys.has(key)) {
         inferred.push(newPred);
@@ -150,7 +150,7 @@ function inferNewPredicates(predicates: BoundExpr[]): BoundExpr[] {
       if (constants.has(eqColK)) continue;
       const colExpr = findColExpr(predicates, eqColK);
       if (!colExpr) continue;
-      const newPred = BoundBinary('=', colExpr, litExpr, 'BOOLEAN');
+      const newPred = BoundBinary('=', colExpr, litExpr, DataType.BOOLEAN);
       const key = predKey(newPred);
       if (!existingKeys.has(key)) {
         inferred.push(newPred);
@@ -174,7 +174,7 @@ function inferNewPredicates(predicates: BoundExpr[]): BoundExpr[] {
         for (const eqColK of equivCols) {
           const colExpr = findColExpr(predicates, eqColK);
           if (!colExpr) continue;
-          const newPred = BoundBinary(pred.op, colExpr, pred.right, 'BOOLEAN');
+          const newPred = BoundBinary(pred.op, colExpr, pred.right, DataType.BOOLEAN);
           const key = predKey(newPred);
           if (!existingKeys.has(key)) {
             inferred.push(newPred);
@@ -188,7 +188,7 @@ function inferNewPredicates(predicates: BoundExpr[]): BoundExpr[] {
         for (const eqColK of equivCols) {
           const colExpr = findColExpr(predicates, eqColK);
           if (!colExpr) continue;
-          const newPred = BoundBinary(pred.op, pred.left, colExpr, 'BOOLEAN');
+          const newPred = BoundBinary(pred.op, pred.left, colExpr, DataType.BOOLEAN);
           const key = predKey(newPred);
           if (!existingKeys.has(key)) {
             inferred.push(newPred);
@@ -246,8 +246,8 @@ function inferRangePredicatesFromOr(expr: BoundExpr, existingKeys: Set<string>):
     if (!entries.every(e => e.lower && e.upper)) continue;
     const lower = entries.reduce((best, e) => compareLiteral(e.lower!.literal, best.literal) < 0 ? e.lower! : best, entries[0].lower!);
     const upper = entries.reduce((best, e) => compareLiteral(e.upper!.literal, best.literal) > 0 ? e.upper! : best, entries[0].upper!);
-    const lowerPred = BoundBinary(lower.op, entry.col, lower.literal, 'BOOLEAN');
-    const upperPred = BoundBinary(upper.op, entry.col, upper.literal, 'BOOLEAN');
+    const lowerPred = BoundBinary(lower.op, entry.col, lower.literal, DataType.BOOLEAN);
+    const upperPred = BoundBinary(upper.op, entry.col, upper.literal, DataType.BOOLEAN);
     for (const pred of [lowerPred, upperPred]) {
       const keyPred = predKey(pred);
       if (!existingKeys.has(keyPred)) inferred.push(pred);
@@ -375,8 +375,8 @@ function exprKey(expr: BoundExpr | null): string {
 }
 
 function literalKey(expr: BoundExpr): string {
-  const e = expr as { dataType?: string | null; value?: LiteralValue };
-  return `${e.dataType || ''}:${String(e.value)}`;
+  if (expr.kind !== BoundExprKind.LITERAL) return `:${String(getExprType(expr) ?? '')}`;
+  return `${expr.dataType ?? ''}:${String(expr.value)}`;
 }
 
 function findColExpr(predicates: BoundExpr[], colK: string): BoundExpr | null {

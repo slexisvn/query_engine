@@ -1,13 +1,13 @@
 import { BoundExprKind, type BoundExpr, type BoundColumnRefNode, type BoundLiteralNode, type BoundBinaryNode, type BoundBetweenNode, type BoundLikeNode, type BoundInListNode, type BoundIsNullNode, type LiteralValue } from '../../binder/expression-binder.js';
 import { PlanNodeType, JoinType, type LogicalPlanNode } from '../../planner/logical-plan.js';
 import { toNumericValue } from '../../storage/data-type.js';
+import { Config } from '../../config.js';
 import type { ColumnStats, HistogramLike, Mcv, StatsProvider, TableStats } from '../../catalog/statistics.js';
 export type { ColumnStats, HistogramLike, Mcv, StatsProvider, TableStats };
 
 const MIN_SELECTIVITY = 0.0001;
 const DEFAULT_CORRELATION = 0.5;
 const DEFAULT_NDV = 100;
-const DEFAULT_SCAN_ROWS = 1000;
 
 export interface EquiPred {
   left: BoundExpr;
@@ -23,11 +23,11 @@ export class DefaultCardinalityEstimator {
 
   estimateScan(tableName: string): number {
     const tableStats = this.stats.get(tableName.toUpperCase());
-    return tableStats ? tableStats.rowCount : DEFAULT_SCAN_ROWS;
+    return tableStats ? tableStats.rowCount : Config.defaultCardinality;
   }
 
   estimatePlan(node?: LogicalPlanNode | null): number {
-    if (!node) return DEFAULT_SCAN_ROWS;
+    if (!node) return Config.defaultCardinality;
 
     switch (node.type) {
       case PlanNodeType.SCAN:
@@ -58,7 +58,7 @@ export class DefaultCardinalityEstimator {
       case PlanNodeType.EMPTY:
         return 0;
       default:
-        return node.children?.length ? this.estimatePlan(node.children[0]) : DEFAULT_SCAN_ROWS;
+        return node.children?.length ? this.estimatePlan(node.children[0]) : Config.defaultCardinality;
     }
   }
 
@@ -127,7 +127,7 @@ export class DefaultCardinalityEstimator {
   _histogramJoinCollision(sA: ColumnStats | null, sB: ColumnStats | null): number | null {
     const hA = sA?.histogram, hB = sB?.histogram;
     if (!hasBucketCounts(hA) || !hasBucketCounts(hB)) return null;
-    const minA = toNumericValue(sA?.min), minB = toNumericValue(sB?.min);
+    const minA = toNumericValue(hA.lowerBound), minB = toNumericValue(hB.lowerBound);
     if (minA === null || minB === null) return null;
     return histogramJoinCollision(hA, minA, hB, minB);
   }

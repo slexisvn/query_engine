@@ -1221,7 +1221,7 @@ describe('TPC-H Optimizer E2E', () => {
         S_NATIONKEY: colStats(25, 0, 24),
         S_ACCTBAL: colStats(9500, -999, 9999, {
           histogram: new EquiDepthHistogram(
-            Array.from({ length: 10 }, (_, i) => -999 + (i + 1) * 1100), 10000
+            Array.from({ length: 10 }, (_, i) => -999 + (i + 1) * 1100)
           ),
         }),
       }));
@@ -1259,7 +1259,7 @@ describe('TPC-H Optimizer E2E', () => {
         O_TOTALPRICE: colStats(1400000, 800, 600000),
         O_ORDERDATE: colStats(2400, null, null, {
           histogram: new EquiDepthHistogram(
-            Array.from({ length: 10 }, (_, i) => 8035 + (i + 1) * 240), 1500000
+            Array.from({ length: 10 }, (_, i) => 8035 + (i + 1) * 240)
           ),
         }),
         O_ORDERPRIORITY: colStats(5, null, null),
@@ -1273,13 +1273,13 @@ describe('TPC-H Optimizer E2E', () => {
         L_LINENUMBER: colStats(7, 1, 7),
         L_QUANTITY: colStats(50, 1, 50, {
           histogram: new EquiDepthHistogram(
-            Array.from({ length: 10 }, (_, i) => (i + 1) * 5), 6000000
+            Array.from({ length: 10 }, (_, i) => (i + 1) * 5)
           ),
         }),
         L_EXTENDEDPRICE: colStats(1000000, 900, 105000),
         L_DISCOUNT: colStats(11, 0, 0.1, {
           histogram: new EquiDepthHistogram(
-            Array.from({ length: 10 }, (_, i) => (i + 1) * 0.01), 6000000
+            Array.from({ length: 10 }, (_, i) => (i + 1) * 0.01)
           ),
         }),
         L_TAX: colStats(9, 0, 0.08),

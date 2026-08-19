@@ -21,7 +21,6 @@ export enum BoundExprKind {
   EXISTS = 'BoundExists',
   EXTRACT = 'BoundExtract',
   INTERVAL = 'BoundInterval',
-  COMPARISON = 'BoundComparison',
   WINDOW = 'BoundWindow',
 }
 
@@ -41,46 +40,46 @@ export interface BoundColumnRefNode {
   tableAlias: string;
   columnName: string;
   columnIndex: number;
-  dataType: string | null;
+  dataType: DataType | null;
   depth: number;
   isCorrelated: boolean;
 }
 
-export interface BoundLiteralNode { kind: BoundExprKind.LITERAL; value: LiteralValue; dataType: string | null; }
+export interface BoundLiteralNode { kind: BoundExprKind.LITERAL; value: LiteralValue; dataType: DataType | null; }
 
-export interface BoundBinaryNode { kind: BoundExprKind.BINARY; op: string; left: BoundExpr; right: BoundExpr; resultType: string; }
+export interface BoundBinaryNode { kind: BoundExprKind.BINARY; op: string; left: BoundExpr; right: BoundExpr; resultType: DataType; }
 
-export interface BoundUnaryNode { kind: BoundExprKind.UNARY; op: string; operand: BoundExpr; resultType: string | null; }
+export interface BoundUnaryNode { kind: BoundExprKind.UNARY; op: string; operand: BoundExpr; resultType: DataType | null; }
 
-export interface BoundFunctionNode { kind: BoundExprKind.FUNCTION; name: string; args: BoundExpr[]; resultType: string | null; }
+export interface BoundFunctionNode { kind: BoundExprKind.FUNCTION; name: string; args: BoundExpr[]; resultType: DataType | null; }
 
-export interface BoundAggregateNode { kind: BoundExprKind.AGGREGATE; name: string; args: BoundExpr[]; distinct: boolean; resultType: string; }
+export interface BoundAggregateNode { kind: BoundExprKind.AGGREGATE; name: string; args: BoundExpr[]; distinct: boolean; resultType: DataType; }
 
 export interface BoundCaseNode {
   kind: BoundExprKind.CASE;
   operand: BoundExpr | null;
   whenClauses: BoundWhenClause[];
   elseExpr: BoundExpr | null;
-  resultType: string;
+  resultType: DataType;
 }
 
-export interface BoundCastNode { kind: BoundExprKind.CAST; expr: BoundExpr; targetType: string; dataType: string; }
+export interface BoundCastNode { kind: BoundExprKind.CAST; expr: BoundExpr; targetType: DataType; dataType: DataType; }
 
-export interface BoundBetweenNode { kind: BoundExprKind.BETWEEN; expr: BoundExpr; low: BoundExpr; high: BoundExpr; negated: boolean; resultType: string; }
+export interface BoundBetweenNode { kind: BoundExprKind.BETWEEN; expr: BoundExpr; low: BoundExpr; high: BoundExpr; negated: boolean; resultType: DataType; }
 
-export interface BoundInListNode { kind: BoundExprKind.IN_LIST; expr: BoundExpr; list: BoundExpr | BoundExpr[]; negated: boolean; resultType: string; }
+export interface BoundInListNode { kind: BoundExprKind.IN_LIST; expr: BoundExpr; list: BoundExpr | BoundExpr[]; negated: boolean; resultType: DataType; }
 
-export interface BoundLikeNode { kind: BoundExprKind.LIKE; expr: BoundExpr; pattern: BoundExpr; negated: boolean; resultType: string; }
+export interface BoundLikeNode { kind: BoundExprKind.LIKE; expr: BoundExpr; pattern: BoundExpr; negated: boolean; resultType: DataType; }
 
-export interface BoundIsNullNode { kind: BoundExprKind.IS_NULL; expr: BoundExpr; negated: boolean; resultType: string; }
+export interface BoundIsNullNode { kind: BoundExprKind.IS_NULL; expr: BoundExpr; negated: boolean; resultType: DataType; }
 
 export interface BoundSubqueryNode { kind: BoundExprKind.SUBQUERY; plan: BoundQuery; subqueryType: string; }
 
-export interface BoundExistsNode { kind: BoundExprKind.EXISTS; plan: BoundQuery; negated: boolean; resultType: string; }
+export interface BoundExistsNode { kind: BoundExprKind.EXISTS; plan: BoundQuery; negated: boolean; resultType: DataType; }
 
-export interface BoundExtractNode { kind: BoundExprKind.EXTRACT; field: string; source: BoundExpr; resultType: string; }
+export interface BoundExtractNode { kind: BoundExprKind.EXTRACT; field: string; source: BoundExpr; resultType: DataType; }
 
-export interface BoundIntervalNode { kind: BoundExprKind.INTERVAL; value: number; unit: string; resultType: string; }
+export interface BoundIntervalNode { kind: BoundExprKind.INTERVAL; value: number; unit: string; resultType: DataType; }
 
 export interface BoundWindowNode {
   kind: BoundExprKind.WINDOW;
@@ -88,10 +87,10 @@ export interface BoundWindowNode {
   args: BoundExpr[];
   partitionBy: BoundExpr[];
   orderBy: BoundWindowOrderKey[];
-  resultType: string | null;
+  resultType: DataType | null;
 }
 
-export function BoundColumnRef(tableAlias: string, columnName: string, columnIndex: number, dataType: string | null, depth: number = 0): BoundColumnRefNode {
+export function BoundColumnRef(tableAlias: string, columnName: string, columnIndex: number, dataType: DataType | null, depth: number = 0): BoundColumnRefNode {
   return {
     kind: BoundExprKind.COLUMN_REF,
     tableAlias,
@@ -103,31 +102,31 @@ export function BoundColumnRef(tableAlias: string, columnName: string, columnInd
   };
 }
 
-export function BoundLiteral(value: LiteralValue, dataType: string | null): BoundLiteralNode {
+export function BoundLiteral(value: LiteralValue, dataType: DataType | null): BoundLiteralNode {
   return { kind: BoundExprKind.LITERAL, value, dataType };
 }
 
-export function BoundBinary(op: string, left: BoundExpr, right: BoundExpr, resultType: string): BoundBinaryNode {
+export function BoundBinary(op: string, left: BoundExpr, right: BoundExpr, resultType: DataType): BoundBinaryNode {
   return { kind: BoundExprKind.BINARY, op, left, right, resultType };
 }
 
-export function BoundUnary(op: string, operand: BoundExpr, resultType: string | null): BoundUnaryNode {
+export function BoundUnary(op: string, operand: BoundExpr, resultType: DataType | null): BoundUnaryNode {
   return { kind: BoundExprKind.UNARY, op, operand, resultType };
 }
 
-export function BoundFunction(name: string, args: BoundExpr[], resultType: string | null): BoundFunctionNode {
+export function BoundFunction(name: string, args: BoundExpr[], resultType: DataType | null): BoundFunctionNode {
   return { kind: BoundExprKind.FUNCTION, name, args, resultType };
 }
 
-export function BoundAggregate(name: string, args: BoundExpr[], distinct: boolean, resultType: string): BoundAggregateNode {
+export function BoundAggregate(name: string, args: BoundExpr[], distinct: boolean, resultType: DataType): BoundAggregateNode {
   return { kind: BoundExprKind.AGGREGATE, name, args, distinct, resultType };
 }
 
-export function BoundCase(operand: BoundExpr | null, whenClauses: BoundWhenClause[], elseExpr: BoundExpr | null, resultType: string): BoundCaseNode {
+export function BoundCase(operand: BoundExpr | null, whenClauses: BoundWhenClause[], elseExpr: BoundExpr | null, resultType: DataType): BoundCaseNode {
   return { kind: BoundExprKind.CASE, operand, whenClauses, elseExpr, resultType };
 }
 
-export function BoundCast(expr: BoundExpr, targetType: string): BoundCastNode {
+export function BoundCast(expr: BoundExpr, targetType: DataType): BoundCastNode {
   return { kind: BoundExprKind.CAST, expr, targetType, dataType: targetType };
 }
 
@@ -163,13 +162,15 @@ export function BoundInterval(value: number, unit: string): BoundIntervalNode {
   return { kind: BoundExprKind.INTERVAL, value, unit, resultType: DataType.INT32 };
 }
 
-export function BoundWindow(name: string, args: BoundExpr[], partitionBy: BoundExpr[], orderBy: BoundWindowOrderKey[], resultType: string | null): BoundWindowNode {
+export function BoundWindow(name: string, args: BoundExpr[], partitionBy: BoundExpr[], orderBy: BoundWindowOrderKey[], resultType: DataType | null): BoundWindowNode {
   return { kind: BoundExprKind.WINDOW, name, args, partitionBy, orderBy, resultType };
 }
 
-export function getExprType(expr?: { kind?: BoundExprKind; resultType?: string | null; dataType?: string | null } | null): string | null {
+export function getExprType(expr?: BoundExpr | null): DataType | null {
   if (!expr) return null;
-  return expr.resultType || expr.dataType || null;
+  if ('resultType' in expr && expr.resultType) return expr.resultType;
+  if ('dataType' in expr && expr.dataType) return expr.dataType;
+  return null;
 }
 
 export function collectCorrelatedColumns(expr: BoundExpr): BoundColumnRefNode[] {
@@ -234,5 +235,17 @@ export function walkExpr(expr: BoundExpr | null | undefined, fn: (node: BoundExp
       for (const p of expr.partitionBy) walkExpr(p, fn);
       for (const o of expr.orderBy) walkExpr(o.expr, fn);
       break;
+    case BoundExprKind.COLUMN_REF:
+    case BoundExprKind.LITERAL:
+    case BoundExprKind.INTERVAL:
+    case BoundExprKind.SUBQUERY:
+    case BoundExprKind.EXISTS:
+      break;
+    default:
+      assertAllKindsWalked(expr);
   }
+}
+
+function assertAllKindsWalked(expr: never): never {
+  throw new Error(`walkExpr has no case for expression kind: ${(expr as BoundExpr).kind}`);
 }

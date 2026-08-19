@@ -2,6 +2,7 @@ import { PlanNodeType } from '../../planner/logical-plan.js';
 import type { LogicalPlanNode } from '../../planner/logical-plan.js';
 import { QueryExecutor } from '../../execution/query-executor.js';
 import { ResultSink } from '../../execution/result-sink.js';
+import { CancelToken } from '../../execution/pipeline.js';
 import { ExchangeSender } from './exchange-operator.js';
 import { ExchangeReceiver } from './exchange-operator.js';
 import { FragmentState } from '../planner/fragment.js';
@@ -31,10 +32,6 @@ interface FragmentLike {
   markCompleted(): void;
   markFailed(error: Error): void;
   markCancelled(): void;
-}
-
-interface CancelToken {
-  cancelled: boolean;
 }
 
 interface ActiveFragment {
@@ -75,7 +72,7 @@ export class FragmentExecutor {
 
   async execute(fragment: FragmentLike, outputConfig: OutputConfig | null): Promise<ExecuteResult> {
     const fragmentId = fragment.fragmentId;
-    const cancelToken: CancelToken = { cancelled: false };
+    const cancelToken = new CancelToken();
     this._activeFragments.set(fragmentId, { fragment, cancelToken });
 
     try {
@@ -115,7 +112,7 @@ export class FragmentExecutor {
   async cancel(fragmentId: FragmentId): Promise<void> {
     const active = this._activeFragments.get(fragmentId);
     if (active) {
-      active.cancelToken.cancelled = true;
+      active.cancelToken.cancel();
       active.fragment.markCancelled();
     }
   }

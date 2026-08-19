@@ -1,5 +1,5 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanRewriter } from '../../planner/plan-visitor.js';
+import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { PlanNodeType, JoinType, type LogicalPlanNode, type LogicalFilterNode, type LogicalLimitNode, type LogicalJoinNode, type LogicalUnionNode, type LogicalEmptyNode } from '../../planner/logical-plan.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 

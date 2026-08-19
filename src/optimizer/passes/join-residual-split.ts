@@ -1,9 +1,8 @@
 import { OptimizationPass } from '../pass.js';
 import { JoinType, LogicalFilter, LogicalJoin, type LogicalPlanNode, type LogicalJoinNode } from '../../planner/logical-plan.js';
-import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
+import { PlanRewriter } from '../../planner/plan-rewriter.js';
+import { BoundExprKind, walkExpr, type BoundExpr } from '../../binder/expression-binder.js';
 import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
-import { walkExpr } from '../expr-walk.js';
 import { collectPlanRefs, refBelongsToPlan, type PlanRefs, type ExprRef } from './plan-refs.js';
 
 type MetadataValue = string | number | boolean | object | null | undefined;

@@ -1,6 +1,6 @@
 import { OptimizationPass } from '../../optimizer/pass.js';
 import { PlanNodeType, LogicalPartialAggregate, LogicalFinalAggregate, LogicalExchange, getChildren, setChildren, type LogicalPlanNode, type LogicalAggregateNode } from '../../planner/logical-plan.js';
-import { PlanRewriter } from '../../planner/plan-visitor.js';
+import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { ExchangeType } from '../planner/fragment.js';
 import type { BoundExpr } from '../../binder/expression-binder.js';
 import type { AggregateDecomposition } from '../distributed-types.js';

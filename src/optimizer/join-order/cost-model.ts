@@ -63,6 +63,14 @@ export class DefaultCostModel {
     return outerCard * innerCard * this.C_COMPARE;
   }
 
+  blockNestedLoopJoinCost(buildCard: number, probeCard: number, outputCard: number | null = null): number {
+    const build = buildCard * this.C_HASH_BUILD + buildCard * this.C_MEMORY;
+    const compare = this.nestedLoopJoinCost(buildCard, probeCard);
+    const out = (outputCard || Math.max(buildCard, probeCard)) * this.C_OUTPUT;
+    const spill = buildCard > this.SPILL_THRESHOLD ? (buildCard + probeCard) * this.C_IO : 0;
+    return build + compare + out + spill;
+  }
+
   crossJoinCost(leftCard: number, rightCard: number): number {
     return leftCard * rightCard * this.C_CROSS;
   }
@@ -104,17 +112,9 @@ export class DefaultCostModel {
            this.hashJoinCost(buildCard, probeCard, outputCard);
   }
 
-  cheaperJoinCost(leftCard: number, rightCard: number, leftSorted: boolean, rightSorted: boolean, outputCard: number, downstreamSortSaving: number = 0): { hashCost: number; mergeCost: number; preferMerge: boolean } {
-    const buildCard = Math.min(leftCard, rightCard);
-    const probeCard = Math.max(leftCard, rightCard);
-    const hashCost = this.hashJoinCost(buildCard, probeCard, outputCard);
-
+  mergeJoinCostWithSorts(leftCard: number, rightCard: number, leftSorted: boolean, rightSorted: boolean, outputCard: number): number {
     const leftSortCost = leftSorted ? 0 : this.sortCost(leftCard);
     const rightSortCost = rightSorted ? 0 : this.sortCost(rightCard);
-    const mergeCost = leftSortCost + rightSortCost
-      + this.mergeJoinCost(leftCard, rightCard, outputCard)
-      - downstreamSortSaving;
-
-    return { hashCost, mergeCost, preferMerge: mergeCost < hashCost };
+    return leftSortCost + rightSortCost + this.mergeJoinCost(leftCard, rightCard, outputCard);
   }
 }

@@ -2,6 +2,7 @@ import type {
   WasmDispatchRegistry,
   WasmKernel,
   RegisterableKernel,
+  KernelOperandType,
 } from './wasm-types.js';
 
 export class WasmDispatch implements WasmDispatchRegistry {
@@ -15,18 +16,18 @@ export class WasmDispatch implements WasmDispatchRegistry {
     this.memory = null;
   }
 
-  register(operation: string, dataType: string, kernel: RegisterableKernel): void {
-    const key = `${operation}:${dataType}`;
+  register(operation: string, operand: KernelOperandType, kernel: RegisterableKernel): void {
+    const key = `${operation}:${operand}`;
     this.kernels.set(key, kernel as WasmKernel);
   }
 
-  lookup(operation: string, dataType: string): WasmKernel | null {
-    const key = `${operation}:${dataType}`;
+  lookup(operation: string, operand: KernelOperandType): WasmKernel | null {
+    const key = `${operation}:${operand}`;
     return this.kernels.get(key) || null;
   }
 
-  has(operation: string, dataType: string): boolean {
-    return this.kernels.has(`${operation}:${dataType}`);
+  has(operation: string, operand: KernelOperandType): boolean {
+    return this.kernels.has(`${operation}:${operand}`);
   }
 
   setInstance(instance: WebAssembly.Instance, memory: WebAssembly.Memory): void {

@@ -31,6 +31,10 @@ export class DPhypEnumerator implements JoinEnumerator {
     return 'DPhyp';
   }
 
+  get exhaustive(): boolean {
+    return true;
+  }
+
   solve(): JoinOrderEntry | null {
     this.seedLeaves();
 

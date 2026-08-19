@@ -1,5 +1,5 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanRewriter } from '../../planner/plan-visitor.js';
+import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { type LogicalPlanNode, type LogicalSortNode } from '../../planner/logical-plan.js';
 import { columnKeyOf, sortDirectionOf, sortKeyMatches } from '../sort-properties.js';
 

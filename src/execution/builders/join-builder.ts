@@ -6,7 +6,7 @@ import type { LogicalJoinNode, LogicalPlanNode } from '../../planner/logical-pla
 import { compileExpression } from '../expression-eval.js';
 import { extractJoinKeys } from '../join-utils.js';
 import { HashJoinBuild, HashJoinProbe } from '../operators/hash-join.js';
-import { MergeJoinOperator } from '../operators/merge-join.js';
+import { MergeJoinOperator, mergeJoinSortKeys } from '../operators/merge-join.js';
 import { NestedLoopJoinOperator } from '../operators/nested-loop-join.js';
 import {
   extractStageChain,
@@ -19,7 +19,7 @@ import type { Stage, JoinSpec } from '../fragment-spec.js';
 import { Config } from '../../config.js';
 import { isBuildSidePreserved } from '../../optimizer/join-build-side.js';
 import { RowMemoryBudget } from '../memory-budget.js';
-import { combinedMappingOf, registerBufferedChild } from './builder-utils.js';
+import { combinedMappingOf, registerBufferedChild, registerSortedChild } from './builder-utils.js';
 import { DataType } from '../../storage/data-type.js';
 import type { BoundExpr } from '../../binder/expression-binder.js';
 import type { ColumnInfo } from '../../binder/scope.js';
@@ -179,7 +179,7 @@ export async function buildJoin(executor: ExecutorLike, physical: PhysicalPlanNo
       : combinedMapping;
 
   if (physical.type === PhysicalNodeType.MERGE_JOIN) {
-    return buildMergeJoin(node, {
+    return buildMergeJoin(executor, node, {
       left, right, buildInput, probeInput,
       buildKeys, probeKeys, conditionEvaluator,
       resultSchema, resultMapping,
@@ -342,7 +342,7 @@ export async function buildJoin(executor: ExecutorLike, physical: PhysicalPlanNo
   };
 }
 
-function buildMergeJoin(node: LogicalJoinNode, ctx: JoinBuildCtx): CompiledPipeline {
+function buildMergeJoin(executor: ExecutorLike, node: LogicalJoinNode, ctx: JoinBuildCtx): CompiledPipeline {
   const { left, right, buildInput, probeInput, conditionEvaluator } = ctx;
   let mergeBuild = buildInput;
   let mergeProbe = probeInput;
@@ -369,23 +369,33 @@ function buildMergeJoin(node: LogicalJoinNode, ctx: JoinBuildCtx): CompiledPipel
     schema: mergeSchema,
     columnMapping: mergeMapping,
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
-      const leftChunks = registerBufferedChild(graph, currentPipelineId, left);
-      const rightChunks = registerBufferedChild(graph, currentPipelineId, right);
+      const buildKeyExprs = mergeBuildKeys.map((k: BoundExpr) => compileExpression(k, mergeBuild.columnMapping));
+      const probeKeyExprs = mergeProbeKeys.map((k: BoundExpr) => compileExpression(k, mergeProbe.columnMapping));
+
+      const buildRows = registerSortedChild(
+        graph, currentPipelineId, mergeBuild,
+        mergeJoinSortKeys(buildKeyExprs),
+        executor.storageBackend.createSpillManager(executor.tempManager.allocate('spill', 'merge-join-build')),
+      );
+      const probeRows = registerSortedChild(
+        graph, currentPipelineId, mergeProbe,
+        mergeJoinSortKeys(probeKeyExprs),
+        executor.storageBackend.createSpillManager(executor.tempManager.allocate('spill', 'merge-join-probe')),
+      );
 
       graph.setSource(currentPipelineId, async function* (): AsyncGenerator<DataChunk> {
         const mergeJoin = new MergeJoinOperator(
-          mergeBuild === left ? leftChunks : rightChunks,
-          mergeProbe === left ? leftChunks : rightChunks,
-          mergeBuildKeys.map((k: BoundExpr) => compileExpression(k, mergeBuild.columnMapping)),
-          mergeProbeKeys.map((k: BoundExpr) => compileExpression(k, mergeProbe.columnMapping)),
-          mergeBuild.schema.length,
-          mergeProbe.schema.length,
+          buildRows,
+          probeRows,
+          buildKeyExprs,
+          probeKeyExprs,
+          mergeBuild.schema.map((col: ExecColumn) => col.dataType),
+          mergeProbe.schema.map((col: ExecColumn) => col.dataType),
           node.joinType,
-          conditionEvaluator
+          conditionEvaluator,
         );
 
-        const resultChunks = await mergeJoin.execute();
-        for (const chunk of resultChunks) {
+        for await (const chunk of mergeJoin.execute()) {
           await currentSink.consume(chunk);
           yield chunk;
         }

@@ -1,6 +1,6 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanNodeType, JoinType, LogicalAggregate, type LogicalPlanNode, type LogicalAggregateNode, type LogicalJoinNode } from '../../planner/logical-plan.js';
-import { PlanRewriter } from '../../planner/plan-visitor.js';
+import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
 
 type Side = 'left' | 'right' | 'both' | 'none';

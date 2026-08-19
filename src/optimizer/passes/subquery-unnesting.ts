@@ -1,8 +1,9 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanNodeType, JoinType, LogicalJoin, LogicalFilter, LogicalAggregate, getChildren, setChildren, type LogicalPlanNode, type LogicalDependentJoinNode, type LogicalProjectNode, type ProjectedExpr } from '../../planner/logical-plan.js';
-import { PlanRewriter } from '../../planner/plan-visitor.js';
+import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { BoundExprKind, type BoundExpr, type BoundColumnRefNode } from '../../binder/expression-binder.js';
 import { combineConjuncts } from './predicate-pushdown.js';
+import { DataType } from '../../storage/data-type.js';
 
 interface CorrelationResult {
   cleanedPlan: LogicalPlanNode;
@@ -87,7 +88,7 @@ class UnnestingRewriter extends PlanRewriter {
           op: '=',
           left: inExpr,
           right: outputRef,
-          resultType: 'BOOLEAN',
+          resultType: DataType.BOOLEAN,
         });
       }
     }
@@ -106,7 +107,7 @@ class UnnestingRewriter extends PlanRewriter {
           op: '=',
           left: inExpr,
           right: outputRef,
-          resultType: 'BOOLEAN',
+          resultType: DataType.BOOLEAN,
         });
       }
     }
@@ -116,7 +117,7 @@ class UnnestingRewriter extends PlanRewriter {
       tableAlias: '',
       columnName: markName,
       columnIndex: -1,
-      dataType: 'BOOLEAN',
+      dataType: DataType.BOOLEAN,
       depth: 0,
       isCorrelated: false,
     };
@@ -131,9 +132,9 @@ class UnnestingRewriter extends PlanRewriter {
       right: {
         kind: BoundExprKind.LITERAL,
         value: false,
-        dataType: 'BOOLEAN',
+        dataType: DataType.BOOLEAN,
       },
-      resultType: 'BOOLEAN',
+      resultType: DataType.BOOLEAN,
     } as BoundExpr, markJoin);
   }
 

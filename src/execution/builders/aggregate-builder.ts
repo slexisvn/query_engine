@@ -44,7 +44,7 @@ interface GroupByExpr {
   kind?: BoundExprKind;
   columnName?: string;
   tableAlias?: string;
-  dataType?: string | null;
+  dataType?: DataType | null;
   resultType?: string | null;
 }
 

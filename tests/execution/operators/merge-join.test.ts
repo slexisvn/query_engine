@@ -1,8 +1,14 @@
-import { describe, it, expect } from 'vitest';
-import { MergeJoinOperator } from '../../../src/execution/operators/merge-join.js';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { MergeJoinOperator, mergeJoinSortKeys } from '../../../src/execution/operators/merge-join.js';
+import { SortOperator } from '../../../src/execution/operators/sort.js';
+import { SpillManager } from '../../../src/storage/spill-manager/spill-manager.js';
+import { MemoryStorage } from '../../../src/storage/spill-manager/memory-storage.js';
+import { DataType } from '../../../src/storage/data-type.js';
+import { captureMemoryLimit, limitResidentRows } from '../../helpers/memory-limits.js';
 import { Column } from '../../../src/storage/column.js';
 import { DataChunk } from '../../../src/storage/chunk.js';
 import { JoinType } from '../../../src/planner/logical-plan.js';
+import { Config } from '../../../src/config.js';
 
 function makeChunk(colDefs) {
   const size = colDefs[0].values.length;
@@ -19,21 +25,53 @@ function keyAt(colIdx) {
   return (chunk, row) => chunk.columns[colIdx].get(row);
 }
 
-async function merge(buildDef, probeDef, joinType, opts = {}) {
-  const buildChunks = [makeChunk(buildDef)];
-  const probeChunks = [makeChunk(probeDef)];
-  const op = new MergeJoinOperator(
-    buildChunks,
-    probeChunks,
-    [keyAt(0)],
-    [keyAt(0)],
-    buildDef.length,
-    probeDef.length,
+function typesOf(chunks) {
+  return chunks[0].columns.map(c => c.dataType);
+}
+
+function sortedSource(chunks, extractors) {
+  return async function* () {
+    const sortOp = new SortOperator(mergeJoinSortKeys(extractors), null, 0, new SpillManager(new MemoryStorage()));
+    for (const chunk of chunks) await sortOp.consume(chunk);
+    yield* sortOp.stream();
+  };
+}
+
+function rawSource(chunks) {
+  return async function* () {
+    for (const chunk of chunks) yield chunk;
+  };
+}
+
+function mergeOp(buildChunks, probeChunks, buildKeys, probeKeys, joinType, condition = null) {
+  return new MergeJoinOperator(
+    sortedSource(buildChunks, buildKeys),
+    sortedSource(probeChunks, probeKeys),
+    buildKeys,
+    probeKeys,
+    typesOf(buildChunks),
+    typesOf(probeChunks),
     joinType,
-    opts.condition || null
+    condition,
   );
-  const result = await op.execute();
-  return result.flatMap(c => c.toRows());
+}
+
+async function collect(op) {
+  const chunks = [];
+  for await (const chunk of op.execute()) chunks.push(chunk);
+  return chunks;
+}
+
+async function merge(buildDef, probeDef, joinType, opts = {}) {
+  const op = mergeOp(
+    [makeChunk(buildDef)],
+    [makeChunk(probeDef)],
+    [keyAt(0)],
+    [keyAt(0)],
+    joinType,
+    opts.condition || null,
+  );
+  return (await collect(op)).flatMap(c => c.toRows());
 }
 
 describe('MergeJoinOperator', () => {
@@ -96,16 +134,16 @@ describe('MergeJoinOperator', () => {
       expect(nullRow[3]).toBe(null);
     });
 
-    it('RIGHT: null-keyed probe row is emitted unmatched', async () => {
+    it('RIGHT: null-keyed row of the preserved side is emitted unmatched', async () => {
       const rows = await merge(
-        [{ type: 'INT32', values: [1] }, { type: 'VARCHAR', values: ['a'] }],
         [{ type: 'INT32', values: [1, null] }, { type: 'VARCHAR', values: ['x', 'm'] }],
+        [{ type: 'INT32', values: [1] }, { type: 'VARCHAR', values: ['a'] }],
         JoinType.RIGHT
       );
       expect(rows.length).toBe(2);
-      const nullRow = rows.find(r => r[2] === null);
-      expect(nullRow[3]).toBe('m');
-      expect(nullRow[0]).toBe(null);
+      const nullRow = rows.find(r => r[0] === null);
+      expect(nullRow[1]).toBe('m');
+      expect(nullRow[2]).toBe(null);
     });
   });
 
@@ -127,18 +165,18 @@ describe('MergeJoinOperator', () => {
   });
 
   describe('RIGHT JOIN', () => {
-    it('keeps unmatched probe rows with null build columns', async () => {
+    it('keeps every row of the preserved side, padding the other with nulls', async () => {
       const rows = await merge(
-        [{ type: 'INT32', values: [2] }, { type: 'VARCHAR', values: ['a'] }],
         [{ type: 'INT32', values: [1, 2, 3] }, { type: 'VARCHAR', values: ['x', 'y', 'z'] }],
+        [{ type: 'INT32', values: [2] }, { type: 'VARCHAR', values: ['a'] }],
         JoinType.RIGHT
       );
 
       expect(rows.length).toBe(3);
-      const row1 = rows.find(r => r[2] === 1);
-      expect(row1[0]).toBeNull();
-      const row3 = rows.find(r => r[2] === 3);
-      expect(row3[0]).toBeNull();
+      const row1 = rows.find(r => r[0] === 1);
+      expect(row1[2]).toBeNull();
+      const row3 = rows.find(r => r[0] === 3);
+      expect(row3[2]).toBeNull();
     });
   });
 
@@ -203,9 +241,9 @@ describe('MergeJoinOperator', () => {
     it('returns empty for empty build side', async () => {
       const buildChunks = [makeChunk([{ type: 'INT32', values: [] }])];
       const probeChunks = [makeChunk([{ type: 'INT32', values: [1, 2] }])];
-      const op = new MergeJoinOperator(buildChunks, probeChunks, [keyAt(0)], [keyAt(0)], 1, 1, JoinType.INNER);
+      const op = mergeOp(buildChunks, probeChunks, [keyAt(0)], [keyAt(0)], JoinType.INNER);
 
-      const result = await op.execute();
+      const result = await collect(op);
 
       expect(result.length).toBe(0);
     });
@@ -213,9 +251,9 @@ describe('MergeJoinOperator', () => {
     it('returns empty for empty probe side on INNER', async () => {
       const buildChunks = [makeChunk([{ type: 'INT32', values: [1, 2] }])];
       const probeChunks = [makeChunk([{ type: 'INT32', values: [] }])];
-      const op = new MergeJoinOperator(buildChunks, probeChunks, [keyAt(0)], [keyAt(0)], 1, 1, JoinType.INNER);
+      const op = mergeOp(buildChunks, probeChunks, [keyAt(0)], [keyAt(0)], JoinType.INNER);
 
-      const result = await op.execute();
+      const result = await collect(op);
 
       expect(result.length).toBe(0);
     });
@@ -231,16 +269,9 @@ describe('MergeJoinOperator', () => {
         { type: 'INT32', values: [1, 2] },
         { type: 'VARCHAR', values: ['a', 'b'] },
       ])];
-      const op = new MergeJoinOperator(
-        buildChunks,
-        probeChunks,
-        [keyAt(0), keyAt(1)],
-        [keyAt(0), keyAt(1)],
-        2, 2,
-        JoinType.INNER
-      );
+      const op = mergeOp(buildChunks, probeChunks, [keyAt(0), keyAt(1)], [keyAt(0), keyAt(1)], JoinType.INNER);
 
-      const result = await op.execute();
+      const result = await collect(op);
       const rows = result.flatMap(c => c.toRows());
 
       expect(rows.length).toBe(1);
@@ -259,9 +290,9 @@ describe('MergeJoinOperator', () => {
         { type: 'INT32', values: [1] },
         { type: 'VARCHAR', values: ['hello'] },
       ])];
-      const op = new MergeJoinOperator(buildChunks, probeChunks, [keyAt(0)], [keyAt(0)], 2, 2, JoinType.INNER);
+      const op = mergeOp(buildChunks, probeChunks, [keyAt(0)], [keyAt(0)], JoinType.INNER);
 
-      const result = await op.execute();
+      const result = await collect(op);
 
       expect(result[0].columns[0].dataType).toBe('INT32');
       expect(result[0].columns[1].dataType).toBe('FLOAT64');
@@ -293,9 +324,9 @@ describe('MergeJoinOperator', () => {
         { type: 'VARCHAR', values: ['p1', 'p2', 'p3'] },
         { type: 'FLOAT64', values: [10.0, 20.0, 30.0] },
       ])];
-      const op = new MergeJoinOperator(buildChunks, probeChunks, [keyAt(0)], [keyAt(0)], 2, 3, JoinType.SEMI);
+      const op = mergeOp(buildChunks, probeChunks, [keyAt(0)], [keyAt(0)], JoinType.SEMI);
 
-      const result = await op.execute();
+      const result = await collect(op);
       const rows = result.flatMap(c => c.toRows());
 
       expect(rows.length).toBe(2);
@@ -372,9 +403,9 @@ describe('MergeJoinOperator', () => {
         { type: 'INT32', values: [2] },
         { type: 'VARCHAR', values: ['probe_val'] },
       ])];
-      const op = new MergeJoinOperator(buildChunks, probeChunks, [keyAt(0)], [keyAt(0)], 2, 2, JoinType.ANTI);
+      const op = mergeOp(buildChunks, probeChunks, [keyAt(0)], [keyAt(0)], JoinType.ANTI);
 
-      const result = await op.execute();
+      const result = await collect(op);
       const rows = result.flatMap(c => c.toRows());
 
       expect(rows.length).toBe(1);
@@ -388,9 +419,9 @@ describe('MergeJoinOperator', () => {
         { type: 'INT32', values: [1, 2] },
         { type: 'VARCHAR', values: ['a', 'b'] },
       ])];
-      const op = new MergeJoinOperator(buildChunks, probeChunks, [keyAt(0)], [keyAt(0)], 1, 2, JoinType.ANTI);
+      const op = mergeOp(buildChunks, probeChunks, [keyAt(0)], [keyAt(0)], JoinType.ANTI);
 
-      const result = await op.execute();
+      const result = await collect(op);
       const rows = result.flatMap(c => c.toRows());
 
       expect(rows.length).toBe(2);
@@ -466,9 +497,9 @@ describe('MergeJoinOperator', () => {
         { type: 'INT32', values: [1] },
         { type: 'VARCHAR', values: ['val'] },
       ])];
-      const op = new MergeJoinOperator(buildChunks, probeChunks, [keyAt(0)], [keyAt(0)], 2, 2, JoinType.MARK);
+      const op = mergeOp(buildChunks, probeChunks, [keyAt(0)], [keyAt(0)], JoinType.MARK);
 
-      const result = await op.execute();
+      const result = await collect(op);
 
       expect(result[0].columns.length).toBe(3);
       expect(result[0].columns[2].dataType).toBe('BOOLEAN');
@@ -559,5 +590,121 @@ describe('MergeJoinOperator', () => {
       const names = rows.map(r => r[1]).sort();
       expect(names).toEqual(['a', 'c']);
     });
+  });
+});
+
+describe('MergeJoinOperator input ordering', () => {
+  it('accepts input the sort delivered in key order', async () => {
+    const rows = await merge(
+      [{ type: 'INT32', values: [9, 1, 5] }],
+      [{ type: 'INT32', values: [5, 9, 1] }],
+      JoinType.INNER,
+    );
+
+    expect(rows.map(r => r[0])).toEqual([1, 5, 9]);
+  });
+
+  it('rejects an unsorted stream loudly instead of dropping matches', async () => {
+    const buildChunks = [makeChunk([{ type: 'INT32', values: [9, 1, 5] }])];
+    const probeChunks = [makeChunk([{ type: 'INT32', values: [1, 5, 9] }])];
+    const op = new MergeJoinOperator(
+      rawSource(buildChunks),
+      rawSource(probeChunks),
+      [keyAt(0)],
+      [keyAt(0)],
+      typesOf(buildChunks),
+      typesOf(probeChunks),
+      JoinType.INNER,
+    );
+
+    await expect(collect(op)).rejects.toThrow(/unsorted build side/);
+  });
+
+  it('names the probe side when that is the unsorted one', async () => {
+    const buildChunks = [makeChunk([{ type: 'INT32', values: [1, 5, 9] }])];
+    const probeChunks = [makeChunk([{ type: 'INT32', values: [9, 1] }])];
+    const op = new MergeJoinOperator(
+      rawSource(buildChunks),
+      rawSource(probeChunks),
+      [keyAt(0)],
+      [keyAt(0)],
+      typesOf(buildChunks),
+      typesOf(probeChunks),
+      JoinType.INNER,
+    );
+
+    await expect(collect(op)).rejects.toThrow(/unsorted probe side/);
+  });
+});
+
+describe('MergeJoinOperator memory safety', () => {
+  let restoreMemoryLimit;
+
+  beforeEach(() => {
+    restoreMemoryLimit = captureMemoryLimit();
+  });
+
+  afterEach(() => {
+    restoreMemoryLimit();
+  });
+
+  function keyedChunk(values) {
+    return makeChunk([{ type: 'INT32', values }]);
+  }
+
+  function recordingStorage() {
+    const storage = new MemoryStorage();
+    const partitions = new Set();
+    const append = storage.append.bind(storage);
+    storage.append = async (partitionId, buffer) => {
+      partitions.add(partitionId);
+      return append(partitionId, buffer);
+    };
+    return { storage, partitions };
+  }
+
+  it('spills its inputs instead of holding them all in memory', async () => {
+    const rowCount = 4000;
+    limitResidentRows([{ dataType: DataType.INT32 }], 64);
+
+    const buildStorage = recordingStorage();
+    const probeStorage = recordingStorage();
+    const chunkRows = 500;
+    const descending = (start) => Array.from({ length: chunkRows }, (_, i) => rowCount - (start + i));
+    const buildChunks = Array.from({ length: rowCount / chunkRows }, (_, c) => keyedChunk(descending(c * chunkRows)));
+    const probeChunks = Array.from({ length: rowCount / chunkRows }, (_, c) => keyedChunk(descending(c * chunkRows)));
+
+    const sortedVia = (chunks, storage) => async function* () {
+      const sortOp = new SortOperator(mergeJoinSortKeys([keyAt(0)]), null, 0, new SpillManager(storage));
+      for (const chunk of chunks) await sortOp.consume(chunk);
+      yield* sortOp.stream();
+    };
+
+    const op = new MergeJoinOperator(
+      sortedVia(buildChunks, buildStorage.storage),
+      sortedVia(probeChunks, probeStorage.storage),
+      [keyAt(0)],
+      [keyAt(0)],
+      [DataType.INT32],
+      [DataType.INT32],
+      JoinType.INNER,
+    );
+
+    const rows = (await collect(op)).flatMap(c => c.toRows());
+
+    expect(rows).toHaveLength(rowCount);
+    expect(buildStorage.partitions.size).toBeGreaterThan(1);
+    expect(probeStorage.partitions.size).toBeGreaterThan(1);
+  });
+
+  it('emits output in bounded batches rather than one chunk at the end', async () => {
+    const rowCount = Config.flushBatchSize * 3;
+    const values = Array.from({ length: rowCount }, (_, i) => i);
+
+    const op = mergeOp([keyedChunk(values)], [keyedChunk(values)], [keyAt(0)], [keyAt(0)], JoinType.INNER);
+    const chunks = await collect(op);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) expect(chunk.size).toBeLessThanOrEqual(Config.flushBatchSize);
   });
 });

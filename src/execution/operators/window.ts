@@ -31,7 +31,7 @@ export class WindowOperator {
       for (let r = 0; r < chunk.size; r++) {
         const row: ColumnValue[] = [];
         for (let c = 0; c < chunk.columns.length; c++) {
-          row.push(chunk.columns[c].get(chunk.activeRowIndex ? chunk.activeRowIndex(r) : r));
+          row.push(chunk.columns[c].get(chunk.activeRowIndex(r)));
         }
         allRows.push(row);
       }
@@ -74,15 +74,16 @@ export class WindowOperator {
       direction: ok.direction || 'ASC',
     }));
 
+    const rowCount = allRows.length;
+    const orderValues = orderKeys.map((key) => materializeColumn(chunks, key.eval, rowCount));
+    const valueEvalColumn = new Map<CompiledExpr, EvalValue[]>();
     const getVal = (rowIdx: number, evalFn: CompiledExpr): EvalValue => {
-      let offset = 0;
-      for (const chunk of chunks) {
-        if (rowIdx < offset + chunk.size) {
-          return evalFn(chunk, rowIdx - offset);
-        }
-        offset += chunk.size;
+      let column = valueEvalColumn.get(evalFn);
+      if (!column) {
+        column = materializeColumn(chunks, evalFn, rowCount);
+        valueEvalColumn.set(evalFn, column);
       }
-      return null;
+      return column[rowIdx];
     };
 
     const partitions = this.partitionRows(allRows, partitionBy, chunks);
@@ -90,16 +91,16 @@ export class WindowOperator {
     if (orderKeys.length > 0) {
       for (const partition of partitions) {
         partition.sort((a, b) => {
-          for (const key of orderKeys) {
-            const va = getVal(a, key.eval);
-            const vb = getVal(b, key.eval);
+          for (let k = 0; k < orderKeys.length; k++) {
+            const va = orderValues[k][a];
+            const vb = orderValues[k][b];
             const an = va === null || va === undefined;
             const bn = vb === null || vb === undefined;
             if (an && bn) continue;
             if (an) return 1;
             if (bn) return -1;
             const cmp = this.compareValues(va, vb);
-            if (cmp !== 0) return key.direction === 'DESC' ? -cmp : cmp;
+            if (cmp !== 0) return orderKeys[k].direction === 'DESC' ? -cmp : cmp;
           }
           return 0;
         });
@@ -120,7 +121,7 @@ export class WindowOperator {
         case 'RANK': {
           let rank = 1;
           for (let i = 0; i < partition.length; i++) {
-            if (i > 0 && !this.sameOrderKey(partition[i], partition[i - 1], orderKeys, chunks)) {
+            if (i > 0 && !this.sameOrderKey(partition[i], partition[i - 1], orderValues)) {
               rank = i + 1;
             }
             result[partition[i]] = rank;
@@ -131,7 +132,7 @@ export class WindowOperator {
         case 'DENSE_RANK': {
           let rank = 1;
           for (let i = 0; i < partition.length; i++) {
-            if (i > 0 && !this.sameOrderKey(partition[i], partition[i - 1], orderKeys, chunks)) {
+            if (i > 0 && !this.sameOrderKey(partition[i], partition[i - 1], orderValues)) {
               rank++;
             }
             result[partition[i]] = rank;
@@ -306,42 +307,25 @@ export class WindowOperator {
       return [allRows.map((_, i) => i)];
     }
 
-    const getVal = (rowIdx: number, evalFn: CompiledExpr): EvalValue => {
-      let offset = 0;
-      for (const chunk of chunks) {
-        if (rowIdx < offset + chunk.size) {
-          return evalFn(chunk, rowIdx - offset);
-        }
-        offset += chunk.size;
-      }
-      return null;
-    };
-
+    const columns = partitionEvals.map((evalFn) => materializeColumn(chunks, evalFn, allRows.length));
     const groups = new Map<string, number[]>();
+
     for (let i = 0; i < allRows.length; i++) {
-      const key = encodeCompositeKey(partitionEvals.map((e) => getVal(i, e)));
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(i);
+      const key = encodeCompositeKey(columns.map((column) => column[i]));
+      let group = groups.get(key);
+      if (!group) {
+        group = [];
+        groups.set(key, group);
+      }
+      group.push(i);
     }
+
     return [...groups.values()];
   }
 
-  sameOrderKey(idxA: number, idxB: number, orderKeys: OrderKey[], chunks: DataChunk[]): boolean {
-    const getVal = (rowIdx: number, evalFn: CompiledExpr): EvalValue => {
-      let offset = 0;
-      for (const chunk of chunks) {
-        if (rowIdx < offset + chunk.size) {
-          return evalFn(chunk, rowIdx - offset);
-        }
-        offset += chunk.size;
-      }
-      return null;
-    };
-
-    for (const key of orderKeys) {
-      const va = getVal(idxA, key.eval);
-      const vb = getVal(idxB, key.eval);
-      if (this.compareValues(va, vb) !== 0) return false;
+  sameOrderKey(idxA: number, idxB: number, orderValues: EvalValue[][]): boolean {
+    for (const column of orderValues) {
+      if (this.compareValues(column[idxA], column[idxB]) !== 0) return false;
     }
     return true;
   }
@@ -356,4 +340,14 @@ export class WindowOperator {
     if ((na as number) > (nb as number)) return 1;
     return 0;
   }
+}
+
+function materializeColumn(chunks: DataChunk[], evalFn: CompiledExpr, rowCount: number): EvalValue[] {
+  const values: EvalValue[] = new Array(rowCount);
+  let offset = 0;
+  for (const chunk of chunks) {
+    for (let r = 0; r < chunk.size; r++) values[offset + r] = evalFn(chunk, chunk.activeRowIndex(r));
+    offset += chunk.size;
+  }
+  return values;
 }

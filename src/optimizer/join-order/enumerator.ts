@@ -10,24 +10,6 @@ export interface JoinEnumerationOptions {
   pairBudget?: number;
 }
 
-export function enumerateJoinOrder(
-  graph: HyperGraph,
-  costModel: DefaultCostModel,
-  cardinalityEstimator: JoinCardinalityEstimator,
-  options: JoinEnumerationOptions = {},
-): JoinOrderEntry | null {
-  const dpMaxRelations = options.dpMaxRelations ?? Config.joinOrderDpMaxRelations;
-  const pairBudget = options.pairBudget ?? Config.joinOrderMaxPairs;
-
-  if (graph.size <= dpMaxRelations) {
-    const exhaustive = new DPhypEnumerator(graph, costModel, cardinalityEstimator, pairBudget);
-    const optimal = exhaustive.solve();
-    if (optimal) return optimal;
-  }
-
-  return new GreedyJoinEnumerator(graph, costModel, cardinalityEstimator).solve();
-}
-
 export function selectJoinEnumerator(
   graph: HyperGraph,
   costModel: DefaultCostModel,
@@ -38,4 +20,17 @@ export function selectJoinEnumerator(
   return graph.size <= dpMaxRelations
     ? new DPhypEnumerator(graph, costModel, cardinalityEstimator, options.pairBudget ?? Config.joinOrderMaxPairs)
     : new GreedyJoinEnumerator(graph, costModel, cardinalityEstimator);
+}
+
+export function enumerateJoinOrder(
+  graph: HyperGraph,
+  costModel: DefaultCostModel,
+  cardinalityEstimator: JoinCardinalityEstimator,
+  options: JoinEnumerationOptions = {},
+): JoinOrderEntry | null {
+  const enumerator = selectJoinEnumerator(graph, costModel, cardinalityEstimator, options);
+  const result = enumerator.solve();
+  if (result || !enumerator.exhaustive) return result;
+
+  return new GreedyJoinEnumerator(graph, costModel, cardinalityEstimator).solve();
 }

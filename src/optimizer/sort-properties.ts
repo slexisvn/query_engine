@@ -93,7 +93,7 @@ export function isSortedByPrefix(actualKeys: SortedByEntry[] | undefined, requir
 }
 
 export function inferSortOrder(node: LogicalPlanNode): SortedByEntry[] {
-  if (node.type === PlanNodeType.SORT) {
+  if (node.type === PlanNodeType.SORT || node.type === PlanNodeType.TOP_N) {
     return node.orderKeys
       .map(key => ({ key: columnKeyOf(key.expr), direction: (key.direction || 'ASC').toUpperCase() }))
       .filter((entry): entry is { key: string; direction: string } => !!entry.key);

@@ -3,12 +3,18 @@ import { StatisticsCache } from '../../src/catalog/statistics-cache.js';
 import { StatisticsCollector, TableStatistics, ColumnStatistics } from '../../src/catalog/statistics.js';
 
 function makeMockCatalog(tables = {}) {
+  const storages = new Map(
+    Object.entries(tables).map(([name, rowCount]) => [
+      name.toUpperCase(),
+      { rowCount: () => rowCount },
+    ]),
+  );
   return {
     listTables() {
-      return Object.keys(tables);
+      return [...storages.keys()];
     },
     getTableStorage(name) {
-      return tables[name.toUpperCase()] || null;
+      return storages.get(name.toUpperCase()) || null;
     },
   };
 }
@@ -32,12 +38,134 @@ describe('StatisticsCache', () => {
       StatisticsCollector.collect = vi.fn().mockResolvedValue(fakeStats);
 
       try {
-        const catalog = makeMockCatalog({ ORDERS: {} });
+        const catalog = makeMockCatalog({ ORDERS: 100 });
         const cache = new StatisticsCache(catalog);
 
         const result = await cache.ensure('ORDERS');
         expect(result).toBe(fakeStats);
         expect(StatisticsCollector.collect).toHaveBeenCalledTimes(1);
+      } finally {
+        StatisticsCollector.collect = originalCollect;
+      }
+    });
+  });
+
+  describe('freshness', () => {
+    function mutableCatalog() {
+      let storage = { rowCount: () => 2 };
+      return {
+        catalog: {
+          listTables: () => ['T'],
+          getTableStorage: () => storage,
+        },
+        replaceStorage(rowCount) {
+          storage = { rowCount: () => rowCount };
+        },
+        growStorage(rowCount) {
+          const current = storage;
+          current.rowCount = () => rowCount;
+        },
+      };
+    }
+
+    it('re-collects after the table storage is replaced', async () => {
+      const originalCollect = StatisticsCollector.collect;
+      const harness = mutableCatalog();
+      StatisticsCollector.collect = vi.fn(async (storage) => makeFakeStats(storage.rowCount()));
+
+      try {
+        const cache = new StatisticsCache(harness.catalog);
+        await cache.ensure('T');
+        expect(cache.get('T').rowCount).toBe(2);
+
+        harness.replaceStorage(5000);
+        expect(cache.get('T')).toBeUndefined();
+
+        await cache.ensure('T');
+        expect(cache.get('T').rowCount).toBe(5000);
+        expect(StatisticsCollector.collect).toHaveBeenCalledTimes(2);
+      } finally {
+        StatisticsCollector.collect = originalCollect;
+      }
+    });
+
+    it('re-collects after rows are appended to the same storage', async () => {
+      const originalCollect = StatisticsCollector.collect;
+      const harness = mutableCatalog();
+      StatisticsCollector.collect = vi.fn(async (storage) => makeFakeStats(storage.rowCount()));
+
+      try {
+        const cache = new StatisticsCache(harness.catalog);
+        await cache.ensure('T');
+
+        harness.growStorage(900);
+        expect(cache.get('T')).toBeUndefined();
+
+        await cache.ensure('T');
+        expect(cache.get('T').rowCount).toBe(900);
+      } finally {
+        StatisticsCollector.collect = originalCollect;
+      }
+    });
+
+    it('keeps serving stats while the data behind them is unchanged', async () => {
+      const originalCollect = StatisticsCollector.collect;
+      const harness = mutableCatalog();
+      StatisticsCollector.collect = vi.fn(async (storage) => makeFakeStats(storage.rowCount()));
+
+      try {
+        const cache = new StatisticsCache(harness.catalog);
+        await cache.ensure('T');
+        await cache.ensure('T');
+        await cache.ensure('T');
+        expect(StatisticsCollector.collect).toHaveBeenCalledTimes(1);
+      } finally {
+        StatisticsCollector.collect = originalCollect;
+      }
+    });
+
+    it('keeps manually supplied stats that describe no storage', () => {
+      const cache = new StatisticsCache({ listTables: () => [], getTableStorage: () => null });
+      cache.set('MANUAL', makeFakeStats(42));
+      expect(cache.get('MANUAL').rowCount).toBe(42);
+    });
+  });
+
+  describe('scoped collection', () => {
+    it('collects only the tables it was asked for', async () => {
+      const originalCollect = StatisticsCollector.collect;
+      StatisticsCollector.collect = vi.fn().mockResolvedValue(makeFakeStats(10));
+
+      try {
+        const cache = new StatisticsCache(makeMockCatalog({ ORDERS: 100, LINEITEM: 100, PART: 100 }));
+        await cache.ensureFor(['ORDERS']);
+
+        expect(StatisticsCollector.collect).toHaveBeenCalledTimes(1);
+        expect(cache.get('ORDERS')).toBeDefined();
+        expect(cache.get('LINEITEM')).toBeUndefined();
+        expect(cache.get('PART')).toBeUndefined();
+      } finally {
+        StatisticsCollector.collect = originalCollect;
+      }
+    });
+
+    it('advances its generation only when an entry actually lands', async () => {
+      const originalCollect = StatisticsCollector.collect;
+      StatisticsCollector.collect = vi.fn().mockResolvedValue(makeFakeStats(10));
+
+      try {
+        const cache = new StatisticsCache(makeMockCatalog({ ORDERS: 100 }));
+        const initial = cache.generation;
+
+        await cache.ensureFor(['ORDERS']);
+        const afterCollect = cache.generation;
+        expect(afterCollect).toBeGreaterThan(initial);
+
+        await cache.ensureFor(['ORDERS']);
+        expect(cache.generation).toBe(afterCollect);
+
+        await cache.ensureFor(['MISSING']);
+        expect(cache.generation).toBe(afterCollect);
       } finally {
         StatisticsCollector.collect = originalCollect;
       }
@@ -51,7 +179,7 @@ describe('StatisticsCache', () => {
       StatisticsCollector.collect = vi.fn().mockResolvedValue(fakeStats);
 
       try {
-        const catalog = makeMockCatalog({ T: {} });
+        const catalog = makeMockCatalog({ T: 100 });
         const cache = new StatisticsCache(catalog);
 
         await cache.ensure('T');
@@ -70,7 +198,7 @@ describe('StatisticsCache', () => {
       StatisticsCollector.collect = vi.fn().mockResolvedValue(fakeStats);
 
       try {
-        const catalog = makeMockCatalog({ T: {} });
+        const catalog = makeMockCatalog({ T: 100 });
         const cache = new StatisticsCache(catalog);
 
         await cache.ensure('T');

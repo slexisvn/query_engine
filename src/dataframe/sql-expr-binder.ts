@@ -5,10 +5,11 @@ import { BinderScope } from '../binder/scope.js';
 import type { ColumnInfo } from '../binder/scope.js';
 import { BoundExprKind, getExprType } from '../binder/expression-binder.js';
 import type { BoundExpr } from '../binder/expression-binder.js';
+import type { DataType } from '../storage/data-type.js';
 
 interface SchemaFieldLike {
   name: string;
-  dataType: string | null;
+  dataType: DataType | null;
   tableAlias?: string | null;
 }
 
@@ -18,7 +19,7 @@ interface SchemaLike {
 
 interface ScalarBindResult {
   expr: BoundExpr;
-  dataType: string | null;
+  dataType: DataType | null;
   outputName: string | null;
 }
 

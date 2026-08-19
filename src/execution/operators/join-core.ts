@@ -93,7 +93,7 @@ export function probeJoinRows(items: Iterable<ProbeItem>, lookup: (key: JoinKey)
         resultRows.push(pRow);
       } else if (joinType === JoinType.MARK) {
         resultRows.push(pRow.concat([null]));
-      } else if (joinType === JoinType.LEFT || joinType === JoinType.FULL || joinType === JoinType.SINGLE) {
+      } else if (preservesProbe(joinType)) {
         resultRows.push(new Array(buildColCount).fill(null).concat(pRow));
       }
       continue;
@@ -130,7 +130,7 @@ export function probeJoinRows(items: Iterable<ProbeItem>, lookup: (key: JoinKey)
     }
 
     if (!matched) {
-      if (joinType === JoinType.LEFT || joinType === JoinType.FULL || joinType === JoinType.SINGLE) {
+      if (preservesProbe(joinType)) {
         resultRows.push(new Array(buildColCount).fill(null).concat(pRow));
       } else if (joinType === JoinType.ANTI) {
         resultRows.push(pRow);
@@ -149,10 +149,15 @@ export function probeJoinRows(items: Iterable<ProbeItem>, lookup: (key: JoinKey)
   return resultRows;
 }
 
-export function emitsOnUnmatchedProbe(joinType: JoinType): boolean {
+export function preservesProbe(joinType: JoinType): boolean {
   return joinType === JoinType.LEFT
+    || joinType === JoinType.RIGHT
     || joinType === JoinType.FULL
-    || joinType === JoinType.SINGLE
+    || joinType === JoinType.SINGLE;
+}
+
+export function emitsOnUnmatchedProbe(joinType: JoinType): boolean {
+  return preservesProbe(joinType)
     || joinType === JoinType.ANTI
     || joinType === JoinType.MARK;
 }

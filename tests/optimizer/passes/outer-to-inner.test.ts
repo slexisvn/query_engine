@@ -72,7 +72,7 @@ describe('OuterToInnerJoin', () => {
         scan('b')
       );
       const plan = LogicalFilter(
-        { kind: BoundExprKind.IS_NULL, operand: colRef('b', 'val') },
+        { kind: BoundExprKind.IS_NULL, expr: colRef('b', 'val') },
         join
       );
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { walkExpr, containsAggregate, collectTableRefs } from '../../src/optimizer/expr-walk.js';
-import { BoundExprKind } from '../../src/binder/expression-binder.js';
+import { containsAggregate, collectTableRefs } from '../../src/optimizer/expr-walk.js';
+import { BoundExprKind, walkExpr } from '../../src/binder/expression-binder.js';
 
 function col(table, name) {
   return { kind: BoundExprKind.COLUMN_REF, tableAlias: table, columnName: name };

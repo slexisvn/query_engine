@@ -1,6 +1,6 @@
 import { OptimizationPass } from '../../optimizer/pass.js';
 import { PlanNodeType, LogicalMergeExchange, LogicalSort, getChildren, setChildren, type LogicalPlanNode, type LogicalSortNode, type LogicalTopNNode, type LogicalLimitNode } from '../../planner/logical-plan.js';
-import { PlanRewriter } from '../../planner/plan-visitor.js';
+import { PlanRewriter } from '../../planner/plan-rewriter.js';
 
 interface DistributedFlag {
   _distributed?: boolean;

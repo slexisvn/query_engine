@@ -13,6 +13,29 @@ import {
 } from '../../../src/planner/logical-plan.js';
 import { colRef, lit, bin, eqJoin, scan, makeStats, annotate } from '../../helpers/plan-fixtures.js';
 
+describe('PlanProperties immutability', () => {
+  it('leaves the input plan unannotated', () => {
+    const stats = makeStats({ A: { rowCount: 4200 } });
+    const input = LogicalFilter(bin(colRef('A', 'id'), '>', lit(1)), scan('A'));
+
+    const annotated = new PlanProperties(stats).apply(input);
+
+    expect(annotated._cardinality).toBeGreaterThan(0);
+    expect(input._cardinality).toBeUndefined();
+    expect(input.children[0]._cardinality).toBeUndefined();
+  });
+
+  it('does not let one annotation run leak into a plan shared with another', () => {
+    const shared = scan('A');
+    const first = new PlanProperties(makeStats({ A: { rowCount: 100 } })).apply(shared);
+    const second = new PlanProperties(makeStats({ A: { rowCount: 900 } })).apply(shared);
+
+    expect(first._cardinality).toBe(100);
+    expect(second._cardinality).toBe(900);
+    expect(shared._cardinality).toBeUndefined();
+  });
+});
+
 describe('PlanProperties cardinality', () => {
   it('reads scan cardinality from statistics', () => {
     const stats = makeStats({ A: { rowCount: 4200 } });

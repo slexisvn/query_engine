@@ -1,6 +1,7 @@
 import * as LP from './logical-plan.js';
 import { BoundExprKind, BoundColumnRef, collectCorrelatedColumns, type BoundExpr, type BoundColumnRefNode, type BoundLiteralNode } from '../binder/expression-binder.js';
 import type { BoundQuery, BoundSelect, BoundSetOp, BoundFrom, OutputColumn } from '../binder/binder.js';
+import { DataType } from '../storage/data-type.js';
 
 let _cteIdCounter = 0;
 
@@ -195,7 +196,7 @@ export class LogicalPlanner {
           tableAlias: '',
           columnName: '_scalar',
           columnIndex: -1,
-          dataType: 'FLOAT64',
+          dataType: DataType.FLOAT64,
           depth: 0,
           isCorrelated: false,
         };

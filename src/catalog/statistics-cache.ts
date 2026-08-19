@@ -10,27 +10,31 @@ interface CatalogLike {
 
 interface CacheEntry {
   stats: TableStatistics;
-  version: number;
+  source: TableStorage | null;
+  rowCount: number;
 }
 
 export class StatisticsCache {
   catalog: CatalogLike;
   cache: Map<string, CacheEntry>;
-  versions: Map<string, number>;
+  generation: number;
 
   constructor(catalog: CatalogLike) {
     this.catalog = catalog;
     this.cache = new Map();
-    this.versions = new Map();
+    this.generation = 0;
   }
 
   get(tableName: string): TableStatistics | undefined {
     const key = tableName.toUpperCase();
     const entry = this.cache.get(key);
-    if (entry && entry.version === this.getVersion(key)) {
-      return entry.stats;
-    }
-    return undefined;
+    return entry && this.describesCurrentData(key, entry) ? entry.stats : undefined;
+  }
+
+  describesCurrentData(key: string, entry: CacheEntry): boolean {
+    if (entry.source === null) return true;
+    const storage = this.catalog.getTableStorage(key);
+    return storage === entry.source && storage.rowCount() === entry.rowCount;
   }
 
   has(tableName: string): boolean {
@@ -39,7 +43,9 @@ export class StatisticsCache {
 
   set(tableName: string, stats: TableStatistics): void {
     const key = tableName.toUpperCase();
-    this.cache.set(key, { stats, version: this.getVersion(key) });
+    const source = this.catalog.getTableStorage(key);
+    this.cache.set(key, { stats, source, rowCount: source ? source.rowCount() : 0 });
+    this.generation++;
   }
 
   async ensure(tableName: string): Promise<TableStatistics | undefined> {
@@ -55,48 +61,39 @@ export class StatisticsCache {
     return stats;
   }
 
-  async ensureAll(): Promise<void> {
-    for (const name of this.catalog.listTables()) {
+  async ensureFor(tableNames: Iterable<string>): Promise<void> {
+    for (const name of tableNames) {
       await this.ensure(name);
     }
   }
 
   invalidate(tableName: string): void {
-    const key = tableName.toUpperCase();
-    this.versions.set(key, this.getVersion(key) + 1);
+    if (this.cache.delete(tableName.toUpperCase())) this.generation++;
   }
 
   invalidateAll(): void {
-    for (const key of this.cache.keys()) {
+    for (const key of [...this.cache.keys()]) {
       this.invalidate(key);
     }
-  }
-
-  getVersion(key: string): number {
-    return this.versions.get(key) || 0;
   }
 
   get size(): number {
     let count = 0;
     for (const [key, entry] of this.cache) {
-      if (entry.version === this.getVersion(key)) count++;
+      if (this.describesCurrentData(key, entry)) count++;
     }
     return count;
   }
 
   *values(): Generator<TableStatistics> {
     for (const [key, entry] of this.cache) {
-      if (entry.version === this.getVersion(key)) {
-        yield entry.stats;
-      }
+      if (this.describesCurrentData(key, entry)) yield entry.stats;
     }
   }
 
   *entries(): Generator<[string, TableStatistics]> {
     for (const [key, entry] of this.cache) {
-      if (entry.version === this.getVersion(key)) {
-        yield [key, entry.stats];
-      }
+      if (this.describesCurrentData(key, entry)) yield [key, entry.stats];
     }
   }
 

@@ -1,6 +1,6 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanNodeType, type LogicalPlanNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
-import { PlanRewriter } from '../../planner/plan-visitor.js';
+import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { DefaultCardinalityEstimator, type TableStats } from '../join-order/cardinality.js';
 import { type BoundExpr } from '../../binder/expression-binder.js';
 import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';

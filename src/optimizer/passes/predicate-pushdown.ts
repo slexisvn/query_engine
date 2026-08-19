@@ -1,9 +1,10 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanNodeType, JoinType, LogicalFilter, LogicalJoin, setChildren, type LogicalPlanNode, type LogicalJoinNode, type LogicalProjectNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
-import { PlanRewriter } from '../../planner/plan-visitor.js';
-import { BoundExprKind, type BoundExpr, type BoundBinaryNode } from '../../binder/expression-binder.js';
-import { walkExpr, containsAggregate } from '../expr-walk.js';
+import { PlanRewriter } from '../../planner/plan-rewriter.js';
+import { BoundExprKind, walkExpr, type BoundExpr, type BoundBinaryNode } from '../../binder/expression-binder.js';
+import { containsAggregate } from '../expr-walk.js';
 import { collectPlanRefs, refBelongsToPlan, type ExprRef } from './plan-refs.js';
+import { DataType } from '../../storage/data-type.js';
 
 type MetadataValue = string | number | boolean | object | null | undefined;
 
@@ -43,7 +44,7 @@ function pushJoinConditionPredicates(joinNode: LogicalJoinNode): LogicalPlanNode
   const joinPreds: BoundExpr[] = [];
 
   for (const pred of splitConjuncts(joinNode.condition)) {
-    const refs = collectTableRefs(pred);
+    const refs = collectColumnRefs(pred);
     const rightOnly = refs.length > 0 && refs.every((r) => refBelongsToPlan(r, rightRefs));
 
     if (joinNode.joinType === JoinType.LEFT) {
@@ -103,7 +104,7 @@ function pushPredicates(predicates: BoundExpr[], target: LogicalPlanNode): Logic
     const pushable: BoundExpr[] = [];
     const remaining: BoundExpr[] = [];
     for (const pred of predicates) {
-      const refs = collectTableRefs(pred);
+      const refs = collectColumnRefs(pred);
       if (refs.length > 0 && !containsAggregate(pred) && refs.every((r) => groupByRefs.has(`${r.tableAlias}.${r.columnName}`))) {
         pushable.push(pred);
       } else {
@@ -168,7 +169,7 @@ function pushIntoJoin(predicates: BoundExpr[], joinNode: LogicalJoinNode): Logic
   const remaining: BoundExpr[] = [];
 
   for (const pred of predicates) {
-    const refs = collectTableRefs(pred);
+    const refs = collectColumnRefs(pred);
     const leftOnly = refs.every((r) => refBelongsToPlan(r, leftRefs));
     const rightOnly = refs.every((r) => refBelongsToPlan(r, rightRefs));
 
@@ -247,11 +248,11 @@ export function combineConjuncts(preds: BoundExpr[]): BoundExpr | null {
     op: 'AND',
     left: acc,
     right: p,
-    resultType: 'BOOLEAN',
+    resultType: DataType.BOOLEAN,
   }));
 }
 
-function collectTableRefs(expr: BoundExpr): ExprRef[] {
+function collectColumnRefs(expr: BoundExpr): ExprRef[] {
   const keys = new Set<string>();
   walkExpr(expr, (e) => {
     if (e.kind === BoundExprKind.COLUMN_REF) {

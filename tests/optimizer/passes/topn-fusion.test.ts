@@ -9,6 +9,8 @@ import {
   LogicalFilter,
 } from '../../../src/planner/logical-plan.js';
 import { BoundExprKind } from '../../../src/binder/expression-binder.js';
+import { PlanProperties } from '../../../src/optimizer/passes/plan-properties.js';
+import { makeStats } from '../../helpers/plan-fixtures.js';
 
 const pass = new TopNFusion();
 
@@ -59,30 +61,23 @@ describe('TopNFusion', () => {
       expect(result.offset).toBe(20);
     });
 
-    it('caps _cardinality at count', () => {
-      const sort = LogicalSort(
-        [{ expr: colRef('t', 'id'), direction: 'ASC' }],
-        scan('t')
-      );
-      sort._cardinality = 1000;
-      const plan = LogicalLimit(10, 0, sort);
+    it('caps the derived cardinality at count', () => {
+      const plan = LogicalLimit(10, 0, LogicalSort([{ expr: colRef('t', 'id'), direction: 'ASC' }], scan('T')));
 
-      const result = pass.apply(plan);
+      const fused = pass.apply(plan);
+      const annotated = new PlanProperties(makeStats({ T: { rowCount: 1000 } })).apply(fused);
 
-      expect(result._cardinality).toBe(10);
+      expect(annotated.type).toBe(PlanNodeType.TOP_N);
+      expect(annotated._cardinality).toBe(10);
     });
 
-    it('uses sort _cardinality when smaller than count', () => {
-      const sort = LogicalSort(
-        [{ expr: colRef('t', 'id'), direction: 'ASC' }],
-        scan('t')
-      );
-      sort._cardinality = 3;
-      const plan = LogicalLimit(10, 0, sort);
+    it('derives the child cardinality when it is smaller than count', () => {
+      const plan = LogicalLimit(10, 0, LogicalSort([{ expr: colRef('t', 'id'), direction: 'ASC' }], scan('T')));
 
-      const result = pass.apply(plan);
+      const fused = pass.apply(plan);
+      const annotated = new PlanProperties(makeStats({ T: { rowCount: 3 } })).apply(fused);
 
-      expect(result._cardinality).toBe(3);
+      expect(annotated._cardinality).toBe(3);
     });
   });
 
@@ -155,19 +150,15 @@ describe('TopNFusion', () => {
     });
   });
 
-  describe('preserves _sortedBy from fused sort', () => {
-    it('copies _sortedBy to TOP_N node', () => {
-      const sort = LogicalSort(
-        [{ expr: colRef('t', 'id'), direction: 'ASC' }],
-        scan('t')
-      );
-      sort._sortedBy = ['T.ID'];
-      const plan = LogicalLimit(10, 0, sort);
+  describe('sort order survives the fusion', () => {
+    it('derives the fused sort order onto the TOP_N node', () => {
+      const plan = LogicalLimit(10, 0, LogicalSort([{ expr: colRef('T', 'id'), direction: 'ASC' }], scan('T')));
 
-      const result = pass.apply(plan);
+      const fused = pass.apply(plan);
+      const annotated = new PlanProperties(makeStats({ T: { rowCount: 100 } })).apply(fused);
 
-      expect(result.type).toBe(PlanNodeType.TOP_N);
-      expect(result._sortedBy).toEqual(['T.ID']);
+      expect(annotated.type).toBe(PlanNodeType.TOP_N);
+      expect(annotated._sortedBy).toEqual([{ key: 'T.ID', direction: 'ASC' }]);
     });
   });
 

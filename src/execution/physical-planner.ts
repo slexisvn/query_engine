@@ -19,6 +19,7 @@ import { Config } from '../config.js';
 import { chooseJoinBuildSide, isEquiJoinDedupable } from '../optimizer/join-build-side.js';
 import { extractEquiJoinKeys, columnKeyOf, isSortedBy, isSortedByPrefix } from '../optimizer/sort-properties.js';
 import { canUsePerfectHashAggregate, type AggregateStatsProvider } from '../optimizer/aggregate-strategy.js';
+import { PlanProperties } from '../optimizer/passes/plan-properties.js';
 import type { BoundExpr } from '../binder/expression-binder.js';
 import type { TableStats } from '../catalog/statistics.js';
 
@@ -53,14 +54,20 @@ const NO_SORT_REQUIRED: SortRequirement = { left: false, right: false };
 export class PhysicalPlanner {
   costModel: DefaultCostModel;
   statistics: AggregateStatsProvider;
+  planProperties: PlanProperties;
 
   constructor(statistics: Map<string, TableStats> = new Map(), costModel: DefaultCostModel | null = null) {
     this.statistics = statistics;
     this.costModel = costModel ?? new DefaultCostModel();
+    this.planProperties = new PlanProperties(statistics);
   }
 
   plan(node: LogicalPlanNode): PhysicalPlanNode {
-    const children = (node.children ?? []).map((child) => this.plan(child));
+    return this.planNode(this.planProperties.apply(node));
+  }
+
+  planNode(node: LogicalPlanNode): PhysicalPlanNode {
+    const children = (node.children ?? []).map((child) => this.planNode(child));
 
     if (node.type === PlanNodeType.JOIN) return this.planJoin(node, children);
     if (node.type === PlanNodeType.AGGREGATE) return this.planAggregate(node, children);
@@ -102,19 +109,27 @@ export class PhysicalPlanner {
     const buildCardinality = buildSide === 'left' ? leftCard : rightCard;
     const probeCardinality = buildSide === 'left' ? rightCard : leftCard;
 
+    const equiKeys = extractEquiJoinKeys(node.condition);
+    const hasEquiKeys = equiKeys.leftKeys.length > 0 && equiKeys.rightKeys.length > 0;
+
     const candidates: PhysicalPlanNode[] = [
       physicalJoin(
         PhysicalNodeType.HASH_JOIN,
         node,
         children,
         cardinality,
-        this.costModel.hashJoinCost(buildCardinality, probeCardinality, cardinality),
+        hasEquiKeys
+          ? this.costModel.hashJoinCost(buildCardinality, probeCardinality, cardinality)
+          : this.costModel.blockNestedLoopJoinCost(buildCardinality, probeCardinality, cardinality),
         buildSide,
         isEquiJoinDedupable(node.joinType, node.condition),
         NO_SORT_REQUIRED,
         runtimeFilterEntries(node.joinType, buildCardinality),
       ),
-      physicalJoin(
+    ];
+
+    if (leftCard + rightCard <= Config.nestedLoopMaxRows) {
+      candidates.push(physicalJoin(
         PhysicalNodeType.NESTED_LOOP_JOIN,
         node,
         children,
@@ -123,8 +138,8 @@ export class PhysicalPlanner {
         buildSide,
         false,
         NO_SORT_REQUIRED,
-      ),
-    ];
+      ));
+    }
 
     const merge = this.mergeJoinCandidate(node, children, leftCard, rightCard, cardinality, buildSide);
     if (merge) candidates.push(merge);
@@ -147,14 +162,13 @@ export class PhysicalPlanner {
 
     const leftSorted = isSortedBy(node.children[0]._sortedBy, joinKeys.leftKeys);
     const rightSorted = isSortedBy(node.children[1]._sortedBy, joinKeys.rightKeys);
-    const comparison = this.costModel.cheaperJoinCost(leftCard, rightCard, leftSorted, rightSorted, cardinality, 0);
 
     return physicalJoin(
       PhysicalNodeType.MERGE_JOIN,
       node,
       children,
       cardinality,
-      comparison.mergeCost,
+      this.costModel.mergeJoinCostWithSorts(leftCard, rightCard, leftSorted, rightSorted, cardinality),
       buildSide,
       false,
       { left: !leftSorted, right: !rightSorted },

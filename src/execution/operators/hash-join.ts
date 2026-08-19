@@ -4,6 +4,7 @@ import { DataChunk } from '../../storage/chunk.js';
 import { JoinType } from '../../planner/logical-plan.js';
 import { Config } from '../../config.js';
 import { BloomFilter } from '../../utils/bloom-filter.js';
+import { hashValue } from '../../utils/hash.js';
 import { RowMemoryBudget } from '../memory-budget.js';
 import { joinKeyOf, probeJoinRows, buildJoinOutputChunk, materializeRow } from './join-core.js';
 import type { DataType, ColumnValue } from '../../storage/data-type.js';
@@ -29,12 +30,6 @@ interface BuildItem {
   rIdx?: number;
 }
 
-interface BuildPartition {
-  rows: PartitionRow[];
-  spilled: boolean;
-  spilledRows: number;
-}
-
 interface PartitionRow {
   row: ColumnValue[];
   key: JoinKey;
@@ -43,6 +38,7 @@ interface PartitionRow {
 interface BuildPartition {
   rows: PartitionRow[];
   spilled: boolean;
+  spilledRows: number;
 }
 
 interface ProbeItem {
@@ -54,19 +50,12 @@ interface JoinSink {
   consume(chunk: DataChunk): Promise<void>;
 }
 
-function hashString(str: string, seed: number): number {
-  let hash = seed;
-  for (let i = 0; i < str.length; i++) {
-    hash = (hash << 5) - hash + str.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash);
-}
-
 const REPARTITION_SEED_STEP = 0x9e3779b1;
 
-function getPartition(keyStr: JoinKey, depth: number = 0): number {
-  return hashString(String(keyStr), depth * REPARTITION_SEED_STEP) % Config.hashJoinPartitions;
+function getPartition(key: JoinKey, depth: number = 0): number {
+  let h = hashValue(key) ^ Math.imul(depth, REPARTITION_SEED_STEP);
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+  return ((h ^ (h >>> 13)) >>> 0) % Config.hashJoinPartitions;
 }
 
 interface SpilledPartitionTask {

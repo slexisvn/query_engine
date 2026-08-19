@@ -1,6 +1,7 @@
 import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
 import type { LogicalPlanNode } from '../../planner/logical-plan.js';
 import type { DefaultCostModel } from './cost-model.js';
+import { DataType } from '../../storage/data-type.js';
 
 export interface JoinPlan {
   type: 'HashJoin';
@@ -24,6 +25,7 @@ export interface JoinCardinalityEstimator {
 
 export interface JoinEnumerator {
   readonly name: string;
+  readonly exhaustive: boolean;
   solve(): JoinOrderEntry | null;
 }
 
@@ -47,7 +49,7 @@ export function combinePredicates(preds: BoundExpr[]): BoundExpr | null {
     op: 'AND',
     left: acc,
     right: p,
-    resultType: 'BOOLEAN',
+    resultType: DataType.BOOLEAN,
   }));
 }
 

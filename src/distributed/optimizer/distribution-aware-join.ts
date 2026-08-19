@@ -1,7 +1,7 @@
 import { OptimizationPass } from '../../optimizer/pass.js';
 import { PlanNodeType, JoinType, getChildren, setChildren } from '../../planner/logical-plan.js';
 import type { LogicalPlanNode, LogicalJoinNode } from '../../planner/logical-plan.js';
-import { PlanRewriter } from '../../planner/plan-visitor.js';
+import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 import type { BoundExpr, BoundColumnRefNode } from '../../binder/expression-binder.js';
 import { Config } from '../../config.js';

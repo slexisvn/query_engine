@@ -236,8 +236,8 @@ describe('DefaultCardinalityEstimator', () => {
     it('a more concentrated histogram (lower distinct-per-bucket) estimates a larger join', () => {
       const boundaries = [10, 20, 30, 40];
       const counts = [25, 25, 25, 25];
-      const concentrated = new EquiDepthHistogram(boundaries, 100, counts, [1, 1, 25, 25]);
-      const spread = new EquiDepthHistogram(boundaries, 100, counts, [25, 25, 25, 25]);
+      const concentrated = new EquiDepthHistogram(boundaries, { lowerBound: 0, bucketCounts: counts, bucketDistincts: [1, 1, 25, 25] });
+      const spread = new EquiDepthHistogram(boundaries, { lowerBound: 0, bucketCounts: counts, bucketDistincts: [25, 25, 25, 25] });
       const col = (h) => ({ ndv: 76, min: 0, max: 40, nullFraction: 0, mcv: null, histogram: h });
 
       const concEst = new DefaultCardinalityEstimator(joinStats(col(concentrated), col(concentrated)));

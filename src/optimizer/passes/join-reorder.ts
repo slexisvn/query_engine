@@ -1,6 +1,6 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanNodeType, JoinType, LogicalJoin, LogicalFilter, getChildren, type LogicalPlanNode, type LogicalScanNode } from '../../planner/logical-plan.js';
-import { PlanRewriter } from '../../planner/plan-visitor.js';
+import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { buildHyperGraph } from '../join-order/hypergraph.js';
 import { enumerateJoinOrder } from '../join-order/enumerator.js';
 import { DefaultCostModel } from '../join-order/cost-model.js';

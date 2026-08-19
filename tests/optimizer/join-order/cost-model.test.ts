@@ -99,34 +99,31 @@ describe('DefaultCostModel', () => {
     });
   });
 
-  describe('cheaperJoinCost', () => {
-    it('recommends merge join when both sides are sorted', () => {
-      const result = model.cheaperJoinCost(1000, 1000, true, true, 500);
-      expect(result.preferMerge).toBe(true);
-      expect(result.mergeCost).toBeLessThan(result.hashCost);
+  describe('mergeJoinCostWithSorts', () => {
+    it('undercuts a hash join of the same shape when both sides are already sorted', () => {
+      const merge = model.mergeJoinCostWithSorts(1000, 1000, true, true, 500);
+      expect(merge).toBeLessThan(model.hashJoinCost(1000, 1000, 500));
     });
 
-    it('prefers hash join when both sides need sorting and tables are small', () => {
-      const result = model.cheaperJoinCost(1000, 1000, false, false, 500);
-      expect(result.preferMerge).toBe(false);
+    it('loses to a hash join on small inputs that both need sorting', () => {
+      const merge = model.mergeJoinCostWithSorts(1000, 1000, false, false, 500);
+      expect(merge).toBeGreaterThan(model.hashJoinCost(1000, 1000, 500));
     });
 
-    it('computes partial sort cost when only one side is sorted', () => {
-      const oneSorted = model.cheaperJoinCost(10000, 10000, true, false, 5000);
-      const neitherSorted = model.cheaperJoinCost(10000, 10000, false, false, 5000);
-      expect(oneSorted.mergeCost).toBeLessThan(neitherSorted.mergeCost);
+    it('charges only the unsorted side when one input is already ordered', () => {
+      const oneSorted = model.mergeJoinCostWithSorts(10000, 10000, true, false, 5000);
+      const neitherSorted = model.mergeJoinCostWithSorts(10000, 10000, false, false, 5000);
+      expect(neitherSorted - oneSorted).toBeCloseTo(model.sortCost(10000), 6);
     });
 
-    it('merge wins over hash for large spilling joins with one side sorted', () => {
-      const result = model.cheaperJoinCost(500000, 500000, true, false, 250000);
-      expect(result.preferMerge).toBe(true);
+    it('charges nothing extra when both inputs are already ordered', () => {
+      const bothSorted = model.mergeJoinCostWithSorts(10000, 10000, true, true, 5000);
+      expect(bothSorted).toBeCloseTo(model.mergeJoinCost(10000, 10000, 5000), 6);
     });
 
-    it('accounts for downstream sort saving when provided', () => {
-      const saving = model.sortCost(100000);
-      const withSaving = model.cheaperJoinCost(100000, 100000, false, false, 50000, saving);
-      const withoutSaving = model.cheaperJoinCost(100000, 100000, false, false, 50000, 0);
-      expect(withSaving.mergeCost).toBeLessThan(withoutSaving.mergeCost);
+    it('beats a spilling hash join once one side is already ordered', () => {
+      const merge = model.mergeJoinCostWithSorts(500000, 500000, true, false, 250000);
+      expect(merge).toBeLessThan(model.hashJoinCost(500000, 500000, 250000));
     });
   });
 

@@ -1,5 +1,6 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanNodeType, getChildren, setChildren, type LogicalPlanNode, type ProjectedExpr } from '../../planner/logical-plan.js';
+import { getChildren, setChildren, type LogicalPlanNode, type ProjectedExpr, type LogicalScanNode, type LogicalProjectNode, type LogicalFilterNode, type LogicalJoinNode, type LogicalAggregateNode, type LogicalSortNode, type LogicalDependentJoinNode, type LogicalUnionNode, type LogicalCTEAnchorNode, type LogicalDistinctNode } from '../../planner/logical-plan.js';
+import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
 import type { ColumnInfo } from '../../binder/scope.js';
 import { collectPlanRefs as collectPlanRefsShared, refBelongsToPlan as refBelongsToPlanShared, type PlanRefs } from './plan-refs.js';
@@ -16,47 +17,59 @@ function refBelongsToPlan(ref: { tableAlias: string; columnName: string }, planR
 
 type ExprChild = BoundExpr | BoundExpr[] | string | number | boolean | bigint | null | undefined | object;
 
+type RequiredColumns = Set<string> | null;
+
 export class ProjectionPushdown extends OptimizationPass {
   override get name() { return 'ProjectionPushdown'; }
 
   override apply(plan: LogicalPlanNode): LogicalPlanNode {
-    return pruneColumns(plan, null);
+    return new ColumnPruner().rewrite(plan, null);
   }
 }
 
-function pruneColumns(node: LogicalPlanNode, required: Set<string> | null): LogicalPlanNode {
-  if (!node) return node;
+class ColumnPruner extends PlanRewriter<RequiredColumns> {
+  override rewriteScan(node: LogicalScanNode, required: RequiredColumns = null): LogicalPlanNode {
+    return pruneScan(node, required);
+  }
 
-  switch (node.type) {
-    case PlanNodeType.SCAN:
-      return pruneScan(node, required);
-    case PlanNodeType.PROJECT:
-      return pruneProject(node, required);
-    case PlanNodeType.FILTER:
-      return pruneUnary(node, required ? addExprRefs(required, node.condition) : null);
-    case PlanNodeType.JOIN:
-      return pruneJoin(node, required);
-    case PlanNodeType.AGGREGATE:
-      return pruneAggregate(node);
-    case PlanNodeType.SORT:
-      return pruneSort(node, required);
-    case PlanNodeType.LIMIT:
-    case PlanNodeType.MATERIALIZE:
-      return pruneUnary(node, required);
-    case PlanNodeType.DEPENDENT_JOIN:
-      return pruneDependentJoin(node, required);
-    case PlanNodeType.UNION:
-    case PlanNodeType.CTE_ANCHOR:
-      return pruneChildren(node, null);
-    case PlanNodeType.DISTINCT:
-      return pruneUnary(node, null);
-    default:
-      return pruneChildren(node, required);
+  override rewriteProject(node: LogicalProjectNode, required: RequiredColumns = null): LogicalPlanNode {
+    return pruneProject(this, node, required);
+  }
+
+  override rewriteFilter(node: LogicalFilterNode, required: RequiredColumns = null): LogicalPlanNode {
+    return this.rewriteChildren(node, required ? addExprRefs(required, node.condition) : null);
+  }
+
+  override rewriteJoin(node: LogicalJoinNode, required: RequiredColumns = null): LogicalPlanNode {
+    return pruneJoin(this, node, required);
+  }
+
+  override rewriteAggregate(node: LogicalAggregateNode): LogicalPlanNode {
+    return pruneAggregate(this, node);
+  }
+
+  override rewriteSort(node: LogicalSortNode, required: RequiredColumns = null): LogicalPlanNode {
+    return pruneSort(this, node, required);
+  }
+
+  override rewriteDependentJoin(node: LogicalDependentJoinNode, required: RequiredColumns = null): LogicalPlanNode {
+    return pruneDependentJoin(this, node, required);
+  }
+
+  override rewriteUnion(node: LogicalUnionNode): LogicalPlanNode {
+    return this.rewriteChildren(node, null);
+  }
+
+  override rewriteCTEAnchor(node: LogicalCTEAnchorNode): LogicalPlanNode {
+    return this.rewriteChildren(node, null);
+  }
+
+  override rewriteDistinct(node: LogicalDistinctNode): LogicalPlanNode {
+    return this.rewriteChildren(node, null);
   }
 }
 
-function pruneScan(node: LogicalPlanNode, required: Set<string> | null): LogicalPlanNode {
-  if (node.type !== PlanNodeType.SCAN) return node;
+function pruneScan(node: LogicalScanNode, required: RequiredColumns): LogicalPlanNode {
   if (!required || required.size === 0) return node;
   const refs = collectPlanRefs(node);
   const neededCols = node.columns.filter((col) => refSetNeedsColumn(required, refs.aliases, col.name));
@@ -66,88 +79,66 @@ function pruneScan(node: LogicalPlanNode, required: Set<string> | null): Logical
   return node;
 }
 
-function pruneProject(node: LogicalPlanNode, required: Set<string> | null): LogicalPlanNode {
-  if (node.type !== PlanNodeType.PROJECT) return node;
+function pruneProject(pruner: ColumnPruner, node: LogicalProjectNode, required: RequiredColumns): LogicalPlanNode {
   const childRequired = new Set<string>();
   for (const [index, expr] of (node.expressions || []).entries()) {
     if (!required || outputNeeded(expr, required, index)) {
       collectExprColumns(expr, childRequired);
     }
   }
-  const child = pruneColumns(node.children[0], childRequired);
-  return child !== node.children[0] ? setChildren(node, [child]) : node;
+  return pruner.rewriteChildren(node, childRequired);
 }
 
-function pruneAggregate(node: LogicalPlanNode): LogicalPlanNode {
-  if (node.type !== PlanNodeType.AGGREGATE) return node;
+function pruneAggregate(pruner: ColumnPruner, node: LogicalAggregateNode): LogicalPlanNode {
   const childRequired = new Set<string>();
   for (const expr of node.groupBy || []) collectExprColumns(expr, childRequired);
   for (const agg of node.aggregates || []) {
     for (const arg of (agg as { args?: BoundExpr[] }).args || []) collectExprColumns(arg, childRequired);
   }
-  const child = pruneColumns(node.children[0], childRequired);
-  return child !== node.children[0] ? setChildren(node, [child]) : node;
+  return pruner.rewriteChildren(node, childRequired);
 }
 
-function pruneSort(node: LogicalPlanNode, required: Set<string> | null): LogicalPlanNode {
-  if (node.type !== PlanNodeType.SORT) return node;
-  if (!required) return pruneUnary(node, null);
+function pruneSort(pruner: ColumnPruner, node: LogicalSortNode, required: RequiredColumns): LogicalPlanNode {
+  if (!required) return pruner.rewriteChildren(node, null);
   let childRequired = copyRefs(required);
   for (const key of node.orderKeys || []) childRequired = addExprRefs(childRequired, key.expr);
-  return pruneUnary(node, childRequired);
+  return pruner.rewriteChildren(node, childRequired);
 }
 
-function pruneJoin(node: LogicalPlanNode, required: Set<string> | null): LogicalPlanNode {
-  if (node.type !== PlanNodeType.JOIN) return node;
-  const left = node.children[0];
-  const right = node.children[1];
+function pruneJoin(pruner: ColumnPruner, node: LogicalJoinNode, required: RequiredColumns): LogicalPlanNode {
+  if (!required) return rewriteSides(pruner, node, null, null);
 
-  if (!required) {
-    const newLeft = pruneColumns(left, null);
-    const newRight = pruneColumns(right, null);
-    if (newLeft !== left || newRight !== right) return setChildren(node, [newLeft, newRight]);
-    return node;
-  }
-
-  const leftRefs = collectPlanRefs(left);
-  const rightRefs = collectPlanRefs(right);
   const refs = copyRefs(required);
   if (node.condition) collectExprColumns(node.condition, refs);
 
-  const leftRequired = filterRefsForPlan(refs, leftRefs);
-  const rightRequired = filterRefsForPlan(refs, rightRefs);
-  const newLeft = pruneColumns(left, leftRequired);
-  const newRight = pruneColumns(right, rightRequired);
-
-  if (newLeft !== left || newRight !== right) return setChildren(node, [newLeft, newRight]);
-  return node;
+  const [left, right] = node.children;
+  return rewriteSides(
+    pruner,
+    node,
+    filterRefsForPlan(refs, collectPlanRefs(left)),
+    filterRefsForPlan(refs, collectPlanRefs(right)),
+  );
 }
 
-function pruneDependentJoin(node: LogicalPlanNode, required: Set<string> | null): LogicalPlanNode {
-  if (node.type !== PlanNodeType.DEPENDENT_JOIN) return node;
+function pruneDependentJoin(pruner: ColumnPruner, node: LogicalDependentJoinNode, required: RequiredColumns): LogicalPlanNode {
   const refs = copyRefs(required);
   if (node.condition) collectExprColumns(node.condition, refs);
   for (const expr of node.correlatedColumns || []) collectExprColumns(expr, refs);
-  const children = node.children || [];
-  if (children.length !== 2) return pruneChildren(node, refs);
-  const newLeft = pruneColumns(children[0], refs);
-  const newRight = pruneColumns(children[1], null);
-  if (newLeft !== children[0] || newRight !== children[1]) return setChildren(node, [newLeft, newRight]);
-  return node;
+
+  if (getChildren(node).length !== 2) return pruner.rewriteChildren(node, refs);
+  return rewriteSides(pruner, node, refs, null);
 }
 
-function pruneUnary(node: LogicalPlanNode, required: Set<string> | null): LogicalPlanNode {
-  const origChild = node.children?.[0];
-  if (!origChild) return node;
-  const child = pruneColumns(origChild, required);
-  return child !== origChild ? setChildren(node, [child]) : node;
-}
-
-function pruneChildren(node: LogicalPlanNode, required: Set<string> | null): LogicalPlanNode {
-  const children = getChildren(node);
-  const newChildren = children.map(child => pruneColumns(child, required));
-  const changed = newChildren.some((child, i) => child !== children[i]);
-  return changed ? setChildren(node, newChildren) : node;
+function rewriteSides(
+  pruner: ColumnPruner,
+  node: LogicalPlanNode,
+  leftRequired: RequiredColumns,
+  rightRequired: RequiredColumns,
+): LogicalPlanNode {
+  const [left, right] = getChildren(node);
+  const newLeft = pruner.rewrite(left, leftRequired);
+  const newRight = pruner.rewrite(right, rightRequired);
+  return newLeft !== left || newRight !== right ? setChildren(node, [newLeft, newRight]) : node;
 }
 
 function addExprRefs(required: Set<string>, expr: BoundExpr | null): Set<string> {

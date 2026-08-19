@@ -165,8 +165,7 @@ export async function buildSort(executor: ExecutorLike, physical: PhysicalPlanNo
       graph.addDependency(currentPipelineId, childPipelineId);
 
       const source: SourceGenerator = async function* () {
-        const resultChunks = await sortOp.finalize();
-        for (const chunk of resultChunks) {
+        for await (const chunk of sortOp.stream()) {
           await currentSink.consume(chunk);
           yield chunk;
         }
@@ -201,8 +200,7 @@ export async function buildTopN(executor: ExecutorLike, physical: PhysicalPlanNo
       graph.addDependency(currentPipelineId, childPipelineId);
 
       const source: SourceGenerator = async function* () {
-        const resultChunks = await sortOp.finalize();
-        for (const chunk of resultChunks) {
+        for await (const chunk of sortOp.stream()) {
           await currentSink.consume(chunk);
           yield chunk;
         }

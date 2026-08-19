@@ -294,8 +294,16 @@ describe('QueryExecutor', () => {
       });
       const executor = new QueryExecutor(catalog, mockTempManager());
 
-      const left = { ...scanNode('S_ORDERS', ['ID', 'NAME'], 'SO'), _sortedBy: ['SO.ID'] };
-      const right = { ...scanNode('S_ITEMS', ['OID', 'ITEM'], 'SI'), _sortedBy: ['SI.OID'] };
+      const left = {
+        type: PlanNodeType.SORT,
+        orderKeys: [{ expr: colRef('SO', 'ID', 0), direction: 'ASC' }],
+        children: [scanNode('S_ORDERS', ['ID', 'NAME'], 'SO')],
+      };
+      const right = {
+        type: PlanNodeType.SORT,
+        orderKeys: [{ expr: colRef('SI', 'OID', 0), direction: 'ASC' }],
+        children: [scanNode('S_ITEMS', ['OID', 'ITEM'], 'SI')],
+      };
       const plan = {
         type: PlanNodeType.JOIN,
         joinType: JoinType.INNER,
@@ -375,7 +383,11 @@ describe('QueryExecutor', () => {
 
       const catalog = mockCatalog({ SORTED: mockStorage(sortedData, sortedSchema) });
       const executor = new QueryExecutor(catalog, mockTempManager());
-      const scan = { ...scanNode('SORTED', ['GRP', 'VAL'], 'S'), _sortedBy: ['S.GRP'] };
+      const scan = {
+        type: PlanNodeType.SORT,
+        orderKeys: [{ expr: colRef('S', 'GRP', 0, 'VARCHAR'), direction: 'ASC' }],
+        children: [scanNode('SORTED', ['GRP', 'VAL'], 'S')],
+      };
       const plan = {
         type: PlanNodeType.AGGREGATE,
         groupBy: [colRef('S', 'GRP', 0, 'VARCHAR')],

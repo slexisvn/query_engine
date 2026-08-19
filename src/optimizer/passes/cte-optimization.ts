@@ -1,6 +1,6 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanNodeType, LogicalMaterialize, LogicalCTEScan, getChildren, setChildren, type LogicalPlanNode, type LogicalCTEAnchorNode, type LogicalCTEScanNode } from '../../planner/logical-plan.js';
-import { PlanRewriter } from '../../planner/plan-visitor.js';
+import { PlanRewriter } from '../../planner/plan-rewriter.js';
 
 export class CTEOptimization extends OptimizationPass {
   override get name() { return 'CTEOptimization'; }

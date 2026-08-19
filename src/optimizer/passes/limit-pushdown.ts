@@ -1,5 +1,5 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanRewriter } from '../../planner/plan-visitor.js';
+import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { PlanNodeType, type LogicalPlanNode, type LogicalLimitNode } from '../../planner/logical-plan.js';
 
 export class LimitPushdown extends OptimizationPass {

@@ -1,3 +1,4 @@
+import type { DataType } from '../storage/data-type.js';
 export enum NodeKind {
   EXPLAIN_STMT = 'ExplainStmt',
   SELECT_STMT = 'SelectStmt',
@@ -100,7 +101,7 @@ export interface SubqueryRefNode { kind: NodeKind.SUBQUERY_REF; query: QueryStmt
 
 export interface ColumnRefNode { kind: NodeKind.COLUMN_REF; name: string; table: string | null; }
 
-export interface LiteralNode { kind: NodeKind.LITERAL; value: string | number | boolean | null; dataType: string | null; }
+export interface LiteralNode { kind: NodeKind.LITERAL; value: string | number | boolean | null; dataType: DataType | null; }
 
 export interface ParameterNode { kind: NodeKind.PARAMETER; index: number; }
 
@@ -222,7 +223,7 @@ export function ColumnRef(name: string, table: string | null = null): ColumnRefN
   return { kind: NodeKind.COLUMN_REF, name, table };
 }
 
-export function Literal(value: string | number | boolean | null, dataType: string | null = null): LiteralNode {
+export function Literal(value: string | number | boolean | null, dataType: DataType | null = null): LiteralNode {
   return { kind: NodeKind.LITERAL, value, dataType };
 }
 

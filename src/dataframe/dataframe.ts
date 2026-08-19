@@ -46,7 +46,7 @@ interface BindContext {
 interface BoundColumn {
   expr: BoundExpr;
   outputName: string | null;
-  dataType: string | null;
+  dataType: DataType | null;
 }
 
 interface OutputColumnLike {

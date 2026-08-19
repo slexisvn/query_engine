@@ -35,6 +35,12 @@ function allRows(chunks) {
   return chunks.flatMap(c => c.toRows());
 }
 
+async function sorted(op) {
+  const chunks = [];
+  for await (const chunk of op.stream()) chunks.push(chunk);
+  return allRows(chunks);
+}
+
 describe('SortOperator', () => {
   describe('in-memory sort', () => {
     it('sorts ascending by single key', async () => {
@@ -44,7 +50,7 @@ describe('SortOperator', () => {
         { type: 'VARCHAR', values: ['c', 'a', 'b'] },
       ]));
 
-      const result = allRows(await op.finalize());
+      const result = await sorted(op);
 
       expect(result.map(r => r[0])).toEqual([10, 20, 30]);
       expect(result.map(r => r[1])).toEqual(['a', 'b', 'c']);
@@ -54,7 +60,7 @@ describe('SortOperator', () => {
       const op = new SortOperator([descKey(0)], null, 0, memSpill());
       await op.consume(makeChunk([{ type: 'INT32', values: [1, 3, 2] }]));
 
-      const result = allRows(await op.finalize());
+      const result = await sorted(op);
 
       expect(result.map(r => r[0])).toEqual([3, 2, 1]);
     });
@@ -66,7 +72,7 @@ describe('SortOperator', () => {
         { type: 'INT32', values: [10, 20, 5] },
       ]));
 
-      const result = allRows(await op.finalize());
+      const result = await sorted(op);
 
       expect(result[0]).toEqual([1, 20]);
       expect(result[1]).toEqual([1, 10]);
@@ -77,7 +83,7 @@ describe('SortOperator', () => {
       const op = new SortOperator([ascKey(0)], null, 0, memSpill());
       await op.consume(makeChunk([{ type: 'INT32', values: [3, null, 1, null, 2] }]));
 
-      const result = allRows(await op.finalize());
+      const result = await sorted(op);
 
       expect(result.map(r => r[0])).toEqual([1, 2, 3, null, null]);
     });
@@ -86,7 +92,7 @@ describe('SortOperator', () => {
       const op = new SortOperator([ascKey(0)], null, 0, memSpill());
       await op.consume(makeChunk([{ type: 'VARCHAR', values: ['banana', 'apple', 'cherry'] }]));
 
-      const result = allRows(await op.finalize());
+      const result = await sorted(op);
 
       expect(result.map(r => r[0])).toEqual(['apple', 'banana', 'cherry']);
     });
@@ -97,7 +103,7 @@ describe('SortOperator', () => {
       const op = new SortOperator([ascKey(0)], 3, 0, memSpill());
       await op.consume(makeChunk([{ type: 'INT32', values: [50, 40, 30, 20, 10] }]));
 
-      const result = allRows(await op.finalize());
+      const result = await sorted(op);
 
       expect(result.length).toBe(3);
       expect(result.map(r => r[0])).toEqual([10, 20, 30]);
@@ -107,7 +113,7 @@ describe('SortOperator', () => {
       const op = new SortOperator([ascKey(0)], 2, 2, memSpill());
       await op.consume(makeChunk([{ type: 'INT32', values: [5, 4, 3, 2, 1] }]));
 
-      const result = allRows(await op.finalize());
+      const result = await sorted(op);
 
       expect(result.length).toBe(2);
       expect(result.map(r => r[0])).toEqual([3, 4]);
@@ -117,7 +123,7 @@ describe('SortOperator', () => {
       const op = new SortOperator([ascKey(0)], 5, 100, memSpill());
       await op.consume(makeChunk([{ type: 'INT32', values: [1, 2, 3] }]));
 
-      const result = allRows(await op.finalize());
+      const result = await sorted(op);
 
       expect(result.length).toBe(0);
     });
@@ -129,7 +135,7 @@ describe('SortOperator', () => {
       await op.consume(makeChunk([{ type: 'INT32', values: [30, 10] }]));
       await op.consume(makeChunk([{ type: 'INT32', values: [20, 5] }]));
 
-      const result = allRows(await op.finalize());
+      const result = await sorted(op);
 
       expect(result.map(r => r[0])).toEqual([5, 10, 20, 30]);
     });
@@ -152,7 +158,7 @@ describe('SortOperator', () => {
 
       expect(op.runCount).toBeGreaterThan(0);
 
-      const result = allRows(await op.finalize());
+      const result = await sorted(op);
 
       expect(result.length).toBe(20);
       for (let i = 0; i < 20; i++) {
@@ -168,7 +174,7 @@ describe('SortOperator', () => {
         await op.consume(makeChunk([{ type: 'INT32', values: [i] }]));
       }
 
-      const result = allRows(await op.finalize());
+      const result = await sorted(op);
 
       expect(result.length).toBe(3);
       expect(result.map(r => r[0])).toEqual([1, 2, 3]);
@@ -182,7 +188,7 @@ describe('SortOperator', () => {
         await op.consume(makeChunk([{ type: 'INT32', values: [i] }]));
       }
 
-      const result = allRows(await op.finalize());
+      const result = await sorted(op);
 
       expect(result.map(r => r[0])).toEqual([4, 5]);
     });
@@ -203,7 +209,7 @@ describe('SortOperator', () => {
       expect(op.runCount).toBeGreaterThan(1);
       expect(op.runCount).toBeLessThanOrEqual(Math.ceil(totalRows / budgetRows) + 1);
 
-      const result = allRows(await op.finalize());
+      const result = await sorted(op);
 
       expect(result.length).toBe(totalRows);
       for (let i = 1; i < result.length; i++) {
@@ -222,7 +228,7 @@ describe('SortOperator', () => {
 
       expect(op.runCount).toBeGreaterThan(1);
 
-      const result = allRows(await op.finalize());
+      const result = await sorted(op);
 
       expect(result.map(r => r[0])).toEqual([10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
     });
@@ -231,8 +237,7 @@ describe('SortOperator', () => {
   describe('empty input', () => {
     it('returns empty for no consumed chunks', async () => {
       const op = new SortOperator([ascKey(0)], null, 0, memSpill());
-      const result = await op.finalize();
-      expect(result.length).toBe(0);
+      expect(await sorted(op)).toEqual([]);
     });
   });
 });

@@ -1,4 +1,5 @@
-export interface ColumnInfo { name: string; dataType: string | null; }
+import type { DataType } from '../storage/data-type.js';
+export interface ColumnInfo { name: string; dataType: DataType | null; }
 
 export interface TableInfo { originalName: string; columns: ColumnInfo[]; isCTE?: boolean; }
 
@@ -23,17 +24,23 @@ export class BinderScope {
   parent: BinderScope | null;
   tables: Map<string, TableInfo>;
   columns: Map<string, ColumnInfo[]>;
-  correlatedRefs: never[];
+  columnIndexes: Map<string, Map<string, number>>;
 
   constructor(parent: BinderScope | null = null) {
     this.parent = parent;
     this.tables = new Map();
     this.columns = new Map();
-    this.correlatedRefs = [];
+    this.columnIndexes = new Map();
   }
 
   addTable(alias: string, tableInfo: TableInfo): void {
-    this.tables.set(alias.toUpperCase(), tableInfo);
+    const key = alias.toUpperCase();
+    this.tables.set(key, tableInfo);
+    this.columnIndexes.set(key, indexColumns(tableInfo.columns));
+  }
+
+  columnIndexIn(tableAlias: string, columnName: string): number {
+    return this.columnIndexes.get(tableAlias)?.get(columnName) ?? -1;
   }
 
   addColumn(alias: string, columnInfo: ColumnInfo): void {
@@ -64,24 +71,22 @@ export class BinderScope {
       if (!tableResult) return null;
 
       const { table, depth } = tableResult;
-      const col = table.columns.find(c => c.name.toUpperCase() === upper);
-      if (!col) return null;
+      const colIndex = this.ownerScopeOf(tableUpper)?.columnIndexIn(tableUpper, upper) ?? -1;
+      if (colIndex < 0) return null;
 
-      const colIndex = table.columns.findIndex(c => c.name.toUpperCase() === upper);
       return {
         tableAlias: tableUpper,
         tableName: table.originalName || tableUpper,
-        column: col,
+        column: table.columns[colIndex],
         columnIndex: colIndex,
         depth,
       };
     }
 
     let found: ResolvedColumn | null = null;
-    let foundDepth = 0;
 
     for (const [alias, tableInfo] of this.tables) {
-      const colIndex = tableInfo.columns.findIndex(c => c.name.toUpperCase() === upper);
+      const colIndex = this.columnIndexIn(alias, upper);
       if (colIndex >= 0) {
         if (found) {
           throw new Error(`Ambiguous column reference: ${name}`);
@@ -135,7 +140,21 @@ export class BinderScope {
     }));
   }
 
+  ownerScopeOf(tableAlias: string): BinderScope | null {
+    if (this.tables.has(tableAlias)) return this;
+    return this.parent ? this.parent.ownerScopeOf(tableAlias) : null;
+  }
+
   child(): BinderScope {
     return new BinderScope(this);
   }
+}
+
+function indexColumns(columns: ColumnInfo[]): Map<string, number> {
+  const index = new Map<string, number>();
+  for (let i = 0; i < columns.length; i++) {
+    const key = columns[i].name.toUpperCase();
+    if (!index.has(key)) index.set(key, i);
+  }
+  return index;
 }

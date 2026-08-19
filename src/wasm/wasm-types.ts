@@ -1,3 +1,4 @@
+import { DataType } from '../storage/data-type.js';
 export type WasmKernelFn = (...args: number[]) => number;
 
 export interface WasmExports extends WebAssembly.Exports {
@@ -125,3 +126,10 @@ export interface WasmDispatchRegistry {
   setInstance(instance: WebAssembly.Instance, memory: WebAssembly.Memory): void;
   listKernels(): string[];
 }
+
+export const KernelOperand = {
+  ...DataType,
+  BITMAP: 'UINT8',
+} as const;
+
+export type KernelOperandType = typeof KernelOperand[keyof typeof KernelOperand];

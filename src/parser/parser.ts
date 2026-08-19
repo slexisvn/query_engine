@@ -1,5 +1,6 @@
 import { Lexer, Token, TokenType } from './lexer.js';
 import * as AST from './ast.js';
+import { DataType } from '../storage/data-type.js';
 
 export class Parser {
   tokens: Token[];
@@ -505,7 +506,7 @@ export class Parser {
 
     if (token.type === TokenType.STRING) {
       this.advance();
-      return AST.Literal(token.value, 'VARCHAR');
+      return AST.Literal(token.value, DataType.VARCHAR);
     }
 
     if (token.type === TokenType.NULL) {
@@ -515,24 +516,24 @@ export class Parser {
 
     if (token.type === TokenType.TRUE) {
       this.advance();
-      return AST.Literal(true, 'BOOLEAN');
+      return AST.Literal(true, DataType.BOOLEAN);
     }
 
     if (token.type === TokenType.FALSE) {
       this.advance();
-      return AST.Literal(false, 'BOOLEAN');
+      return AST.Literal(false, DataType.BOOLEAN);
     }
 
     if (token.type === TokenType.DATE) {
       this.advance();
       const dateStr = this.expect(TokenType.STRING);
-      return AST.Literal(dateStr.value, 'DATE');
+      return AST.Literal(dateStr.value, DataType.DATE);
     }
 
     if (token.type === TokenType.TIMESTAMP) {
       this.advance();
       const tsStr = this.expect(TokenType.STRING);
-      return AST.Literal(tsStr.value, 'TIMESTAMP');
+      return AST.Literal(tsStr.value, DataType.TIMESTAMP);
     }
 
     if (token.type === TokenType.INTERVAL) {
