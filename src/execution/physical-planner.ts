@@ -36,7 +36,7 @@ const PASS_THROUGH_TYPES: Partial<Record<PlanNodeType, PhysicalOperatorNode['typ
   [PlanNodeType.TOP_N]: PhysicalNodeType.TOP_N,
   [PlanNodeType.LIMIT]: PhysicalNodeType.LIMIT,
   [PlanNodeType.DISTINCT]: PhysicalNodeType.DISTINCT,
-  [PlanNodeType.UNION]: PhysicalNodeType.UNION,
+  [PlanNodeType.SET_OP]: PhysicalNodeType.SET_OP,
   [PlanNodeType.WINDOW]: PhysicalNodeType.WINDOW,
   [PlanNodeType.MATERIALIZE]: PhysicalNodeType.MATERIALIZE,
   [PlanNodeType.CTE_ANCHOR]: PhysicalNodeType.CTE_ANCHOR,

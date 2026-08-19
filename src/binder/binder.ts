@@ -1,6 +1,6 @@
 import { NodeKind } from '../parser/ast.js';
 import type * as AST from '../parser/ast.js';
-import { DataType, dateToEpochDays, timestampToEpochMs, normalizeTypeName } from '../storage/data-type.js';
+import { DataType, dateToEpochDays, timestampToEpochMs, normalizeTypeName, isTemporal } from '../storage/data-type.js';
 import { BinderScope, type ColumnInfo } from './scope.js';
 import * as BE from './expression-binder.js';
 
@@ -45,6 +45,9 @@ export interface BoundSetOp {
   all: boolean;
   left: BoundQuery;
   right: BoundQuery;
+  orderBy: BoundOrderKey[] | null;
+  limit: BE.BoundExpr | null;
+  offset: BE.BoundExpr | null;
   outputColumns: OutputColumn[];
 }
 
@@ -53,6 +56,27 @@ export type BoundQuery = BoundSelect | BoundSetOp;
 interface CteInfo { name: string; columns: ColumnInfo[]; bound: BoundQuery; }
 
 interface JoinSide { type?: string; columns?: ColumnInfo[]; alias?: string; tableName?: string; cteName?: string; }
+
+function setOpOrderRef(expr: AST.Expr, outputColumns: OutputColumn[]): BE.BoundColumnRefNode {
+  const ordinal = selectOrdinal(expr);
+  const index = ordinal !== null
+    ? ordinal - 1
+    : (expr.kind === NodeKind.COLUMN_REF && !expr.table
+      ? outputColumns.findIndex(col => col.name.toUpperCase() === expr.name.toUpperCase())
+      : -1);
+  if (index < 0 || index >= outputColumns.length) {
+    throw new Error('ORDER BY after a set operation must name an output column or its position');
+  }
+  const column = outputColumns[index];
+  return BE.BoundColumnRef('', column.name, index, column.dataType);
+}
+
+function selectOrdinal(expr: AST.Expr): number | null {
+  if (expr.kind !== NodeKind.LITERAL) return null;
+  const value = expr.value;
+  if (typeof value !== 'number' || !Number.isInteger(value)) return null;
+  return value;
+}
 
 function valueDataType(value: BE.LiteralValue): DataType | null {
   switch (typeof value) {
@@ -94,13 +118,23 @@ export class Binder {
   bindSetOp(node: AST.SetOpNode, scope: BinderScope): BoundSetOp {
     const left = this.bindQuery(node.left, scope);
     const right = this.bindQuery(node.right, scope);
+    const outputColumns = left.outputColumns;
     return {
       type: 'SetOp',
       op: node.op,
       all: node.all,
       left,
       right,
-      outputColumns: left.outputColumns,
+      orderBy: node.orderBy
+        ? node.orderBy.map(ok => ({
+          expr: setOpOrderRef(ok.expr, outputColumns),
+          direction: ok.direction,
+          nullOrder: ok.nullOrder,
+        }))
+        : null,
+      limit: node.limit ? this.bindExpression(node.limit, scope) : null,
+      offset: node.offset ? this.bindExpression(node.offset, scope) : null,
+      outputColumns,
     };
   }
 
@@ -153,7 +187,7 @@ export class Binder {
     let orderBy: BoundOrderKey[] | null = null;
     if (node.orderBy) {
       orderBy = node.orderBy.map(ok => ({
-        expr: this.bindKeyWithAlias(ok.expr, fromScope, selectAliasMap),
+        expr: this.bindOrderKey(ok.expr, fromScope, selectAliasMap, boundSelectItems),
         direction: ok.direction,
         nullOrder: ok.nullOrder,
       }));
@@ -189,6 +223,17 @@ export class Binder {
       distinct: node.distinct,
       outputColumns,
     };
+  }
+
+  bindOrderKey(expr: AST.Expr, scope: BinderScope, selectAliasMap: Map<string, BE.BoundExpr>, selectItems: BoundSelectItem[]): BE.BoundExpr {
+    const ordinal = selectOrdinal(expr);
+    if (ordinal !== null) {
+      if (ordinal < 1 || ordinal > selectItems.length) {
+        throw new Error(`ORDER BY position ${ordinal} is not in select list`);
+      }
+      return selectItems[ordinal - 1].expr;
+    }
+    return this.bindKeyWithAlias(expr, scope, selectAliasMap);
   }
 
   bindKeyWithAlias(expr: AST.Expr, scope: BinderScope, selectAliasMap: Map<string, BE.BoundExpr>): BE.BoundExpr {
@@ -232,7 +277,7 @@ export class Binder {
     const upperName = node.name.toUpperCase();
     const cte = this.cteScopes.get(upperName);
     if (cte) {
-      scope.addTable(node.alias, {
+      const cteAlias = scope.addTable(node.alias, {
         originalName: cte.name,
         columns: cte.columns,
         isCTE: true,
@@ -240,7 +285,7 @@ export class Binder {
       return {
         type: 'CTERef',
         cteName: cte.name,
-        alias: node.alias.toUpperCase(),
+        alias: cteAlias,
         columns: cte.columns,
         query: cte.bound,
       };
@@ -251,7 +296,7 @@ export class Binder {
       throw new Error(`Unknown table: ${node.name}`);
     }
 
-    scope.addTable(node.alias, {
+    const relationAlias = scope.addTable(node.alias, {
       originalName: tableInfo.name,
       columns: tableInfo.columns,
     });
@@ -259,7 +304,7 @@ export class Binder {
     return {
       type: 'TableRef',
       tableName: tableInfo.name,
-      alias: node.alias.toUpperCase(),
+      alias: relationAlias,
       columns: tableInfo.columns,
     };
   }
@@ -325,14 +370,14 @@ export class Binder {
     const bound = this.bindQuery(node.query, subScope);
 
     const alias = node.alias || '_subquery';
-    scope.addTable(alias, {
+    const relationAlias = scope.addTable(alias, {
       originalName: alias,
       columns: bound.outputColumns.map(c => ({ name: c.name, dataType: c.dataType })),
     });
 
     return {
       type: 'SubqueryRef',
-      alias: alias.toUpperCase(),
+      alias: relationAlias,
       query: bound,
       columns: bound.outputColumns,
     };
@@ -464,7 +509,7 @@ export class Binder {
       nullOrder: ok.nullOrder,
     }));
     const resultType = this.inferWindowType(node.name, args);
-    return BE.BoundWindow(node.name.toUpperCase(), args, partitionBy, orderBy, resultType);
+    return BE.BoundWindow(node.name.toUpperCase(), args, partitionBy, orderBy, node.windowSpec.frame, resultType);
   }
 
   bindColumnRef(node: AST.ColumnRefNode, scope: BinderScope): BE.BoundColumnRefNode {
@@ -528,7 +573,10 @@ export class Binder {
     return BE.BoundLiteral(value, valueDataType(value));
   }
 
-  bindBinaryExpr(node: AST.BinaryExprNode, scope: BinderScope): BE.BoundBinaryNode {
+  bindBinaryExpr(node: AST.BinaryExprNode, scope: BinderScope): BE.BoundBinaryNode | BE.BoundQuantifiedNode {
+    if (node.right.kind === 'QuantifiedSubquery') {
+      return this.bindQuantified(node.op, node.right, this.bindExpression(node.left, scope), scope);
+    }
     const left = this.bindExpression(node.left, scope);
     const right = this.bindExpression(node.right, scope);
     const op = node.op;
@@ -543,8 +591,14 @@ export class Binder {
       return BE.BoundBinary(op, left, right, DataType.VARCHAR);
     }
 
-    const resultType = this.inferArithmeticType(BE.getExprType(left), BE.getExprType(right));
+    const resultType = this.inferArithmeticType(BE.getExprType(left), BE.getExprType(right), op);
     return BE.BoundBinary(op, left, right, resultType);
+  }
+
+  bindQuantified(op: string, node: AST.QuantifiedSubqueryNode, expr: BE.BoundExpr, scope: BinderScope): BE.BoundQuantifiedNode {
+    const quantifier: BE.Quantifier = node.quantifier.toUpperCase() === 'ALL' ? 'ALL' : 'ANY';
+    const subPlan = this.bindQuery(node.query, scope.child());
+    return BE.BoundQuantified(op, quantifier, expr, subPlan);
   }
 
   bindUnaryExpr(node: AST.UnaryExprNode, scope: BinderScope): BE.BoundUnaryNode {
@@ -576,8 +630,9 @@ export class Binder {
       result: this.bindExpression(wc.result, scope),
     }));
     const elseExpr = node.elseExpr ? this.bindExpression(node.elseExpr, scope) : null;
-    const resultType = BE.getExprType(whenClauses[0]?.result) || DataType.VARCHAR;
-    return BE.BoundCase(operand, whenClauses, elseExpr, resultType);
+    const branches = [...whenClauses.map(wc => wc.result), ...(elseExpr ? [elseExpr] : [])];
+    const resultType = branches.reduce<DataType | null>((found, branch) => found ?? BE.getExprType(branch), null);
+    return BE.BoundCase(operand, whenClauses, elseExpr, resultType || DataType.VARCHAR);
   }
 
   bindCastExpr(node: AST.CastExprNode, scope: BinderScope): BE.BoundCastNode {
@@ -617,11 +672,15 @@ export class Binder {
     return null;
   }
 
-  inferArithmeticType(left: DataType | null, right: DataType | null): DataType {
+  inferArithmeticType(left: DataType | null, right: DataType | null, op: string): DataType {
+    const leftTemporal = left !== null && isTemporal(left);
+    const rightTemporal = right !== null && isTemporal(right);
+    if (leftTemporal && rightTemporal) return op === '-' ? DataType.INT32 : left!;
+    if (leftTemporal) return left!;
+    if (rightTemporal) return right!;
     if (left === DataType.FLOAT64 || right === DataType.FLOAT64) return DataType.FLOAT64;
     if (left === DataType.DECIMAL || right === DataType.DECIMAL) return DataType.DECIMAL;
     if (left === DataType.INT64 || right === DataType.INT64) return DataType.INT64;
-    if (left === DataType.DATE) return DataType.DATE;
     return DataType.INT32;
   }
 
@@ -646,6 +705,8 @@ export class Binder {
     switch (name.toUpperCase()) {
       case 'SUBSTRING': case 'TRIM': case 'UPPER': case 'LOWER': case 'REPLACE':
         return DataType.VARCHAR;
+      case 'IS_TRUE': case 'IS_FALSE':
+        return DataType.BOOLEAN;
       case 'EXTRACT':
         return DataType.INT32;
       case 'LENGTH':

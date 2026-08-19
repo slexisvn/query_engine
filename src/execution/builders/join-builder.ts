@@ -414,7 +414,7 @@ function buildNestedLoopJoin(node: LogicalJoinNode, ctx: JoinBuildCtx): Compiled
     ? compileExpression(node.condition, nlMapping)
     : null;
   const nlSchema = [...nlOuter.schema, ...nlInner.schema];
-  const nlResultMapping = isSemiAnti ? left.columnMapping : nlMapping;
+  const nlResultMapping = isSemiAnti ? left.columnMapping : isMark ? ctx.resultMapping : nlMapping;
   const nlResultSchema = isSemiAnti ? left.schema : isMark ? markSchema! : nlSchema;
   return {
     schema: nlResultSchema,

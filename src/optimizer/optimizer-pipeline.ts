@@ -26,6 +26,7 @@ export const PREDICATE_FIXPOINT_STAGE = 'PredicateOptimization';
 
 export interface IndexCatalog {
   getIndexForColumn(table: string, column: string): object | null;
+  getTable(name: string): { primaryKey: string[] } | null;
 }
 
 export interface OptimizerPipelineOptions {
@@ -50,7 +51,7 @@ export function createDefaultOptimizer({ catalog, statistics }: OptimizerPipelin
     .registerPass(new AggregatePushdown())
     .registerPass(new JoinReorder(statsMap))
     .registerPass(new PredicatePushdown())
-    .registerPass(new JoinElimination())
+    .registerPass(new JoinElimination(catalog))
     .registerPass(new ProjectionPushdown())
     .registerPass(new LimitPushdown())
     .registerPass(new EmptyPropagation())

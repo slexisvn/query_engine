@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { SortOperator, LimitOperator } from '../../../src/execution/operators/sort.js';
+import { SortOperator, LimitOperator, nullsFirstFor } from '../../../src/execution/operators/sort.js';
 import { SpillManager } from '../../../src/storage/spill-manager/spill-manager.js';
 import { MemoryStorage } from '../../../src/storage/spill-manager/memory-storage.js';
 import { Column } from '../../../src/storage/column.js';
@@ -316,5 +316,71 @@ describe('LimitOperator', () => {
     const result = allRows(await op.finalize());
 
     expect(result.length).toBe(3);
+  });
+});
+
+describe('nullsFirstFor', () => {
+  it('defaults ascending keys to nulls last', () => {
+    expect(nullsFirstFor('ASC', null)).toBe(false);
+  });
+
+  it('defaults descending keys to nulls first', () => {
+    expect(nullsFirstFor('DESC', null)).toBe(true);
+  });
+
+  it('defaults a missing direction to ascending', () => {
+    expect(nullsFirstFor(null, null)).toBe(false);
+  });
+
+  it('lets an explicit null order win over the direction default', () => {
+    expect(nullsFirstFor('DESC', 'LAST')).toBe(false);
+    expect(nullsFirstFor('ASC', 'FIRST')).toBe(true);
+  });
+});
+
+describe('SortOperator null placement', () => {
+  function key(colIdx, direction, nullsFirst) {
+    return { eval: (chunk, row) => chunk.columns[colIdx].get(row), direction, nullsFirst };
+  }
+
+  async function sortValues(sortKey) {
+    const op = new SortOperator([sortKey], null, 0, memSpill());
+    await op.consume(makeChunk([{ type: DataType.INT32, values: [3, null, 1, null, 2] }]));
+    const chunks = [];
+    for await (const chunk of op.stream()) chunks.push(chunk);
+    return allRows(chunks).map(row => row[0]);
+  }
+
+  it('puts nulls last when nullsFirst is false', async () => {
+    expect(await sortValues(key(0, 'ASC', false))).toEqual([1, 2, 3, null, null]);
+  });
+
+  it('puts nulls first when nullsFirst is true', async () => {
+    expect(await sortValues(key(0, 'ASC', true))).toEqual([null, null, 1, 2, 3]);
+  });
+
+  it('keeps null placement independent of direction', async () => {
+    expect(await sortValues(key(0, 'DESC', false))).toEqual([3, 2, 1, null, null]);
+    expect(await sortValues(key(0, 'DESC', true))).toEqual([null, null, 3, 2, 1]);
+  });
+});
+
+describe('LimitOperator.takeChunks', () => {
+  it('hands out buffered chunks exactly once', async () => {
+    const op = new LimitOperator(10);
+    await op.consume(makeChunk([{ type: DataType.INT32, values: [1, 2] }]));
+
+    expect(allRows(op.takeChunks()).length).toBe(2);
+    expect(op.takeChunks()).toEqual([]);
+  });
+
+  it('never emits more than the limit across repeated drains', async () => {
+    const op = new LimitOperator(3);
+    await op.consume(makeChunk([{ type: DataType.INT32, values: [1, 2, 3] }]));
+    const first = allRows(op.takeChunks());
+    await op.consume(makeChunk([{ type: DataType.INT32, values: [4, 5, 6] }]));
+    const second = allRows(op.takeChunks());
+
+    expect(first.length + second.length).toBe(3);
   });
 });

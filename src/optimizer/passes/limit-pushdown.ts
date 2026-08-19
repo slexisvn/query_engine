@@ -1,6 +1,6 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-rewriter.js';
-import { PlanNodeType, type LogicalPlanNode, type LogicalLimitNode } from '../../planner/logical-plan.js';
+import { PlanNodeType, SetOpType, type LogicalPlanNode, type LogicalLimitNode } from '../../planner/logical-plan.js';
 
 export class LimitPushdown extends OptimizationPass {
   override get name() { return 'LimitPushdown'; }
@@ -22,7 +22,7 @@ class LimitPushdownRewriter extends PlanRewriter {
       return { ...newProject, children: [optimizedLimit] };
     }
 
-    if (child.type === PlanNodeType.UNION && child.all) {
+    if (child.type === PlanNodeType.SET_OP && child.op === SetOpType.UNION && child.all) {
       const leftLimit = { ...node, children: [child.children[0]] };
       const rightLimit = { ...node, children: [child.children[1]] };
 

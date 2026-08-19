@@ -12,7 +12,14 @@ import {
 } from '../../../src/planner/logical-plan.js';
 import { BoundExprKind } from '../../../src/binder/expression-binder.js';
 
-const pass = new JoinElimination();
+const keyedCatalog = {
+  getTable(name) {
+    return name.toLowerCase() === 'b' ? { primaryKey: ['id'] } : null;
+  },
+};
+
+const pass = new JoinElimination(keyedCatalog);
+const passWithoutKeys = new JoinElimination(null);
 
 function colRef(table, col) {
   return { kind: BoundExprKind.COLUMN_REF, tableAlias: table, columnName: col };
@@ -49,6 +56,69 @@ describe('JoinElimination', () => {
       expect(result.type).toBe(PlanNodeType.PROJECT);
       expect(result.children[0].type).toBe(PlanNodeType.SCAN);
       expect(result.children[0].table).toBe('a');
+    });
+
+    it('keeps LEFT JOIN when the right side has no provable unique key on the join columns', () => {
+      const join = LogicalJoin(
+        JoinType.LEFT,
+        bin(colRef('a', 'id'), '=', colRef('b', 'id')),
+        scan('a'),
+        scan('b')
+      );
+      const plan = LogicalProject(
+        [colRef('a', 'id'), colRef('a', 'name')],
+        join
+      );
+
+      const result = passWithoutKeys.apply(plan);
+
+      expect(result.children[0].type).toBe(PlanNodeType.JOIN);
+    });
+
+    it('keeps LEFT JOIN when the join covers only part of the right key', () => {
+      const twoColumnKeyCatalog = { getTable: () => ({ primaryKey: ['id', 'name'] }) };
+      const join = LogicalJoin(
+        JoinType.LEFT,
+        bin(colRef('a', 'id'), '=', colRef('b', 'id')),
+        scan('a'),
+        scan('b')
+      );
+      const plan = LogicalProject([colRef('a', 'id')], join);
+
+      const result = new JoinElimination(twoColumnKeyCatalog).apply(plan);
+
+      expect(result.children[0].type).toBe(PlanNodeType.JOIN);
+    });
+
+    it('eliminates LEFT JOIN when the right side is grouped on the join column', () => {
+      const grouped = LogicalAggregate([colRef('b', 'gid')], [], scan('b'));
+      const join = LogicalJoin(
+        JoinType.LEFT,
+        bin(colRef('a', 'id'), '=', colRef('b', 'gid')),
+        scan('a'),
+        grouped
+      );
+      const plan = LogicalProject([colRef('a', 'name')], join);
+
+      const result = passWithoutKeys.apply(plan);
+
+      expect(result.children[0].type).toBe(PlanNodeType.SCAN);
+      expect(result.children[0].table).toBe('a');
+    });
+
+    it('keeps LEFT JOIN when the right side is grouped on a different column', () => {
+      const grouped = LogicalAggregate([colRef('b', 'other')], [], scan('b'));
+      const join = LogicalJoin(
+        JoinType.LEFT,
+        bin(colRef('a', 'id'), '=', colRef('b', 'gid')),
+        scan('a'),
+        grouped
+      );
+      const plan = LogicalProject([colRef('a', 'name')], join);
+
+      const result = passWithoutKeys.apply(plan);
+
+      expect(result.children[0].type).toBe(PlanNodeType.JOIN);
     });
 
     it('keeps LEFT JOIN when right side columns are used in PROJECT', () => {
@@ -94,15 +164,15 @@ describe('JoinElimination', () => {
     });
 
     it('still eliminates LEFT JOIN when the renamed right columns are unused', () => {
-      const rightProject = LogicalProject([renamed('b', 'score', 'rscore')], scan('b'));
+      const rightProject = LogicalProject([renamed('b', 'score', 'rscore'), colRef('b', 'id')], scan('b'));
       const join = LogicalJoin(
         JoinType.LEFT,
-        bin(colRef('a', 'id'), '=', colRef('b', 'id')),
+        bin(colRef('a', 'aid'), '=', colRef('b', 'id')),
         scan('a'),
         rightProject
       );
       const plan = LogicalProject(
-        [colRef('a', 'id')],
+        [colRef('a', 'aid')],
         join
       );
 

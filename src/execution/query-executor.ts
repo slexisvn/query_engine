@@ -17,7 +17,7 @@ import { MemoryStorageBackend } from '../storage/backend/memory-storage-backend.
 import { buildScan, buildIndexScan, buildSingleRow, buildEmpty } from './builders/source-builders.js';
 import {
   buildFilter, buildProject, buildSort, buildTopN,
-  buildLimit, buildDistinct, buildUnion, buildWindow,
+  buildLimit, buildDistinct, buildSetOp, buildWindow,
 } from './builders/pipeline-builders.js';
 import { buildJoin, prepareParallelJoin, runBufferedSerialJoin } from './builders/join-builder.js';
 import type { ParallelJoinPrep, MakeBuildSide, MakeProbeOp, FragmentPoolLike as JoinFragmentPoolLike } from './builders/join-builder.js';
@@ -78,7 +78,7 @@ const BUILDERS: Partial<Record<PhysicalNodeType, BuilderFn>> = {
   [PhysicalNodeType.SORT]: buildSort,
   [PhysicalNodeType.LIMIT]: buildLimit,
   [PhysicalNodeType.DISTINCT]: buildDistinct,
-  [PhysicalNodeType.UNION]: buildUnion,
+  [PhysicalNodeType.SET_OP]: buildSetOp,
   [PhysicalNodeType.CTE_ANCHOR]: buildCTEAnchor,
   [PhysicalNodeType.CTE_SCAN]: buildCTEScan,
   [PhysicalNodeType.MATERIALIZE]: buildMaterialize,

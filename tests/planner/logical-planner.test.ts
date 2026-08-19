@@ -247,9 +247,26 @@ describe('subquery extraction', () => {
     expect(dj.condition.columnName).toBe('ID');
   });
 
-  it('NOT IN subquery produces NOT_IN type', () => {
+  it('NOT IN subquery produces a MARK dependent join negated in the predicate', () => {
     const plan = planSQL('SELECT * FROM users WHERE id NOT IN (SELECT user_id FROM orders)');
-    expect(find(plan, PlanNodeType.DEPENDENT_JOIN).subqueryType).toBe('NOT_IN');
+    const dj = find(plan, PlanNodeType.DEPENDENT_JOIN);
+    expect(dj.subqueryType).toBe('MARK');
+    expect(dj.markColumn).toBeTruthy();
+    expect(dj.condition.columnName).toBe('ID');
+
+    const filter = find(plan, PlanNodeType.FILTER);
+    expect(filter.condition.op).toBe('NOT');
+    expect(filter.condition.operand.columnName).toBe(dj.markColumn);
+  });
+
+  it('IN subquery inside an OR produces a MARK dependent join referenced by the predicate', () => {
+    const plan = planSQL('SELECT * FROM users WHERE id = 7 OR id IN (SELECT user_id FROM orders)');
+    const dj = find(plan, PlanNodeType.DEPENDENT_JOIN);
+    expect(dj.subqueryType).toBe('MARK');
+
+    const filter = find(plan, PlanNodeType.FILTER);
+    expect(filter.condition.op).toBe('OR');
+    expect(filter.condition.right.columnName).toBe(dj.markColumn);
   });
 
   it('non-correlated IN subquery has empty correlatedColumns', () => {
@@ -351,7 +368,7 @@ describe('subquery in FROM', () => {
 describe('UNION / set operations', () => {
   it('UNION produces Union node with all=false', () => {
     const plan = planSQL('SELECT id FROM users UNION SELECT id FROM orders');
-    expect(plan.type).toBe(PlanNodeType.UNION);
+    expect(plan.type).toBe(PlanNodeType.SET_OP);
     expect(plan.all).toBe(false);
     expect(plan.children[0].type).toBe(PlanNodeType.PROJECT);
     expect(plan.children[1].type).toBe(PlanNodeType.PROJECT);
@@ -371,8 +388,8 @@ describe('UNION / set operations', () => {
 
   it('chained UNION produces nested Union nodes', () => {
     const plan = planSQL('SELECT id FROM users UNION SELECT id FROM orders UNION SELECT id FROM products');
-    expect(plan.type).toBe(PlanNodeType.UNION);
-    expect(plan.children[0].type).toBe(PlanNodeType.UNION);
+    expect(plan.type).toBe(PlanNodeType.SET_OP);
+    expect(plan.children[0].type).toBe(PlanNodeType.SET_OP);
     expect(plan.children[1].type).toBe(PlanNodeType.PROJECT);
   });
 });

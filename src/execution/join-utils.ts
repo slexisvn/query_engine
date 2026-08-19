@@ -22,11 +22,36 @@ export function splitAnd(expr: BoundExpr | null): BoundExpr[] {
   return [expr];
 }
 
+function hasQualifiedColumn(mapping: ColumnMapping, colRef: BoundColumnRefNode): boolean {
+  return mapping.has(`${colRef.tableAlias || ''}.${colRef.columnName}`.toUpperCase());
+}
+
 function hasColumn(mapping: ColumnMapping, colRef: BoundColumnRefNode): boolean {
-  const fullKey = `${colRef.tableAlias || ''}.${colRef.columnName}`.toUpperCase();
-  if (mapping.has(fullKey)) return true;
-  const shortKey = colRef.columnName.toUpperCase();
-  return mapping.has(shortKey);
+  if (hasQualifiedColumn(mapping, colRef)) return true;
+  return mapping.has(colRef.columnName.toUpperCase());
+}
+
+function splitSides(
+  left: BoundColumnRefNode,
+  right: BoundColumnRefNode,
+  leftMapping: ColumnMapping,
+  rightMapping: ColumnMapping,
+): JoinKeyPair | null {
+  const qualified = orientedPair(left, right, leftMapping, rightMapping, hasQualifiedColumn);
+  if (qualified) return qualified;
+  return orientedPair(left, right, leftMapping, rightMapping, hasColumn);
+}
+
+function orientedPair(
+  left: BoundColumnRefNode,
+  right: BoundColumnRefNode,
+  leftMapping: ColumnMapping,
+  rightMapping: ColumnMapping,
+  has: (mapping: ColumnMapping, colRef: BoundColumnRefNode) => boolean,
+): JoinKeyPair | null {
+  if (has(leftMapping, left) && has(rightMapping, right)) return { buildKey: left, probeKey: right };
+  if (has(leftMapping, right) && has(rightMapping, left)) return { buildKey: right, probeKey: left };
+  return null;
 }
 
 export function findCommonEquiJoinKeys(expr: BoundExpr | null, leftMapping: ColumnMapping, rightMapping: ColumnMapping): JoinKeyPair | null {
@@ -55,11 +80,7 @@ export function findCommonEquiJoinKeys(expr: BoundExpr | null, leftMapping: Colu
 
     if (expr.kind === BoundExprKind.BINARY && expr.op === '=') {
     if (expr.left?.kind === BoundExprKind.COLUMN_REF && expr.right?.kind === BoundExprKind.COLUMN_REF) {
-      if (hasColumn(leftMapping, expr.left) && hasColumn(rightMapping, expr.right)) {
-        return { buildKey: expr.left, probeKey: expr.right };
-      } else if (hasColumn(leftMapping, expr.right) && hasColumn(rightMapping, expr.left)) {
-        return { buildKey: expr.right, probeKey: expr.left };
-      }
+      return splitSides(expr.left, expr.right, leftMapping, rightMapping);
     }
   }
 
@@ -77,22 +98,16 @@ export function extractJoinKeys(condition: BoundExpr | null, leftMapping: Column
   const preds = splitAnd(condition);
 
   for (const pred of preds) {
-    let isEquiJoin = false;
-    if (pred.kind === BoundExprKind.BINARY && pred.op === '='
+    const pair = pred.kind === BoundExprKind.BINARY && pred.op === '='
         && pred.left?.kind === BoundExprKind.COLUMN_REF
-        && pred.right?.kind === BoundExprKind.COLUMN_REF) {
+        && pred.right?.kind === BoundExprKind.COLUMN_REF
+      ? splitSides(pred.left, pred.right, leftMapping, rightMapping)
+      : null;
 
-      if (hasColumn(leftMapping, pred.left) && hasColumn(rightMapping, pred.right)) {
-        buildKeys.push(pred.left);
-        probeKeys.push(pred.right);
-        isEquiJoin = true;
-      } else if (hasColumn(leftMapping, pred.right) && hasColumn(rightMapping, pred.left)) {
-        buildKeys.push(pred.right);
-        probeKeys.push(pred.left);
-        isEquiJoin = true;
-      }
-    }
-    if (!isEquiJoin) {
+    if (pair) {
+      buildKeys.push(pair.buildKey);
+      probeKeys.push(pair.probeKey);
+    } else {
       residualPreds.push(pred);
     }
   }

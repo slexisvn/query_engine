@@ -261,4 +261,52 @@ describe('BinderScope', () => {
       expect(cols[1].tableAlias).toBe('B');
     });
   });
+
+  describe('shadowed relation aliases', () => {
+    it('keeps the user alias when nothing is shadowed', () => {
+      const scope = new BinderScope();
+      expect(scope.addTable('emp', { originalName: 'EMP', columns: makeColumns('ID') })).toBe('EMP');
+    });
+
+    it('renames a relation that shadows an enclosing alias', () => {
+      const parent = new BinderScope();
+      parent.addTable('emp', { originalName: 'EMP', columns: makeColumns('ID') });
+
+      const child = parent.child();
+      const inner = child.addTable('emp', { originalName: 'EMP', columns: makeColumns('ID') });
+
+      expect(inner).not.toBe('EMP');
+      expect(child.resolveColumn('id', 'emp').tableAlias).toBe(inner);
+      expect(parent.resolveColumn('id', 'emp').tableAlias).toBe('EMP');
+    });
+
+    it('resolves a renamed relation by either alias', () => {
+      const parent = new BinderScope();
+      parent.addTable('emp', { originalName: 'EMP', columns: makeColumns('ID') });
+      const child = parent.child();
+      const inner = child.addTable('emp', { originalName: 'EMP', columns: makeColumns('ID') });
+
+      expect(child.resolveTable(inner).depth).toBe(0);
+      expect(child.resolveColumn('id', inner).tableAlias).toBe(inner);
+    });
+
+    it('gives every shadowing relation its own alias', () => {
+      const root = new BinderScope();
+      root.addTable('emp', { originalName: 'EMP', columns: makeColumns('ID') });
+      const first = root.child().addTable('emp', { originalName: 'EMP', columns: makeColumns('ID') });
+      const second = root.child().addTable('emp', { originalName: 'EMP', columns: makeColumns('ID') });
+
+      expect(first).not.toBe(second);
+    });
+
+    it('reports the shadowing alias from an unqualified lookup', () => {
+      const parent = new BinderScope();
+      parent.addTable('emp', { originalName: 'EMP', columns: makeColumns('ID') });
+      const child = parent.child();
+      const inner = child.addTable('emp', { originalName: 'EMP', columns: makeColumns('ID') });
+
+      expect(child.resolveColumn('id').tableAlias).toBe(inner);
+      expect(child.resolveColumn('id').depth).toBe(0);
+    });
+  });
 });

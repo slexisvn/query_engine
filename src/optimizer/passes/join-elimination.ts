@@ -1,8 +1,10 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { PlanNodeType, JoinType, getChildren, type LogicalPlanNode, type LogicalJoinNode } from '../../planner/logical-plan.js';
-import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
+import { BoundExprKind, type BoundExpr, type BoundColumnRefNode } from '../../binder/expression-binder.js';
 import type { ColumnInfo } from '../../binder/scope.js';
+import { splitAnd } from '../sort-properties.js';
+import { columnKey, isUniqueOnKeys, type UniqueKeyCatalog } from '../unique-keys.js';
 
 interface NamedExpr {
   outputName?: string;
@@ -12,10 +14,17 @@ interface NamedExpr {
 }
 
 export class JoinElimination extends OptimizationPass {
+  catalog: UniqueKeyCatalog | null;
+
+  constructor(catalog: UniqueKeyCatalog | null = null) {
+    super();
+    this.catalog = catalog;
+  }
+
   override get name() { return 'JoinElimination'; }
 
   override apply(plan: LogicalPlanNode): LogicalPlanNode {
-    const rewriter = new JoinEliminationRewriter();
+    const rewriter = new JoinEliminationRewriter(this.catalog);
     return rewriter.rewrite(plan);
   }
 }
@@ -23,11 +32,18 @@ export class JoinElimination extends OptimizationPass {
 const COLUMN_RESTRICTING_PARENTS = new Set<PlanNodeType>([PlanNodeType.PROJECT, PlanNodeType.AGGREGATE]);
 
 class JoinEliminationRewriter extends PlanRewriter {
+  catalog: UniqueKeyCatalog | null;
+
+  constructor(catalog: UniqueKeyCatalog | null) {
+    super();
+    this.catalog = catalog;
+  }
+
   override rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
     const newNode = this.rewriteChildren(node);
 
     if (COLUMN_RESTRICTING_PARENTS.has(newNode.type) && hasLeftJoinChild(newNode)) {
-      return tryEliminateLeftJoin(newNode);
+      return tryEliminateLeftJoin(newNode, this.catalog);
     }
 
     return newNode;
@@ -39,7 +55,7 @@ function hasLeftJoinChild(node: LogicalPlanNode): boolean {
   return node.children.some((c) => c.type === PlanNodeType.JOIN && c.joinType === JoinType.LEFT);
 }
 
-function tryEliminateLeftJoin(parent: LogicalPlanNode): LogicalPlanNode {
+function tryEliminateLeftJoin(parent: LogicalPlanNode, catalog: UniqueKeyCatalog | null): LogicalPlanNode {
   const parentChildren = parent.children || [];
   const newChildren = parentChildren.map((child) => {
     if (child.type !== PlanNodeType.JOIN || child.joinType !== JoinType.LEFT) return child;
@@ -53,14 +69,37 @@ function tryEliminateLeftJoin(parent: LogicalPlanNode): LogicalPlanNode {
     const rightUsed = hasAnyColumnUsed(rightTables, usedAbove)
       || hasAnyNameUsed(rightOutputs, usedAbove);
 
-    if (!rightUsed) {
-      return child.children[0];
-    }
-    return child;
+    if (rightUsed) return child;
+    if (!preservesLeftCardinality(child, catalog)) return child;
+    return child.children[0];
   });
 
   const changed = newChildren.some((c, i) => c !== parentChildren[i]);
   return changed ? { ...parent, children: newChildren } : parent;
+}
+
+function preservesLeftCardinality(join: LogicalJoinNode, catalog: UniqueKeyCatalog | null): boolean {
+  const right = join.children[1];
+  const rightAliases = collectTableAliases(right);
+  const rightNames = collectOutputNames(right);
+  const rightKeys = new Set<string>();
+
+  for (const pred of splitAnd(join.condition)) {
+    if (pred.kind !== BoundExprKind.BINARY || pred.op !== '=') continue;
+    for (const side of [pred.left, pred.right]) {
+      if (side.kind !== BoundExprKind.COLUMN_REF) continue;
+      if (!belongsToRight(side, rightAliases, rightNames)) continue;
+      rightKeys.add(columnKey(side.tableAlias, side.columnName));
+    }
+  }
+
+  return isUniqueOnKeys(right, rightKeys, catalog);
+}
+
+function belongsToRight(ref: BoundColumnRefNode, aliases: Set<string>, names: Set<string>): boolean {
+  const alias = (ref.tableAlias || '').toUpperCase();
+  if (alias) return aliases.has(alias);
+  return names.has((ref.columnName || '').toUpperCase());
 }
 
 function collectNodeExprColumns(node: LogicalPlanNode, used: Set<string>): void {

@@ -7,7 +7,7 @@ import {
   AvgAccumulator,
   MinAccumulator,
   MaxAccumulator,
-  CountDistinctAccumulator,
+  DistinctAccumulator,
   AvgFinalAccumulator,
   getAccumulatorFactory,
   hashGroupKey,
@@ -141,25 +141,45 @@ describe('Accumulators', () => {
     });
   });
 
-  describe('CountDistinctAccumulator', () => {
+  describe('DistinctAccumulator', () => {
     it('counts distinct non-null values', () => {
-      const acc = new CountDistinctAccumulator();
+      const acc = new DistinctAccumulator(() => new CountAccumulator());
       acc.add(1); acc.add(2); acc.add(1); acc.add(3); acc.add(2);
       expect(acc.result()).toBe(3);
     });
 
     it('ignores nulls', () => {
-      const acc = new CountDistinctAccumulator();
+      const acc = new DistinctAccumulator(() => new CountAccumulator());
       acc.add(1); acc.add(null); acc.add(1);
       expect(acc.result()).toBe(1);
+    });
+
+    it('sums each distinct value once', () => {
+      const acc = getAccumulatorFactory('SUM', true)();
+      acc.add(3); acc.add(3); acc.add(4);
+      expect(acc.result()).toBe(7);
+    });
+
+    it('averages over distinct values only', () => {
+      const acc = getAccumulatorFactory('AVG', true)();
+      acc.add(1); acc.add(1); acc.add(1); acc.add(5);
+      expect(acc.result()).toBe(3);
     });
   });
 
   describe('getAccumulatorFactory', () => {
-    it('returns CountDistinctAccumulator for COUNT with distinct flag', () => {
-      const factory = getAccumulatorFactory('COUNT', true);
-      const acc = factory();
-      expect(acc).toBeInstanceOf(CountDistinctAccumulator);
+    it('returns a DistinctAccumulator for COUNT with distinct flag', () => {
+      expect(getAccumulatorFactory('COUNT', true)()).toBeInstanceOf(DistinctAccumulator);
+    });
+
+    it('returns a DistinctAccumulator for SUM and AVG with distinct flag', () => {
+      expect(getAccumulatorFactory('SUM', true)()).toBeInstanceOf(DistinctAccumulator);
+      expect(getAccumulatorFactory('AVG', true)()).toBeInstanceOf(DistinctAccumulator);
+    });
+
+    it('ignores the distinct flag for MIN and MAX', () => {
+      expect(getAccumulatorFactory('MIN', true)()).not.toBeInstanceOf(DistinctAccumulator);
+      expect(getAccumulatorFactory('MAX', true)()).not.toBeInstanceOf(DistinctAccumulator);
     });
 
     it('throws for unknown aggregate', () => {
@@ -464,14 +484,27 @@ describe('partial export/absorb (parallel combine contract)', () => {
   });
 
   it('COUNT DISTINCT merge unions values across partials', () => {
-    const a = new CountDistinctAccumulator();
+    const makeAcc = getAccumulatorFactory('COUNT', true);
+    const a = makeAcc();
     a.add(1); a.add(2);
-    const b = new CountDistinctAccumulator();
+    const b = makeAcc();
     b.add(2); b.add(3);
-    const merged = new CountDistinctAccumulator();
+    const merged = makeAcc();
     merged.mergeState(a.exportState());
     merged.mergeState(b.exportState());
     expect(merged.result()).toBe(3);
+  });
+
+  it('SUM DISTINCT merge unions values across partials', () => {
+    const makeAcc = getAccumulatorFactory('SUM', true);
+    const a = makeAcc();
+    a.add(1); a.add(2);
+    const b = makeAcc();
+    b.add(2); b.add(3);
+    const merged = makeAcc();
+    merged.mergeState(a.exportState());
+    merged.mergeState(b.exportState());
+    expect(merged.result()).toBe(6);
   });
 
   it('routes the same key to the same radix partition across instances', async () => {

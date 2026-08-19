@@ -7,6 +7,7 @@ type GlobalDispatch = typeof globalDispatch;
 interface AggregateDef {
   name: string;
   resultType: DataType;
+  distinct?: boolean;
 }
 
 export interface ResolvedKernel {
@@ -20,7 +21,7 @@ export type BitmapCountKernel = (bitmap: Uint32Array, count: number) => number |
 
 export function resolveWasmAggKernel(def: AggregateDef, globalDispatch: GlobalDispatch): ResolvedKernel | null {
   const name = def.name?.toUpperCase();
-  if (!name) return null;
+  if (!name || def.distinct) return null;
 
   if (name === 'SUM' && def.resultType === DataType.FLOAT64) {
     if (globalDispatch.has('sumF64', DataType.FLOAT64)) return { kernelKey: 'sumF64', operand: DataType.FLOAT64, kind: 'SUM' };

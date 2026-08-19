@@ -28,7 +28,12 @@ export function addOutputRefs(node: LogicalPlanNode, refs: PlanRefs, options: Co
     return;
   }
   if (node.type === PlanNodeType.PROJECT) {
-    for (const expr of node.expressions || []) refs.columns.add(outputName(expr as NamedExpr));
+    if (node.outputAlias) refs.aliases.add(node.outputAlias.toUpperCase());
+    for (const expr of node.expressions || []) {
+      refs.columns.add(outputName(expr as NamedExpr));
+      const alias = (expr as { tableAlias?: string }).tableAlias;
+      if (alias) refs.aliases.add(alias.toUpperCase());
+    }
     if (options.recurseProject) {
       for (const child of getChildren(node)) addOutputRefs(child, refs, options);
     }
@@ -39,7 +44,7 @@ export function addOutputRefs(node: LogicalPlanNode, refs: PlanRefs, options: Co
     for (const agg of node.aggregates || []) refs.columns.add(outputName(agg as NamedExpr));
     return;
   }
-  if (node.type === PlanNodeType.JOIN || node.type === PlanNodeType.UNION) {
+  if (node.type === PlanNodeType.JOIN || node.type === PlanNodeType.SET_OP) {
     for (const child of getChildren(node)) addOutputRefs(child, refs, options);
     return;
   }

@@ -521,6 +521,40 @@ describe('MergeJoinOperator', () => {
     });
   });
 
+  describe('SINGLE JOIN', () => {
+    it('keeps every probe row and takes at most one build match', async () => {
+      const rows = await merge(
+        [{ type: DataType.INT32, values: [1, 1, 3] }, { type: DataType.VARCHAR, values: ['b1', 'b2', 'b3'] }],
+        [{ type: DataType.INT32, values: [1, 2] }, { type: DataType.VARCHAR, values: ['p1', 'p2'] }],
+        JoinType.SINGLE,
+      );
+      expect(rows).toHaveLength(2);
+      expect(rows).toContainEqual([1, 'b1', 1, 'p1']);
+      expect(rows).toContainEqual([null, null, 2, 'p2']);
+    });
+
+    it('pads a null-keyed probe row', async () => {
+      const rows = await merge(
+        [{ type: DataType.INT32, values: [1] }, { type: DataType.VARCHAR, values: ['b1'] }],
+        [{ type: DataType.INT32, values: [null] }, { type: DataType.VARCHAR, values: ['pn'] }],
+        JoinType.SINGLE,
+      );
+      expect(rows).toEqual([[null, null, null, 'pn']]);
+    });
+  });
+
+  describe('MARK JOIN with an unknown residual', () => {
+    it('marks unknown rather than false when the residual never resolves', async () => {
+      const rows = await merge(
+        [{ type: DataType.INT32, values: [1] }],
+        [{ type: DataType.INT32, values: [1] }],
+        JoinType.MARK,
+        { condition: () => null },
+      );
+      expect(rows).toEqual([[1, null]]);
+    });
+  });
+
   describe('unsorted input handling', () => {
     it('sorts unsorted build side before merging', async () => {
       const rows = await merge(

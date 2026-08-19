@@ -75,7 +75,9 @@ export interface SelectStmtNode {
   offset: Expr | null;
 }
 
-export interface SetOpNode { kind: NodeKind.SET_OP; op: string; left: QueryStmt; right: QueryStmt; all: boolean; }
+export interface QueryTail { orderBy: OrderKeyNode[] | null; limit: Expr | null; offset: Expr | null; }
+
+export interface SetOpNode extends QueryTail { kind: NodeKind.SET_OP; op: string; left: QueryStmt; right: QueryStmt; all: boolean; }
 
 export interface WithClauseNode { kind: NodeKind.WITH_CLAUSE; ctes: CTENode[]; }
 
@@ -141,7 +143,15 @@ export interface OrderKeyNode { kind: NodeKind.ORDER_KEY; expr: Expr; direction:
 
 export interface TypeNameNode { kind: NodeKind.TYPE_NAME; name: string; params: number[]; }
 
-export interface WindowSpecNode { kind: NodeKind.WINDOW_SPEC; partitionBy: Expr[]; orderBy: OrderKeyNode[]; }
+export type FrameMode = 'ROWS' | 'RANGE';
+
+export type FrameBoundType = 'UNBOUNDED_PRECEDING' | 'PRECEDING' | 'CURRENT_ROW' | 'FOLLOWING' | 'UNBOUNDED_FOLLOWING';
+
+export interface FrameBoundNode { type: FrameBoundType; offset: number | null; }
+
+export interface WindowFrameNode { mode: FrameMode; start: FrameBoundNode; end: FrameBoundNode; }
+
+export interface WindowSpecNode { kind: NodeKind.WINDOW_SPEC; partitionBy: Expr[]; orderBy: OrderKeyNode[]; frame: WindowFrameNode | null; }
 
 export interface WindowCallNode { kind: NodeKind.WINDOW_CALL; name: string; args: Expr[]; windowSpec: WindowSpecNode; }
 
@@ -188,7 +198,7 @@ export function SelectStmt({
 }
 
 export function SetOp(op: string, left: QueryStmt, right: QueryStmt, all: boolean = false): SetOpNode {
-  return { kind: NodeKind.SET_OP, op, left, right, all };
+  return { kind: NodeKind.SET_OP, op, left, right, all, orderBy: null, limit: null, offset: null };
 }
 
 export function WithClause(ctes: CTENode[]): WithClauseNode {
@@ -303,8 +313,8 @@ export function TypeName(name: string, params: number[] = []): TypeNameNode {
   return { kind: NodeKind.TYPE_NAME, name, params };
 }
 
-export function WindowSpec(partitionBy: Expr[] = [], orderBy: OrderKeyNode[] = []): WindowSpecNode {
-  return { kind: NodeKind.WINDOW_SPEC, partitionBy, orderBy };
+export function WindowSpec(partitionBy: Expr[] = [], orderBy: OrderKeyNode[] = [], frame: WindowFrameNode | null = null): WindowSpecNode {
+  return { kind: NodeKind.WINDOW_SPEC, partitionBy, orderBy, frame };
 }
 
 export function WindowCall(name: string, args: Expr[], windowSpec: WindowSpecNode): WindowCallNode {

@@ -215,7 +215,7 @@ describe('planToString', () => {
     );
     const lines = planToString(union).split('\n').filter(l => l.length > 0);
     expect(lines).toEqual([
-      'Union',
+      'SetOp(UNION)',
       '  Project',
       '    Scan(A)',
       '  Project',

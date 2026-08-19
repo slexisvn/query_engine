@@ -5,6 +5,7 @@ import { isFixedWidth } from '../../storage/data-type.js';
 import { setBit, clearBit, testBit, setBitRange } from '../../utils/bitmap.js';
 import { ChunkCodec } from '../transport/chunk-codec.js';
 import type { Transport } from '../transport/transport.js';
+import { nullsFirstFor } from '../../execution/operators/sort.js';
 import type {
   NodeId,
   ChannelId,
@@ -162,9 +163,10 @@ export class MergeExchangeOperator {
       const valA = chunkA.columns[colIdx]?.get(rowA);
       const valB = chunkB.columns[colIdx]?.get(rowB);
 
+      const nullsFirst = nullsFirstFor(key.direction, key.nullOrder);
       if (valA === null && valB === null) continue;
-      if (valA === null) return key.direction === 'DESC' ? -1 : 1;
-      if (valB === null) return key.direction === 'DESC' ? 1 : -1;
+      if (valA === null) return nullsFirst ? -1 : 1;
+      if (valB === null) return nullsFirst ? 1 : -1;
 
       if ((valA as number) < (valB as number)) return key.direction === 'DESC' ? 1 : -1;
       if ((valA as number) > (valB as number)) return key.direction === 'DESC' ? -1 : 1;

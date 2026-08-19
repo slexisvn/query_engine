@@ -101,6 +101,7 @@ export function probeJoinRows(items: Iterable<ProbeItem>, lookup: (key: JoinKey)
 
     const bucket = lookup(key);
     let matched = false;
+    let sawUnknown = false;
 
     if (bucket) {
       for (const buildItem of bucket) {
@@ -108,7 +109,12 @@ export function probeJoinRows(items: Iterable<ProbeItem>, lookup: (key: JoinKey)
         if (adapter) {
           const combined = bRow.concat(pRow);
           adapter.setRow(combined);
-          if (!conditionEvaluator!(adapter, 0)) continue;
+          const holds = conditionEvaluator!(adapter, 0);
+          if (holds === null || holds === undefined) {
+            sawUnknown = true;
+            continue;
+          }
+          if (!holds) continue;
         }
 
         matched = true;
@@ -135,7 +141,7 @@ export function probeJoinRows(items: Iterable<ProbeItem>, lookup: (key: JoinKey)
       } else if (joinType === JoinType.ANTI) {
         resultRows.push(pRow);
       } else if (joinType === JoinType.MARK) {
-        resultRows.push(pRow.concat([hasNullKey ? null : false]));
+        resultRows.push(pRow.concat([hasNullKey || sawUnknown ? null : false]));
       }
     } else {
       if (joinType === JoinType.SEMI) {
@@ -189,14 +195,12 @@ export function buildJoinOutputChunk(rows: JoinRow[], { joinType, buildColCount,
     let finalDt: DataType | string = dt;
     if (isSemiAnti) {
       finalDt = probeSchema?.[c] || dt;
-    } else if (isMark && c === colCount - 1) {
-      finalDt = 'BOOLEAN';
+    } else if (isMark) {
+      finalDt = c === colCount - 1 ? 'BOOLEAN' : (probeSchema?.[c] || dt);
+    } else if (c < buildColCount) {
+      finalDt = buildSchema?.[c] || dt;
     } else {
-      if (c < buildColCount) {
-        finalDt = buildSchema?.[c] || dt;
-      } else {
-        finalDt = probeSchema?.[c - buildColCount] || dt;
-      }
+      finalDt = probeSchema?.[c - buildColCount] || dt;
     }
 
     const col = new Column(finalDt as DataType, rows.length, allocator);

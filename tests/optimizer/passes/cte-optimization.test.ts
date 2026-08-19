@@ -74,7 +74,7 @@ describe('CTEOptimization', () => {
       const plan = LogicalCTEAnchor('shared', 1, producer, consumer);
 
       const result = pass.apply(plan);
-      expect(result.type).toBe(PlanNodeType.UNION);
+      expect(result.type).toBe(PlanNodeType.SET_OP);
     });
   });
 
@@ -117,7 +117,7 @@ describe('CTEOptimization', () => {
 
       const result = pass.apply(plan);
 
-      expect(result.type).toBe(PlanNodeType.UNION);
+      expect(result.type).toBe(PlanNodeType.SET_OP);
     });
   });
 
@@ -159,7 +159,7 @@ describe('CTEOptimization', () => {
       const plan = LogicalCTEAnchor('tri', 1, producer, consumer);
 
       const result = pass.apply(plan);
-      expect(result.type).toBe(PlanNodeType.UNION);
+      expect(result.type).toBe(PlanNodeType.SET_OP);
     });
   });
 

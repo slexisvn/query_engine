@@ -70,7 +70,7 @@ describe('LimitPushdown', () => {
       const result = pass.apply(plan);
 
       expect(result.type).toBe(PlanNodeType.LIMIT);
-      expect(result.children[0].type).toBe(PlanNodeType.UNION);
+      expect(result.children[0].type).toBe(PlanNodeType.SET_OP);
 
       const union = result.children[0];
       expect(union.children[0].type).toBe(PlanNodeType.LIMIT);
@@ -100,7 +100,7 @@ describe('LimitPushdown', () => {
       const result = pass.apply(plan);
 
       expect(result.type).toBe(PlanNodeType.LIMIT);
-      expect(result.children[0].type).toBe(PlanNodeType.UNION);
+      expect(result.children[0].type).toBe(PlanNodeType.SET_OP);
       expect(result.children[0].children[0].type).toBe(PlanNodeType.SCAN);
     });
   });

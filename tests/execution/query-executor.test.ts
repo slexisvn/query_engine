@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { QueryExecutor } from '../../src/execution/query-executor.js';
-import { PlanNodeType, JoinType } from '../../src/planner/logical-plan.js';
+import { PlanNodeType, JoinType, SetOpType } from '../../src/planner/logical-plan.js';
 import { PhysicalPlanner } from '../../src/execution/physical-planner.js';
 import { PhysicalNodeType } from '../../src/execution/physical-plan.js';
 import { BoundExprKind } from '../../src/binder/expression-binder.js';
@@ -545,7 +545,8 @@ describe('QueryExecutor', () => {
       const executor = new QueryExecutor(catalog, mockTempManager());
 
       const plan = {
-        type: PlanNodeType.UNION,
+        type: PlanNodeType.SET_OP,
+        op: SetOpType.UNION,
         all: true,
         children: [scanNode('A', ['X'], 'A'), scanNode('B', ['X'], 'B')],
       };
@@ -568,7 +569,8 @@ describe('QueryExecutor', () => {
       const executor = new QueryExecutor(catalog, mockTempManager());
 
       const plan = {
-        type: PlanNodeType.UNION,
+        type: PlanNodeType.SET_OP,
+        op: SetOpType.UNION,
         all: false,
         children: [scanNode('A', ['X'], 'A'), scanNode('B', ['X'], 'B')],
       };

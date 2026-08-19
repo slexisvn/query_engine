@@ -11,6 +11,12 @@ import { materializeActiveRow } from './join-core.js';
 export interface SortKey {
   eval: CompiledExpr;
   direction: string;
+  nullsFirst: boolean;
+}
+
+export function nullsFirstFor(direction?: string | null, nullOrder?: string | null): boolean {
+  if (nullOrder) return nullOrder.toUpperCase() === 'FIRST';
+  return (direction || 'ASC').toUpperCase() === 'DESC';
 }
 
 interface SortRow {
@@ -221,12 +227,13 @@ export class SortOperator {
       if (typeof v1 === 'bigint') v1 = Number(v1);
       if (typeof v2 === 'bigint') v2 = Number(v2);
 
-      if (v1 === null && v2 !== null) return 1;
-      if (v1 !== null && v2 === null) return -1;
+      const key = this.keyExtractors[i];
       if (v1 === null && v2 === null) continue;
+      if (v1 === null) return key.nullsFirst ? -1 : 1;
+      if (v2 === null) return key.nullsFirst ? 1 : -1;
 
-      if ((v1 as number) < (v2 as number)) return this.keyExtractors[i].direction === 'ASC' ? -1 : 1;
-      if ((v1 as number) > (v2 as number)) return this.keyExtractors[i].direction === 'ASC' ? 1 : -1;
+      if ((v1 as number) < (v2 as number)) return key.direction === 'ASC' ? -1 : 1;
+      if ((v1 as number) > (v2 as number)) return key.direction === 'ASC' ? 1 : -1;
     }
     return 0;
   }
@@ -291,8 +298,13 @@ export class LimitOperator {
   }
 
   async finalize(): Promise<DataChunk[]> {
-    if (this.chunks.length === 0) return [];
+    return this.takeChunks();
+  }
 
-    return this.chunks.map((c) => c.selectionVector ? c.flatten() : c);
+  takeChunks(): DataChunk[] {
+    if (this.chunks.length === 0) return [];
+    const taken = this.chunks;
+    this.chunks = [];
+    return taken.map((c) => c.selectionVector ? c.flatten() : c);
   }
 }

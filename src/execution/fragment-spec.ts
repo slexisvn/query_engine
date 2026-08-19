@@ -130,6 +130,7 @@ interface InstantiatedJoinSpec {
 
 interface AggregateLike {
   name?: string;
+  resultType?: DataType | null;
 }
 
 interface ExprMeta {
@@ -146,9 +147,12 @@ export function normalizeExecType(dt: DataType | string): DataType {
   return dt as DataType;
 }
 
+const VALUE_PRESERVING_AGGREGATES: ReadonlySet<string> = new Set(['MIN', 'MAX']);
+
 export function normalizeAggResultType(agg: BoundAggregateNode | AggregateLike): DataType {
   const name = (agg.name || '').toUpperCase();
   if (name === 'COUNT' || name === 'COUNT_STAR') return DataType.INT32;
+  if (VALUE_PRESERVING_AGGREGATES.has(name)) return normalizeExecType(agg.resultType || DataType.FLOAT64);
   return DataType.FLOAT64;
 }
 
@@ -253,6 +257,7 @@ export function buildAggregateDefs(aggregates: AggregateSpec[], columnMapping: C
       name: agg.name,
       valueKey: valueKey && (valueKeyCounts.get(valueKey) ?? 0) > 1 ? valueKey : null,
       resultType: normalizeAggResultType(agg),
+      distinct: !!agg.distinct,
       createAccumulator: getAccumulatorFactory(agg.name, agg.distinct),
       extractValue: (chunk: DataChunk, rowIdx: number): EvalValue => {
         const val = valueExtractor(chunk, rowIdx);

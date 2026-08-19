@@ -94,7 +94,7 @@ export class Parser {
       left = AST.SetOp(op, left, right, all);
     }
 
-    return left;
+    return this.attachQueryTail(left, this.parseQueryTail());
   }
 
   parseSelectStmt(): AST.QueryStmt {
@@ -150,6 +150,10 @@ export class Parser {
       having = this.parseExpression();
     }
 
+    return AST.SelectStmt({ withClause, distinct: !!distinct, selectItems, from, where, groupBy, having, orderBy: null, limit: null, offset: null });
+  }
+
+  parseQueryTail(): AST.QueryTail {
     let orderBy: AST.OrderKeyNode[] | null = null;
     if (this.isAt(TokenType.ORDER)) {
       this.advance();
@@ -176,7 +180,15 @@ export class Parser {
       this.expect(TokenType.ONLY);
     }
 
-    return AST.SelectStmt({ withClause, distinct: !!distinct, selectItems, from, where, groupBy, having, orderBy, limit, offset });
+    return { orderBy, limit, offset };
+  }
+
+  attachQueryTail(query: AST.QueryStmt, tail: AST.QueryTail): AST.QueryStmt {
+    if (!tail.orderBy && !tail.limit && !tail.offset) return query;
+    if (query.orderBy || query.limit || query.offset) {
+      this.error('A query may not carry two ORDER BY / LIMIT clauses');
+    }
+    return { ...query, orderBy: tail.orderBy, limit: tail.limit, offset: tail.offset };
   }
 
   parseWithClause(): AST.WithClauseNode {
@@ -396,9 +408,11 @@ export class Parser {
 
     if (this.isAt(TokenType.IS)) {
       this.advance();
-      const negated = this.tryConsume(TokenType.NOT);
+      const negated = !!this.tryConsume(TokenType.NOT);
+      if (this.tryConsume(TokenType.TRUE)) return truthTest(left, 'IS_TRUE', negated);
+      if (this.tryConsume(TokenType.FALSE)) return truthTest(left, 'IS_FALSE', negated);
       this.expect(TokenType.NULL);
-      return AST.IsNullExpr(left, !!negated);
+      return AST.IsNullExpr(left, negated);
     }
 
     const opMap: Record<string, string> = {
@@ -689,10 +703,45 @@ export class Parser {
       orderBy = this.parseOrderByList();
     }
 
+    const frame = this.parseWindowFrame();
+
     this.expect(TokenType.RPAREN);
 
-    const windowSpec = AST.WindowSpec(partitionBy, orderBy);
+    const windowSpec = AST.WindowSpec(partitionBy, orderBy, frame);
     return AST.WindowCall(name, args, windowSpec);
+  }
+
+  parseWindowFrame(): AST.WindowFrameNode | null {
+    let mode: AST.FrameMode;
+    if (this.tryConsume(TokenType.ROWS)) mode = 'ROWS';
+    else if (this.tryConsume(TokenType.RANGE)) mode = 'RANGE';
+    else return null;
+
+    if (this.tryConsume(TokenType.BETWEEN)) {
+      const start = this.parseFrameBound();
+      this.expect(TokenType.AND);
+      const end = this.parseFrameBound();
+      return { mode, start, end };
+    }
+
+    return { mode, start: this.parseFrameBound(), end: { type: 'CURRENT_ROW', offset: null } };
+  }
+
+  parseFrameBound(): AST.FrameBoundNode {
+    if (this.tryConsume(TokenType.UNBOUNDED)) {
+      if (this.tryConsume(TokenType.PRECEDING)) return { type: 'UNBOUNDED_PRECEDING', offset: null };
+      this.expect(TokenType.FOLLOWING);
+      return { type: 'UNBOUNDED_FOLLOWING', offset: null };
+    }
+    if (this.tryConsume(TokenType.CURRENT)) {
+      this.expect(TokenType.ROW);
+      return { type: 'CURRENT_ROW', offset: null };
+    }
+    const offset = Number(this.expect(TokenType.NUMBER).value);
+    if (!Number.isInteger(offset) || offset < 0) this.error('Window frame offset must be a non-negative integer');
+    if (this.tryConsume(TokenType.PRECEDING)) return { type: 'PRECEDING', offset };
+    this.expect(TokenType.FOLLOWING);
+    return { type: 'FOLLOWING', offset };
   }
 
   parseCaseExpr(): AST.CaseExprNode {
@@ -959,6 +1008,11 @@ export class Parser {
     const token = this.peek();
     throw new Error(`Parse error at position ${token.position}: ${message}`);
   }
+}
+
+function truthTest(expr: AST.Expr, name: string, negated: boolean): AST.Expr {
+  const test = AST.FunctionCall(name, [expr]);
+  return negated ? AST.UnaryExpr('NOT', test) : test;
 }
 
 export function parse(sql: string): AST.Statement {

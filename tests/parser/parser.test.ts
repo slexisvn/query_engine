@@ -948,4 +948,98 @@ describe('Parser', () => {
       expect(expr.name).toBe('SUM');
     });
   });
+
+  describe('window frames', () => {
+    it('parses a ROWS frame with both bounds', () => {
+      const ast = parse('SELECT SUM(x) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t');
+      const frame = ast.selectItems[0].expr.windowSpec.frame;
+      expect(frame).toEqual({
+        mode: 'ROWS',
+        start: { type: 'UNBOUNDED_PRECEDING', offset: null },
+        end: { type: 'CURRENT_ROW', offset: null },
+      });
+    });
+
+    it('parses numeric frame offsets', () => {
+      const ast = parse('SELECT SUM(x) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING AND 1 FOLLOWING) FROM t');
+      const frame = ast.selectItems[0].expr.windowSpec.frame;
+      expect(frame.start).toEqual({ type: 'PRECEDING', offset: 2 });
+      expect(frame.end).toEqual({ type: 'FOLLOWING', offset: 1 });
+    });
+
+    it('defaults the end bound to CURRENT ROW without BETWEEN', () => {
+      const ast = parse('SELECT SUM(x) OVER (ORDER BY id ROWS UNBOUNDED PRECEDING) FROM t');
+      const frame = ast.selectItems[0].expr.windowSpec.frame;
+      expect(frame.end).toEqual({ type: 'CURRENT_ROW', offset: null });
+    });
+
+    it('parses a RANGE frame', () => {
+      const ast = parse('SELECT SUM(x) OVER (ORDER BY id RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t');
+      expect(ast.selectItems[0].expr.windowSpec.frame.mode).toBe('RANGE');
+    });
+
+    it('leaves the frame null when none is written', () => {
+      const ast = parse('SELECT SUM(x) OVER (ORDER BY id) FROM t');
+      expect(ast.selectItems[0].expr.windowSpec.frame).toBeNull();
+    });
+
+    it('rejects a negative frame offset', () => {
+      expect(() => parse('SELECT SUM(x) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 PRECEDING) FROM t')).not.toThrow();
+      expect(() => parse('SELECT SUM(x) OVER (ORDER BY id ROWS 1.5 PRECEDING) FROM t')).toThrow(/non-negative integer/);
+    });
+  });
+
+  describe('IS TRUE and IS FALSE', () => {
+    it('parses IS TRUE as a truth test', () => {
+      const ast = parse('SELECT * FROM t WHERE (a > 1) IS TRUE');
+      expect(ast.where.kind).toBe(NodeKind.FUNCTION_CALL);
+      expect(ast.where.name).toBe('IS_TRUE');
+    });
+
+    it('parses IS FALSE as a truth test', () => {
+      const ast = parse('SELECT * FROM t WHERE (a > 1) IS FALSE');
+      expect(ast.where.name).toBe('IS_FALSE');
+    });
+
+    it('negates with IS NOT TRUE', () => {
+      const ast = parse('SELECT * FROM t WHERE (a > 1) IS NOT TRUE');
+      expect(ast.where.kind).toBe(NodeKind.UNARY_EXPR);
+      expect(ast.where.op).toBe('NOT');
+      expect(ast.where.operand.name).toBe('IS_TRUE');
+    });
+
+    it('still parses IS NULL and IS NOT NULL', () => {
+      expect(parse('SELECT * FROM t WHERE a IS NULL').where.kind).toBe(NodeKind.IS_NULL_EXPR);
+      expect(parse('SELECT * FROM t WHERE a IS NOT NULL').where.negated).toBe(true);
+    });
+  });
+
+  describe('trailing clauses on set operations', () => {
+    it('attaches ORDER BY to the whole set operation', () => {
+      const ast = parse('SELECT a FROM t UNION SELECT a FROM u ORDER BY a');
+      expect(ast.kind).toBe(NodeKind.SET_OP);
+      expect(ast.orderBy).toHaveLength(1);
+      expect(ast.left.orderBy).toBeNull();
+      expect(ast.right.orderBy).toBeNull();
+    });
+
+    it('attaches LIMIT to the whole set operation', () => {
+      const ast = parse('SELECT a FROM t UNION ALL SELECT a FROM u LIMIT 5');
+      expect(ast.kind).toBe(NodeKind.SET_OP);
+      expect(ast.limit.value).toBe(5);
+      expect(ast.right.limit).toBeNull();
+    });
+
+    it('still attaches ORDER BY to a lone SELECT', () => {
+      const ast = parse('SELECT a FROM t ORDER BY a DESC LIMIT 3');
+      expect(ast.kind).toBe(NodeKind.SELECT_STMT);
+      expect(ast.orderBy[0].direction).toBe('DESC');
+      expect(ast.limit.value).toBe(3);
+    });
+
+    it('rejects two trailing clause groups on one query', () => {
+      expect(() => parse('SELECT a FROM (SELECT a FROM t ORDER BY a) s ORDER BY a')).not.toThrow();
+      expect(() => parse('(SELECT a FROM t ORDER BY a) ORDER BY a')).toThrow(/two ORDER BY/);
+    });
+  });
 });

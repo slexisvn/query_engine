@@ -216,6 +216,7 @@ export interface DistributedOrderKey {
   expr?: BoundExpr;
   columnIndex?: number;
   direction?: string;
+  nullOrder?: string | null;
 }
 
 export interface FragmentDispatchJSON {

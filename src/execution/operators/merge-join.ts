@@ -34,11 +34,12 @@ function isNullJoinKey(key: JoinKey): boolean {
 }
 
 export function mergeJoinSortKeys(keyExtractors: CompiledExpr[]): SortKey[] {
-  const nullsFirst: SortKey = {
+  const nullMarker: SortKey = {
     eval: (chunk, rowIdx) => (isNullJoinKey(keyExtractors.map((extract) => extract(chunk, rowIdx))) ? 0 : 1),
     direction: 'ASC',
+    nullsFirst: true,
   };
-  return [nullsFirst, ...keyExtractors.map((extract) => ({ eval: extract, direction: 'ASC' }))];
+  return [nullMarker, ...keyExtractors.map((extract) => ({ eval: extract, direction: 'ASC', nullsFirst: true }))];
 }
 
 function compareScalars(a: EvalValue, b: EvalValue): number {
@@ -178,6 +179,10 @@ export class MergeJoinOperator {
     return this.joinType === JoinType.MARK;
   }
 
+  get emitsSingleMatch(): boolean {
+    return this.joinType === JoinType.SINGLE;
+  }
+
   get keepsUnmatchedBuild(): boolean {
     return this.joinType === JoinType.LEFT
       || this.joinType === JoinType.RIGHT
@@ -246,10 +251,26 @@ export class MergeJoinOperator {
   emitGroup(buildGroup: JoinRow[], probeGroup: JoinRow[]): void {
     if (this.emitsProbeOnly || this.emitsMark) {
       for (const probeRow of probeGroup) {
-        const matched = buildGroup.some((buildRow) => this.conditionHolds(buildRow, probeRow));
+        let matched = false;
+        let sawUnknown = false;
+        for (const buildRow of buildGroup) {
+          const holds = this.conditionValue(buildRow, probeRow);
+          if (holds === null) sawUnknown = true;
+          else if (holds) { matched = true; break; }
+        }
         if (this.joinType === JoinType.SEMI && matched) this.output.push(probeRow.row);
         else if (this.joinType === JoinType.ANTI && !matched) this.output.push(probeRow.row);
-        else if (this.emitsMark) this.output.push([...probeRow.row, matched ? true : this.unmatchedMark]);
+        else if (this.emitsMark) {
+          this.output.push([...probeRow.row, matched ? true : (sawUnknown ? null : this.unmatchedMark)]);
+        }
+      }
+      return;
+    }
+
+    if (this.emitsSingleMatch) {
+      for (const probeRow of probeGroup) {
+        const match = buildGroup.find((buildRow) => this.conditionHolds(buildRow, probeRow));
+        this.output.push(match ? [...match.row, ...probeRow.row] : this.probeWithNullBuild(probeRow));
       }
       return;
     }
@@ -266,9 +287,15 @@ export class MergeJoinOperator {
   }
 
   conditionHolds(buildRow: JoinRow, probeRow: JoinRow): boolean {
+    return this.conditionValue(buildRow, probeRow) === true;
+  }
+
+  conditionValue(buildRow: JoinRow, probeRow: JoinRow): boolean | null {
     if (!this.adapter || !this.evaluateCondition) return true;
     this.adapter.setRow([...buildRow.row, ...probeRow.row]);
-    return !!this.evaluateCondition(this.adapter, 0);
+    const result = this.evaluateCondition(this.adapter, 0);
+    if (result === null || result === undefined) return null;
+    return !!result;
   }
 
   emitUnmatchedBuild(buildRow: JoinRow): void {
@@ -285,9 +312,13 @@ export class MergeJoinOperator {
       this.output.push([...probeRow.row, mark]);
       return;
     }
-    if (this.joinType === JoinType.FULL) {
-      this.output.push([...new Array<ColumnValue>(this.buildColCount).fill(null), ...probeRow.row]);
+    if (this.joinType === JoinType.FULL || this.emitsSingleMatch) {
+      this.output.push(this.probeWithNullBuild(probeRow));
     }
+  }
+
+  probeWithNullBuild(probeRow: JoinRow): ColumnValue[] {
+    return [...new Array<ColumnValue>(this.buildColCount).fill(null), ...probeRow.row];
   }
 
   *drain(): Generator<DataChunk> {

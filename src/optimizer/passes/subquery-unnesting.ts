@@ -34,36 +34,37 @@ export class SubqueryUnnesting extends OptimizationPass {
   }
 }
 
+type Unnester = (
+  rewriter: UnnestingRewriter,
+  left: LogicalPlanNode,
+  subquery: LogicalPlanNode,
+  correlated: BoundColumnRefNode[],
+  node: LogicalDependentJoinNode,
+) => LogicalPlanNode;
+
+const UNNESTERS: Record<string, Unnester> = {
+  EXISTS: (r, left, subquery, correlated) => r.unnestExists(left, subquery, correlated),
+  NOT_EXISTS: (r, left, subquery, correlated) => r.unnestNotExists(left, subquery, correlated),
+  IN: (r, left, subquery, correlated, node) => r.unnestIn(left, subquery, correlated, node.condition, node.compareOp),
+  MARK: (r, left, subquery, correlated, node) => r.unnestMark(left, subquery, correlated, node.condition, node.compareOp, node.markColumn!),
+  SCALAR: (r, left, subquery, correlated) => r.unnestScalar(left, subquery, correlated),
+};
+
 class UnnestingRewriter extends PlanRewriter {
   didChange: boolean;
-  markId: number;
 
   constructor() {
     super();
     this.didChange = false;
-    this.markId = 0;
   }
 
   override rewriteDependentJoin(node: LogicalDependentJoinNode): LogicalPlanNode {
-    this.didChange = true;
     const left = this.rewrite(node.children[0]);
     const subquery = this.rewrite(node.children[1]);
-    const correlated = node.correlatedColumns || [];
-
-    switch (node.subqueryType) {
-      case 'EXISTS':
-        return this.unnestExists(left, subquery, correlated);
-      case 'NOT_EXISTS':
-        return this.unnestNotExists(left, subquery, correlated);
-      case 'IN':
-        return this.unnestIn(left, subquery, correlated, node.condition);
-      case 'NOT_IN':
-        return this.unnestNotIn(left, subquery, correlated, node.condition);
-      case 'SCALAR':
-        return this.unnestScalar(left, subquery, correlated);
-      default:
-        return setChildren(node, [left, subquery]);
-    }
+    const unnest = UNNESTERS[node.subqueryType];
+    if (!unnest) return setChildren(node, [left, subquery]);
+    this.didChange = true;
+    return unnest(this, left, subquery, node.correlatedColumns || [], node);
   }
 
   unnestExists(left: LogicalPlanNode, subquery: LogicalPlanNode, correlated: BoundColumnRefNode[]): LogicalPlanNode {
@@ -76,66 +77,45 @@ class UnnestingRewriter extends PlanRewriter {
     return LogicalJoin(JoinType.ANTI, joinCondition, left, this.removeProjection(cleanedPlan));
   }
 
-  unnestIn(left: LogicalPlanNode, subquery: LogicalPlanNode, correlated: BoundColumnRefNode[], inExpr: BoundExpr | null): LogicalPlanNode {
+  unnestIn(left: LogicalPlanNode, subquery: LogicalPlanNode, correlated: BoundColumnRefNode[], outerExpr: BoundExpr | null, compareOp: string): LogicalPlanNode {
     const { cleanedPlan, joinCondition } = this.extractCorrelation(subquery, correlated);
-    const conditions: BoundExpr[] = [];
-    if (joinCondition) conditions.push(joinCondition);
-    if (inExpr) {
-      const outputRef = this.getSubqueryOutputRef(subquery);
-      if (outputRef) {
-        conditions.push({
-          kind: BoundExprKind.BINARY,
-          op: '=',
-          left: inExpr,
-          right: outputRef,
-          resultType: DataType.BOOLEAN,
-        });
-      }
-    }
-    return LogicalJoin(JoinType.SEMI, combineConjuncts(conditions), left, this.exposeCorrelationColumns(cleanedPlan));
+    return LogicalJoin(
+      JoinType.SEMI,
+      this.membershipCondition(joinCondition, outerExpr, compareOp, subquery),
+      left,
+      this.removeProjection(cleanedPlan),
+    );
   }
 
-  unnestNotIn(left: LogicalPlanNode, subquery: LogicalPlanNode, correlated: BoundColumnRefNode[], inExpr: BoundExpr | null): LogicalPlanNode {
+  unnestMark(left: LogicalPlanNode, subquery: LogicalPlanNode, correlated: BoundColumnRefNode[], outerExpr: BoundExpr | null, compareOp: string, markColumn: string): LogicalPlanNode {
     const { cleanedPlan, joinCondition } = this.extractCorrelation(subquery, correlated);
+    return {
+      ...LogicalJoin(
+        JoinType.MARK,
+        this.membershipCondition(joinCondition, outerExpr, compareOp, subquery),
+        left,
+        this.removeProjection(cleanedPlan),
+      ),
+      markColumn,
+    };
+  }
+
+  membershipCondition(joinCondition: BoundExpr | null, outerExpr: BoundExpr | null, compareOp: string, subquery: LogicalPlanNode): BoundExpr | null {
     const conditions: BoundExpr[] = [];
     if (joinCondition) conditions.push(joinCondition);
-    if (inExpr) {
+    if (outerExpr) {
       const outputRef = this.getSubqueryOutputRef(subquery);
       if (outputRef) {
         conditions.push({
           kind: BoundExprKind.BINARY,
-          op: '=',
-          left: inExpr,
+          op: compareOp,
+          left: outerExpr,
           right: outputRef,
           resultType: DataType.BOOLEAN,
         });
       }
     }
-    const markName = `__mark_${this.markId++}`;
-    const markRef: BoundColumnRefNode = {
-      kind: BoundExprKind.COLUMN_REF,
-      tableAlias: '',
-      columnName: markName,
-      columnIndex: -1,
-      dataType: DataType.BOOLEAN,
-      depth: 0,
-      isCorrelated: false,
-    };
-    const markJoin = {
-      ...LogicalJoin(JoinType.MARK, combineConjuncts(conditions), left, this.exposeCorrelationColumns(cleanedPlan)),
-      markColumn: markName,
-    };
-    return LogicalFilter({
-      kind: BoundExprKind.BINARY,
-      op: '=',
-      left: markRef,
-      right: {
-        kind: BoundExprKind.LITERAL,
-        value: false,
-        dataType: DataType.BOOLEAN,
-      },
-      resultType: DataType.BOOLEAN,
-    } as BoundExpr, markJoin);
+    return combineConjuncts(conditions);
   }
 
   unnestScalar(left: LogicalPlanNode, subquery: LogicalPlanNode, correlated: BoundColumnRefNode[]): LogicalPlanNode {
@@ -151,7 +131,41 @@ class UnnestingRewriter extends PlanRewriter {
       return LogicalJoin(JoinType.LEFT, joinCondition, left, scalarPlan);
     }
 
-    return LogicalJoin(JoinType.SINGLE, joinCondition, left, this.projectScalarOutput(cleanedPlan, [], outputRef));
+    const innerRefs = this.getInnerCorrelationRefs(correlatedPredicates, correlated);
+    const innerPlan = innerRefs.length > 0 ? this.removeProjection(cleanedPlan) : cleanedPlan;
+    return LogicalJoin(JoinType.SINGLE, joinCondition, left, this.projectScalarOutput(innerPlan, innerRefs, outputRef));
+  }
+
+  getInnerCorrelationRefs(correlatedPredicates: BoundExpr[], correlated: BoundColumnRefNode[]): BoundExpr[] {
+    const refs: BoundExpr[] = [];
+    const seen = new Set<string>();
+    const isOuterRef = (node: BoundColumnRefNode): boolean =>
+      node.isCorrelated
+      || correlated.some(c => c.tableAlias === node.tableAlias && c.columnName === node.columnName);
+
+    const visit = (expr: ExprRecordValue): void => {
+      if (!expr || typeof expr !== 'object') return;
+      const node = expr as BoundExpr;
+      if (node.kind === BoundExprKind.COLUMN_REF) {
+        if (isOuterRef(node)) return;
+        const key = `${node.tableAlias}.${node.columnName}`.toUpperCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          refs.push(node);
+        }
+        return;
+      }
+      for (const value of Object.values(expr as Record<string, ExprRecordValue>)) {
+        if (Array.isArray(value)) {
+          for (const item of value) visit(item);
+        } else if (value && typeof value === 'object') {
+          visit(value);
+        }
+      }
+    };
+
+    for (const pred of correlatedPredicates) visit(pred);
+    return refs;
   }
 
   extractCorrelation(subquery: LogicalPlanNode, correlated: BoundColumnRefNode[]): CorrelationResult {
@@ -371,14 +385,6 @@ class UnnestingRewriter extends PlanRewriter {
 
   removeProjection(node: LogicalPlanNode): LogicalPlanNode {
     if (node.type === PlanNodeType.PROJECT) {
-      return node.children[0];
-    }
-    return node;
-  }
-
-  exposeCorrelationColumns(node: LogicalPlanNode): LogicalPlanNode {
-    if (node.type === PlanNodeType.PROJECT
-      && (node.expressions || []).every((e) => e.kind === BoundExprKind.COLUMN_REF)) {
       return node.children[0];
     }
     return node;

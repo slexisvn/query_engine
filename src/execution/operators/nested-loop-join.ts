@@ -7,6 +7,8 @@ import { materializeActiveRow } from './join-core.js';
 
 type JoinRow = ColumnValue[];
 
+const OUTER_PADDING_JOINS: ReadonlySet<JoinType> = new Set([JoinType.LEFT, JoinType.FULL, JoinType.SINGLE]);
+
 interface RowAdapter {
   chunk: DataChunk;
   setRow(r: JoinRow): void;
@@ -38,9 +40,12 @@ export class NestedLoopJoinOperator {
       ? new Uint8Array(innerRows.length)
       : null;
 
+    const stopsAtFirstMatch = this.joinType === JoinType.SINGLE;
+
     for (let o = 0; o < outerRows.length; o++) {
       const oRow = outerRows[o];
       let matched = false;
+      let sawUnknown = false;
 
       for (let i = 0; i < innerRows.length; i++) {
         const iRow = innerRows[i];
@@ -48,7 +53,12 @@ export class NestedLoopJoinOperator {
 
         if (adapter) {
           adapter.setRow(combined);
-          if (!this.conditionEvaluator!(adapter.chunk, 0)) continue;
+          const holds = this.conditionEvaluator!(adapter.chunk, 0);
+          if (holds === null || holds === undefined) {
+            sawUnknown = true;
+            continue;
+          }
+          if (!holds) continue;
         }
 
         matched = true;
@@ -64,15 +74,16 @@ export class NestedLoopJoinOperator {
         if (this.joinType === JoinType.MARK) break;
 
         outputRows.push(combined);
+        if (stopsAtFirstMatch) break;
       }
 
       if (!matched) {
-        if (this.joinType === JoinType.LEFT || this.joinType === JoinType.FULL) {
+        if (OUTER_PADDING_JOINS.has(this.joinType)) {
           outputRows.push(this._outerWithNulls(oRow));
         } else if (this.joinType === JoinType.ANTI) {
           outputRows.push(this._extractOuter(oRow));
         } else if (this.joinType === JoinType.MARK) {
-          outputRows.push(this._outerWithMark(oRow, false));
+          outputRows.push(this._outerWithMark(oRow, sawUnknown ? null : false));
         }
       } else if (this.joinType === JoinType.MARK) {
         outputRows.push(this._outerWithMark(oRow, true));
@@ -126,7 +137,7 @@ export class NestedLoopJoinOperator {
     return row;
   }
 
-  _outerWithMark(outerRow: JoinRow, markValue: boolean): JoinRow {
+  _outerWithMark(outerRow: JoinRow, markValue: boolean | null): JoinRow {
     const row = new Array(this.outerColCount + 1);
     for (let c = 0; c < this.outerColCount; c++) row[c] = outerRow[c];
     row[this.outerColCount] = markValue;

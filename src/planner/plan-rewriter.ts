@@ -3,7 +3,7 @@ import { getChildren, setChildren, PlanNodeType, type LogicalPlanNode } from './
 
 type RewriteMethod =
   | 'rewriteScan' | 'rewriteFilter' | 'rewriteProject' | 'rewriteJoin' | 'rewriteAggregate'
-  | 'rewriteSort' | 'rewriteLimit' | 'rewriteDistinct' | 'rewriteUnion' | 'rewriteCTEScan'
+  | 'rewriteSort' | 'rewriteLimit' | 'rewriteDistinct' | 'rewriteSetOp' | 'rewriteCTEScan'
   | 'rewriteCTEAnchor' | 'rewriteDependentJoin' | 'rewriteMaterialize' | 'rewriteEmpty'
   | 'rewriteTopN' | 'rewriteIndexScan' | 'rewriteWindow' | 'rewriteExchange'
   | 'rewritePartialAggregate' | 'rewriteFinalAggregate' | 'rewriteMergeExchange'
@@ -18,7 +18,7 @@ const REWRITE_METHOD = {
   [PlanNodeType.SORT]: 'rewriteSort',
   [PlanNodeType.LIMIT]: 'rewriteLimit',
   [PlanNodeType.DISTINCT]: 'rewriteDistinct',
-  [PlanNodeType.UNION]: 'rewriteUnion',
+  [PlanNodeType.SET_OP]: 'rewriteSetOp',
   [PlanNodeType.CTE_SCAN]: 'rewriteCTEScan',
   [PlanNodeType.CTE_ANCHOR]: 'rewriteCTEAnchor',
   [PlanNodeType.DEPENDENT_JOIN]: 'rewriteDependentJoin',
@@ -46,7 +46,7 @@ export class PlanRewriter<C = undefined> {
   rewriteSort?(node: LP.LogicalSortNode, context?: C): LogicalPlanNode;
   rewriteLimit?(node: LP.LogicalLimitNode, context?: C): LogicalPlanNode;
   rewriteDistinct?(node: LP.LogicalDistinctNode, context?: C): LogicalPlanNode;
-  rewriteUnion?(node: LP.LogicalUnionNode, context?: C): LogicalPlanNode;
+  rewriteSetOp?(node: LP.LogicalSetOpNode, context?: C): LogicalPlanNode;
   rewriteCTEScan?(node: LP.LogicalCTEScanNode, context?: C): LogicalPlanNode;
   rewriteCTEAnchor?(node: LP.LogicalCTEAnchorNode, context?: C): LogicalPlanNode;
   rewriteDependentJoin?(node: LP.LogicalDependentJoinNode, context?: C): LogicalPlanNode;

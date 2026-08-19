@@ -1,4 +1,10 @@
-import { PlanNodeType, JoinType, type LogicalPlanNode } from './logical-plan.js';
+import { PlanNodeType, JoinType, SetOpType, type LogicalPlanNode } from './logical-plan.js';
+
+const SET_OP_LABELS: Readonly<Record<SetOpType, string>> = {
+  [SetOpType.UNION]: 'Union',
+  [SetOpType.INTERSECT]: 'Intersect',
+  [SetOpType.EXCEPT]: 'Except',
+};
 import { BoundExprKind, type BoundExpr, type BoundAggregateNode, type BoundWindowNode } from '../binder/expression-binder.js';
 
 export function formatExpression(expr?: BoundExpr | null): string {
@@ -71,8 +77,8 @@ function formatNode(node: LogicalPlanNode): string {
     }
     case PlanNodeType.DISTINCT:
       return `Distinct`;
-    case PlanNodeType.UNION:
-      return `Union${node.all ? ' All' : ''}`;
+    case PlanNodeType.SET_OP:
+      return `${SET_OP_LABELS[node.op]}${node.all ? ' All' : ''}`;
     case PlanNodeType.CTE_ANCHOR:
       return `CTE Anchor (${node.cteName})`;
     case PlanNodeType.CTE_SCAN:

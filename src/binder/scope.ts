@@ -3,7 +3,7 @@ export interface ColumnInfo { name: string; dataType: DataType | null; }
 
 export interface TableInfo { originalName: string; columns: ColumnInfo[]; isCTE?: boolean; }
 
-export interface ResolvedTable { table: TableInfo; depth: number; }
+export interface ResolvedTable { table: TableInfo; alias: string; depth: number; }
 
 export interface ResolvedColumn {
   tableAlias: string;
@@ -20,27 +20,61 @@ export interface ColumnEntry {
   columnIndex: number;
 }
 
+interface ScopeRelation {
+  alias: string;
+  table: TableInfo;
+  columnIndex: Map<string, number>;
+}
+
+const SHADOW_ALIAS_SEPARATOR = ':';
+
 export class BinderScope {
   parent: BinderScope | null;
   tables: Map<string, TableInfo>;
   columns: Map<string, ColumnInfo[]>;
-  columnIndexes: Map<string, Map<string, number>>;
+  relations: Map<string, ScopeRelation>;
+  aliasIndex: Map<string, string>;
+  shadowCount: number;
 
   constructor(parent: BinderScope | null = null) {
     this.parent = parent;
     this.tables = new Map();
     this.columns = new Map();
-    this.columnIndexes = new Map();
+    this.relations = new Map();
+    this.aliasIndex = new Map();
+    this.shadowCount = 0;
   }
 
-  addTable(alias: string, tableInfo: TableInfo): void {
+  root(): BinderScope {
+    return this.parent ? this.parent.root() : this;
+  }
+
+  addTable(alias: string, tableInfo: TableInfo): string {
     const key = alias.toUpperCase();
+    const relationAlias = this.resolveTable(key) ? this.shadowAliasFor(key) : key;
     this.tables.set(key, tableInfo);
-    this.columnIndexes.set(key, indexColumns(tableInfo.columns));
+    this.relations.set(key, {
+      alias: relationAlias,
+      table: tableInfo,
+      columnIndex: indexColumns(tableInfo.columns),
+    });
+    this.aliasIndex.set(key, key);
+    this.aliasIndex.set(relationAlias, key);
+    return relationAlias;
+  }
+
+  shadowAliasFor(key: string): string {
+    const root = this.root();
+    return `${key}${SHADOW_ALIAS_SEPARATOR}${++root.shadowCount}`;
+  }
+
+  localRelation(alias: string): ScopeRelation | null {
+    const key = this.aliasIndex.get(alias);
+    return key === undefined ? null : this.relations.get(key)!;
   }
 
   columnIndexIn(tableAlias: string, columnName: string): number {
-    return this.columnIndexes.get(tableAlias)?.get(columnName) ?? -1;
+    return this.localRelation(tableAlias)?.columnIndex.get(columnName) ?? -1;
   }
 
   addColumn(alias: string, columnInfo: ColumnInfo): void {
@@ -53,11 +87,11 @@ export class BinderScope {
 
   resolveTable(name: string): ResolvedTable | null {
     const upper = name.toUpperCase();
-    const local = this.tables.get(upper);
-    if (local) return { table: local, depth: 0 };
+    const local = this.localRelation(upper);
+    if (local) return { table: local.table, alias: local.alias, depth: 0 };
     if (this.parent) {
       const result = this.parent.resolveTable(upper);
-      if (result) return { table: result.table, depth: result.depth + 1 };
+      if (result) return { ...result, depth: result.depth + 1 };
     }
     return null;
   }
@@ -67,34 +101,34 @@ export class BinderScope {
 
     if (tableAlias) {
       const tableUpper = tableAlias.toUpperCase();
-      const tableResult = this.resolveTable(tableAlias);
-      if (!tableResult) return null;
+      const owner = this.ownerScopeOf(tableUpper);
+      if (!owner) return null;
 
-      const { table, depth } = tableResult;
-      const colIndex = this.ownerScopeOf(tableUpper)?.columnIndexIn(tableUpper, upper) ?? -1;
+      const relation = owner.localRelation(tableUpper)!;
+      const colIndex = relation.columnIndex.get(upper) ?? -1;
       if (colIndex < 0) return null;
 
       return {
-        tableAlias: tableUpper,
-        tableName: table.originalName || tableUpper,
-        column: table.columns[colIndex],
+        tableAlias: relation.alias,
+        tableName: relation.table.originalName || relation.alias,
+        column: relation.table.columns[colIndex],
         columnIndex: colIndex,
-        depth,
+        depth: this.depthOf(owner),
       };
     }
 
     let found: ResolvedColumn | null = null;
 
-    for (const [alias, tableInfo] of this.tables) {
-      const colIndex = this.columnIndexIn(alias, upper);
+    for (const relation of this.relations.values()) {
+      const colIndex = relation.columnIndex.get(upper) ?? -1;
       if (colIndex >= 0) {
         if (found) {
           throw new Error(`Ambiguous column reference: ${name}`);
         }
         found = {
-          tableAlias: alias,
-          tableName: tableInfo.originalName || alias,
-          column: tableInfo.columns[colIndex],
+          tableAlias: relation.alias,
+          tableName: relation.table.originalName || relation.alias,
+          column: relation.table.columns[colIndex],
           columnIndex: colIndex,
           depth: 0,
         };
@@ -113,14 +147,23 @@ export class BinderScope {
     return null;
   }
 
+  depthOf(scope: BinderScope): number {
+    let depth = 0;
+    for (let current: BinderScope | null = this; current; current = current.parent) {
+      if (current === scope) return depth;
+      depth++;
+    }
+    return depth;
+  }
+
   getAllColumns(): ColumnEntry[] {
     const result: ColumnEntry[] = [];
-    for (const [alias, tableInfo] of this.tables) {
-      for (let i = 0; i < tableInfo.columns.length; i++) {
+    for (const relation of this.relations.values()) {
+      for (let i = 0; i < relation.table.columns.length; i++) {
         result.push({
-          tableAlias: alias,
-          tableName: tableInfo.originalName || alias,
-          column: tableInfo.columns[i],
+          tableAlias: relation.alias,
+          tableName: relation.table.originalName || relation.alias,
+          column: relation.table.columns[i],
           columnIndex: i,
         });
       }
@@ -129,19 +172,18 @@ export class BinderScope {
   }
 
   getTableColumns(tableAlias: string): ColumnEntry[] | null {
-    const upper = tableAlias.toUpperCase();
-    const tableInfo = this.tables.get(upper);
-    if (!tableInfo) return null;
-    return tableInfo.columns.map((col, i) => ({
-      tableAlias: upper,
-      tableName: tableInfo.originalName || upper,
+    const relation = this.localRelation(tableAlias.toUpperCase());
+    if (!relation) return null;
+    return relation.table.columns.map((col, i) => ({
+      tableAlias: relation.alias,
+      tableName: relation.table.originalName || relation.alias,
       column: col,
       columnIndex: i,
     }));
   }
 
   ownerScopeOf(tableAlias: string): BinderScope | null {
-    if (this.tables.has(tableAlias)) return this;
+    if (this.aliasIndex.has(tableAlias)) return this;
     return this.parent ? this.parent.ownerScopeOf(tableAlias) : null;
   }
 

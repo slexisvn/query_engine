@@ -489,7 +489,7 @@ describe('createDefaultOptimizer', () => {
         SELECT O_ORDERKEY FROM ORDERS WHERE O_TOTALPRICE < 10
       `);
 
-      const unions = findNodes(plan, PlanNodeType.UNION);
+      const unions = findNodes(plan, PlanNodeType.SET_OP);
       expect(unions.length).toBe(1);
       const filters = findNodes(plan, PlanNodeType.FILTER);
       expect(filters.length).toBe(2);

@@ -1,5 +1,5 @@
 import { OptimizationPass } from '../pass.js';
-import { getChildren, setChildren, type LogicalPlanNode, type ProjectedExpr, type LogicalScanNode, type LogicalProjectNode, type LogicalFilterNode, type LogicalJoinNode, type LogicalAggregateNode, type LogicalSortNode, type LogicalDependentJoinNode, type LogicalUnionNode, type LogicalCTEAnchorNode, type LogicalDistinctNode } from '../../planner/logical-plan.js';
+import { getChildren, setChildren, type LogicalPlanNode, type ProjectedExpr, type LogicalScanNode, type LogicalProjectNode, type LogicalFilterNode, type LogicalJoinNode, type LogicalAggregateNode, type LogicalSortNode, type LogicalDependentJoinNode, type LogicalSetOpNode, type LogicalCTEAnchorNode, type LogicalDistinctNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
 import type { ColumnInfo } from '../../binder/scope.js';
@@ -56,7 +56,7 @@ class ColumnPruner extends PlanRewriter<RequiredColumns> {
     return pruneDependentJoin(this, node, required);
   }
 
-  override rewriteUnion(node: LogicalUnionNode): LogicalPlanNode {
+  override rewriteSetOp(node: LogicalSetOpNode): LogicalPlanNode {
     return this.rewriteChildren(node, null);
   }
 

@@ -1,8 +1,9 @@
 import { DataChunk } from '../../storage/chunk.js';
 import { Column } from '../../storage/column.js';
 import type { DataType, ColumnValue } from '../../storage/data-type.js';
-import type { BoundExpr, BoundWindowNode, BoundLiteralNode } from '../../binder/expression-binder.js';
+import type { BoundExpr, BoundWindowNode } from '../../binder/expression-binder.js';
 import { encodeCompositeKey } from '../composite-key.js';
+import { DEFAULT_FRAME, FRAME_AGGREGATORS, frameRangesOf, peerGroupsOf } from './window-frame.js';
 import type { CompiledExpr, ColumnMapping, ExecSchema, ExecColumn, EvalValue } from '../execution-types.js';
 
 type CompileExpressionFn = (expr: BoundExpr, mapping: ColumnMapping) => CompiledExpr;
@@ -110,6 +111,21 @@ export class WindowOperator {
     const result: EvalValue[] = new Array(allRows.length);
     const name = wExpr.name.toUpperCase();
 
+    const aggregator = FRAME_AGGREGATORS.get(name === 'COUNT' && wExpr.args.length === 0 ? 'COUNT_STAR' : name);
+    if (aggregator) {
+      const valueEval = wExpr.args.length > 0
+        ? this.compileExpression(wExpr.args[0], this.childColumnMapping)
+        : null;
+      const frame = wExpr.frame ?? DEFAULT_FRAME;
+      for (const partition of partitions) {
+        const values = partition.map((rowIdx) => (valueEval ? getVal(rowIdx, valueEval) : null));
+        const peers = peerGroupsOf(partition.length, (a, b) => this.sameOrderKey(partition[a], partition[b], orderValues));
+        const computed = aggregator(values, frameRangesOf(frame, partition.length, peers));
+        for (let i = 0; i < partition.length; i++) result[partition[i]] = computed[i];
+      }
+      return result;
+    }
+
     for (const partition of partitions) {
       switch (name) {
         case 'ROW_NUMBER':
@@ -140,153 +156,25 @@ export class WindowOperator {
           break;
         }
 
-        case 'LAG': {
-          const valueEval = wExpr.args.length > 0
-            ? this.compileExpression(wExpr.args[0], this.childColumnMapping)
-            : null;
-          const lagOffset = wExpr.args.length > 1 ? (wExpr.args[1] as BoundLiteralNode).value as number : 1;
-          const defaultVal = wExpr.args.length > 2 ? (wExpr.args[2] as BoundLiteralNode).value : null;
-
-          for (let i = 0; i < partition.length; i++) {
-            const srcIdx = i - lagOffset;
-            if (srcIdx >= 0 && srcIdx < partition.length) {
-              result[partition[i]] = valueEval ? getVal(partition[srcIdx], valueEval) : null;
-            } else {
-              result[partition[i]] = defaultVal;
-            }
-          }
-          break;
-        }
-
+        case 'LAG':
         case 'LEAD': {
           const valueEval = wExpr.args.length > 0
             ? this.compileExpression(wExpr.args[0], this.childColumnMapping)
             : null;
-          const leadOffset = wExpr.args.length > 1 ? (wExpr.args[1] as BoundLiteralNode).value as number : 1;
-          const defaultVal = wExpr.args.length > 2 ? (wExpr.args[2] as BoundLiteralNode).value : null;
+          const step = name === 'LAG' ? -1 : 1;
+          const offset = step * (wExpr.args.length > 1
+            ? Number(getVal(partition[0], this.compileExpression(wExpr.args[1], this.childColumnMapping)))
+            : 1);
+          const defaultEval = wExpr.args.length > 2
+            ? this.compileExpression(wExpr.args[2], this.childColumnMapping)
+            : null;
 
           for (let i = 0; i < partition.length; i++) {
-            const srcIdx = i + leadOffset;
+            const srcIdx = i + offset;
             if (srcIdx >= 0 && srcIdx < partition.length) {
               result[partition[i]] = valueEval ? getVal(partition[srcIdx], valueEval) : null;
             } else {
-              result[partition[i]] = defaultVal;
-            }
-          }
-          break;
-        }
-
-        case 'SUM': {
-          const valueEval = this.compileExpression(wExpr.args[0], this.childColumnMapping);
-          if (orderKeys.length === 0) {
-            let total = 0;
-            let count = 0;
-            for (let i = 0; i < partition.length; i++) {
-              const v = getVal(partition[i], valueEval);
-              if (v !== null && v !== undefined) { total += typeof v === 'bigint' ? Number(v) : v as number; count++; }
-            }
-            const sum = count === 0 ? null : total;
-            for (let i = 0; i < partition.length; i++) result[partition[i]] = sum;
-          } else {
-            let total = 0;
-            let count = 0;
-            for (let i = 0; i < partition.length; i++) {
-              const v = getVal(partition[i], valueEval);
-              if (v !== null && v !== undefined) { total += typeof v === 'bigint' ? Number(v) : v as number; count++; }
-              result[partition[i]] = count === 0 ? null : total;
-            }
-          }
-          break;
-        }
-
-        case 'AVG': {
-          const valueEval = this.compileExpression(wExpr.args[0], this.childColumnMapping);
-          if (orderKeys.length === 0) {
-            let total = 0;
-            let count = 0;
-            for (let i = 0; i < partition.length; i++) {
-              const v = getVal(partition[i], valueEval);
-              if (v !== null && v !== undefined) { total += typeof v === 'bigint' ? Number(v) : v as number; count++; }
-            }
-            const avg = count === 0 ? null : total / count;
-            for (let i = 0; i < partition.length; i++) result[partition[i]] = avg;
-          } else {
-            let total = 0;
-            let count = 0;
-            for (let i = 0; i < partition.length; i++) {
-              const v = getVal(partition[i], valueEval);
-              if (v !== null && v !== undefined) { total += typeof v === 'bigint' ? Number(v) : v as number; count++; }
-              result[partition[i]] = count === 0 ? null : total / count;
-            }
-          }
-          break;
-        }
-
-        case 'COUNT': case 'COUNT_STAR': {
-          const valueEval = wExpr.args.length > 0
-            ? this.compileExpression(wExpr.args[0], this.childColumnMapping)
-            : null;
-          if (orderKeys.length === 0) {
-            let total = 0;
-            for (let i = 0; i < partition.length; i++) {
-              if (valueEval) {
-                const v = getVal(partition[i], valueEval);
-                if (v !== null) total++;
-              } else {
-                total++;
-              }
-            }
-            for (let i = 0; i < partition.length; i++) result[partition[i]] = total;
-          } else {
-            let count = 0;
-            for (let i = 0; i < partition.length; i++) {
-              if (valueEval) {
-                const v = getVal(partition[i], valueEval);
-                if (v !== null) count++;
-              } else {
-                count++;
-              }
-              result[partition[i]] = count;
-            }
-          }
-          break;
-        }
-
-        case 'MIN': {
-          const valueEval = this.compileExpression(wExpr.args[0], this.childColumnMapping);
-          if (orderKeys.length === 0) {
-            let min: EvalValue = null;
-            for (let i = 0; i < partition.length; i++) {
-              const v = getVal(partition[i], valueEval);
-              if (v !== null && (min === null || (v as number) < (min as number))) min = v;
-            }
-            for (let i = 0; i < partition.length; i++) result[partition[i]] = min;
-          } else {
-            let min: EvalValue = null;
-            for (let i = 0; i < partition.length; i++) {
-              const v = getVal(partition[i], valueEval);
-              if (v !== null && (min === null || (v as number) < (min as number))) min = v;
-              result[partition[i]] = min;
-            }
-          }
-          break;
-        }
-
-        case 'MAX': {
-          const valueEval = this.compileExpression(wExpr.args[0], this.childColumnMapping);
-          if (orderKeys.length === 0) {
-            let max: EvalValue = null;
-            for (let i = 0; i < partition.length; i++) {
-              const v = getVal(partition[i], valueEval);
-              if (v !== null && (max === null || (v as number) > (max as number))) max = v;
-            }
-            for (let i = 0; i < partition.length; i++) result[partition[i]] = max;
-          } else {
-            let max: EvalValue = null;
-            for (let i = 0; i < partition.length; i++) {
-              const v = getVal(partition[i], valueEval);
-              if (v !== null && (max === null || (v as number) > (max as number))) max = v;
-              result[partition[i]] = max;
+              result[partition[i]] = defaultEval ? getVal(partition[i], defaultEval) : null;
             }
           }
           break;

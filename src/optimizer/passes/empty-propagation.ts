@@ -1,6 +1,6 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-rewriter.js';
-import { PlanNodeType, JoinType, type LogicalPlanNode, type LogicalFilterNode, type LogicalLimitNode, type LogicalJoinNode, type LogicalUnionNode, type LogicalEmptyNode } from '../../planner/logical-plan.js';
+import { PlanNodeType, JoinType, type LogicalPlanNode, type LogicalFilterNode, type LogicalLimitNode, type LogicalJoinNode, type LogicalSetOpNode, type LogicalEmptyNode } from '../../planner/logical-plan.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 
 export class EmptyPropagation extends OptimizationPass {
@@ -86,7 +86,7 @@ class EmptyPropagationRewriter extends PlanRewriter {
         return newNode;
   }
 
-  override rewriteUnion(node: LogicalUnionNode): LogicalPlanNode {
+  override rewriteSetOp(node: LogicalSetOpNode): LogicalPlanNode {
     const newNode = this.rewriteChildren(node);
     const left = newNode.children[0];
     const right = newNode.children[1];

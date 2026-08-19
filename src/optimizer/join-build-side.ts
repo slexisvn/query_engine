@@ -9,6 +9,7 @@ const PROBE_PRESERVING_JOINS: ReadonlySet<JoinType> = new Set([
   JoinType.SEMI,
   JoinType.ANTI,
   JoinType.MARK,
+  JoinType.SINGLE,
 ]);
 
 const DEDUPABLE_JOINS: ReadonlySet<JoinType> = new Set([

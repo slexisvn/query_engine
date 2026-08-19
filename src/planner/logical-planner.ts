@@ -5,6 +5,69 @@ import { DataType } from '../storage/data-type.js';
 
 let _cteIdCounter = 0;
 
+export const SCALAR_OUTPUT_NAME = '_scalar';
+
+const EMPTY_INPUT_AGGREGATES: ReadonlyMap<string, BoundLiteralNode> = new Map([
+  ['COUNT', { kind: BoundExprKind.LITERAL, value: 0, dataType: DataType.INT64 }],
+  ['COUNT_STAR', { kind: BoundExprKind.LITERAL, value: 0, dataType: DataType.INT64 }],
+]);
+
+function emptyInputValue(query: BoundQuery): BoundLiteralNode | null {
+  if (query.type !== 'BoundSelect') return null;
+  if (query.groupBy && query.groupBy.length > 0) return null;
+  if (query.outputColumns.length !== 1) return null;
+  const expr = query.outputColumns[0].expr;
+  if (expr.kind !== BoundExprKind.AGGREGATE) return null;
+  return EMPTY_INPUT_AGGREGATES.get(expr.name.toUpperCase()) ?? null;
+}
+
+const INVERSE_COMPARISON: ReadonlyMap<string, string> = new Map([
+  ['=', '<>'],
+  ['<>', '='],
+  ['<', '>='],
+  ['>', '<='],
+  ['<=', '>'],
+  ['>=', '<'],
+]);
+
+function inverseComparison(op: string): string {
+  const inverse = INVERSE_COMPARISON.get(op);
+  if (!inverse) throw new Error(`Quantified comparison does not support operator: ${op}`);
+  return inverse;
+}
+
+const SET_OP_TYPES: ReadonlyMap<string, LP.SetOpType> = new Map([
+  ['UNION', LP.SetOpType.UNION],
+  ['INTERSECT', LP.SetOpType.INTERSECT],
+  ['EXCEPT', LP.SetOpType.EXCEPT],
+]);
+
+function setOpTypeOf(op: string): LP.SetOpType {
+  const setOp = SET_OP_TYPES.get(op.toUpperCase());
+  if (!setOp) throw new Error(`Unsupported set operation: ${op}`);
+  return setOp;
+}
+
+function applyLimit(node: LP.LogicalPlanNode, limit: BoundExpr | null, offset: BoundExpr | null): LP.LogicalPlanNode {
+  if (!limit) return node;
+  const limitValue = (limit as BoundLiteralNode).value as number;
+  const offsetValue = offset ? (offset as BoundLiteralNode).value as number : 0;
+  return LP.LogicalLimit(limitValue, offsetValue, node);
+}
+
+function notExpr(operand: BoundExpr): BoundExpr {
+  return { kind: BoundExprKind.UNARY, op: 'NOT', operand, resultType: DataType.BOOLEAN };
+}
+
+function definedMark(mark: BoundColumnRefNode): BoundExpr {
+  return {
+    kind: BoundExprKind.FUNCTION,
+    name: 'COALESCE',
+    args: [mark, { kind: BoundExprKind.LITERAL, value: false, dataType: DataType.BOOLEAN }],
+    resultType: DataType.BOOLEAN,
+  };
+}
+
 function projectionExpr(item: { expr: BoundExpr; alias: string | null; inferredName: string | null }): LP.ProjectedExpr {
   const name = item.alias || item.inferredName;
   if (!name) return item.expr;
@@ -13,9 +76,11 @@ function projectionExpr(item: { expr: BoundExpr; alias: string | null; inferredN
 
 export class LogicalPlanner {
   cteMap: Map<string, LP.LogicalPlanNode>;
+  markCount: number;
 
   constructor() {
     this.cteMap = new Map();
+    this.markCount = 0;
   }
 
   plan(boundQuery: BoundQuery): LP.LogicalPlanNode {
@@ -32,7 +97,9 @@ export class LogicalPlanner {
   planSetOp(bound: BoundSetOp): LP.LogicalPlanNode {
     const left = this.planQuery(bound.left);
     const right = this.planQuery(bound.right);
-    return LP.LogicalUnion(left, right, bound.all);
+    let node: LP.LogicalPlanNode = LP.LogicalSetOp(setOpTypeOf(bound.op), left, right, bound.all);
+    if (bound.orderBy) node = LP.LogicalSort(bound.orderBy, node);
+    return applyLimit(node, bound.limit, bound.offset);
   }
 
   planSelect(bound: BoundSelect): LP.LogicalPlanNode {
@@ -45,7 +112,7 @@ export class LogicalPlanner {
     }
 
     if (bound.where) {
-      const { expr, subqueryJoins } = this.extractSubqueries(bound.where, node);
+      const { expr, subqueryJoins } = this.extractSubqueries(bound.where, true);
       for (const sj of subqueryJoins) {
         node = sj(node);
       }
@@ -63,7 +130,7 @@ export class LogicalPlanner {
     }
 
     if (bound.having) {
-      const { expr, subqueryJoins } = this.extractSubqueries(bound.having, node);
+      const { expr, subqueryJoins } = this.extractSubqueries(bound.having, true);
       for (const sj of subqueryJoins) {
         node = sj(node);
       }
@@ -73,7 +140,7 @@ export class LogicalPlanner {
     }
 
     for (let i = 0; i < bound.selectItems.length; i++) {
-      const { expr, subqueryJoins } = this.extractSubqueries(bound.selectItems[i].expr, node);
+      const { expr, subqueryJoins } = this.extractSubqueries(bound.selectItems[i].expr, false);
       for (const sj of subqueryJoins) {
         node = sj(node);
       }
@@ -83,6 +150,9 @@ export class LogicalPlanner {
     const windowExprs: BoundExpr[] = [];
     for (const item of bound.selectItems) {
       this._collectWindows(item.expr, windowExprs);
+    }
+    for (const key of bound.orderBy || []) {
+      this._collectWindows(key.expr, windowExprs);
     }
     if (windowExprs.length > 0) {
       node = LP.LogicalWindow(windowExprs, node);
@@ -103,13 +173,7 @@ export class LogicalPlanner {
       node = LP.LogicalProject(projections, node);
     }
 
-    if (bound.limit) {
-      const limitVal = (bound.limit as BoundLiteralNode).value as number;
-      const offsetVal = bound.offset ? (bound.offset as BoundLiteralNode).value as number : 0;
-      node = LP.LogicalLimit(limitVal, offsetVal, node);
-    }
-
-    return node;
+    return applyLimit(node, bound.limit, bound.offset);
   }
 
   planFrom(bound: BoundFrom): LP.LogicalPlanNode {
@@ -148,14 +212,37 @@ export class LogicalPlanner {
     return LP.LogicalProject(projections, plan, alias);
   }
 
-  extractSubqueries(expr: BoundExpr | null, currentPlan: LP.LogicalPlanNode): { expr: BoundExpr | null; subqueryJoins: Array<(child: LP.LogicalPlanNode) => LP.LogicalPlanNode> } {
+  extractSubqueries(expr: BoundExpr | null, conjunctive: boolean): { expr: BoundExpr | null; subqueryJoins: Array<(child: LP.LogicalPlanNode) => LP.LogicalPlanNode> } {
     const subqueryJoins: Array<(child: LP.LogicalPlanNode) => LP.LogicalPlanNode> = [];
 
-    const transformed = this.walkAndReplace(expr, (node: BoundExpr): BoundExpr | null => {
-      if (node.kind === BoundExprKind.UNARY && node.op === 'NOT'
-          && node.operand?.kind === BoundExprKind.EXISTS) {
-        const subPlan = this.planQuery(node.operand.plan);
-        const correlated = this.findCorrelatedRefs(node.operand.plan);
+    const hoistMark = (plan: BoundQuery, outerExpr: BoundExpr | null, compareOp: string = '='): BoundColumnRefNode => {
+      const markColumn = `__mark_${this.markCount++}`;
+      const subPlan = this.planQuery(plan);
+      const correlated = this.findCorrelatedRefs(plan);
+      subqueryJoins.push((child) =>
+        LP.LogicalDependentJoin(child, subPlan, correlated, 'MARK', outerExpr, markColumn, compareOp)
+      );
+      return BoundColumnRef('', markColumn, -1, DataType.BOOLEAN);
+    };
+
+    const hoistSemi = (plan: BoundQuery, outerExpr: BoundExpr | null, compareOp: string): void => {
+      const subPlan = this.planQuery(plan);
+      const correlated = this.findCorrelatedRefs(plan);
+      subqueryJoins.push((child) =>
+        LP.LogicalDependentJoin(child, subPlan, correlated, 'IN', outerExpr, null, compareOp)
+      );
+    };
+
+    const transformed = this.walkAndReplace(expr, (node: BoundExpr, inConjunct: boolean): BoundExpr | null => {
+      const negatedExists = node.kind === BoundExprKind.UNARY && node.op === 'NOT'
+        && node.operand?.kind === BoundExprKind.EXISTS
+        ? node.operand
+        : null;
+
+      if (negatedExists) {
+        if (!inConjunct) return notExpr(definedMark(hoistMark(negatedExists.plan, null)));
+        const subPlan = this.planQuery(negatedExists.plan);
+        const correlated = this.findCorrelatedRefs(negatedExists.plan);
         subqueryJoins.push((child) =>
           LP.LogicalDependentJoin(child, subPlan, correlated, 'NOT_EXISTS', null)
         );
@@ -163,24 +250,33 @@ export class LogicalPlanner {
       }
 
       if (node.kind === BoundExprKind.EXISTS) {
+        if (!inConjunct) {
+          const mark = definedMark(hoistMark(node.plan, null));
+          return node.negated ? notExpr(mark) : mark;
+        }
         const subPlan = this.planQuery(node.plan);
         const correlated = this.findCorrelatedRefs(node.plan);
-        const subqueryType = node.negated ? 'NOT_EXISTS' : 'EXISTS';
-
         subqueryJoins.push((child) =>
-          LP.LogicalDependentJoin(child, subPlan, correlated, subqueryType, null)
+          LP.LogicalDependentJoin(child, subPlan, correlated, node.negated ? 'NOT_EXISTS' : 'EXISTS', null)
         );
         return null;
       }
 
       if (node.kind === BoundExprKind.IN_LIST && !Array.isArray(node.list) && node.list.kind === BoundExprKind.SUBQUERY) {
-        const subPlan = this.planQuery(node.list.plan);
-        const correlated = this.findCorrelatedRefs(node.list.plan);
-        const subqueryType = node.negated ? 'NOT_IN' : 'IN';
+        if (node.negated || !inConjunct) {
+          const mark = hoistMark(node.list.plan, node.expr);
+          return node.negated ? notExpr(mark) : mark;
+        }
+        hoistSemi(node.list.plan, node.expr, '=');
+        return null;
+      }
 
-        subqueryJoins.push((child) =>
-          LP.LogicalDependentJoin(child, subPlan, correlated, subqueryType, node.expr)
-        );
+      if (node.kind === BoundExprKind.QUANTIFIED) {
+        if (node.quantifier === 'ALL') {
+          return notExpr(hoistMark(node.plan, node.expr, inverseComparison(node.op)));
+        }
+        if (!inConjunct) return hoistMark(node.plan, node.expr, node.op);
+        hoistSemi(node.plan, node.expr, node.op);
         return null;
       }
 
@@ -191,53 +287,56 @@ export class LogicalPlanner {
         subqueryJoins.push((child) =>
           LP.LogicalDependentJoin(child, subPlan, correlated, 'SCALAR', null)
         );
+        const scalarType = node.plan.outputColumns[0]?.dataType ?? DataType.FLOAT64;
+        const scalarRef = BoundColumnRef('', SCALAR_OUTPUT_NAME, -1, scalarType);
+        const emptyValue = emptyInputValue(node.plan);
+        if (!emptyValue) return scalarRef;
         return {
-          kind: BoundExprKind.COLUMN_REF,
-          tableAlias: '',
-          columnName: '_scalar',
-          columnIndex: -1,
-          dataType: DataType.FLOAT64,
-          depth: 0,
-          isCorrelated: false,
+          kind: BoundExprKind.FUNCTION,
+          name: 'COALESCE',
+          args: [scalarRef, emptyValue],
+          resultType: scalarType,
         };
       }
 
       return node;
-    });
+    }, conjunctive);
 
     return { expr: transformed, subqueryJoins };
   }
 
-  walkAndReplace(expr: BoundExpr | null, fn: (node: BoundExpr) => BoundExpr | null): BoundExpr | null {
+  walkAndReplace(expr: BoundExpr | null, fn: (node: BoundExpr, conjunctive: boolean) => BoundExpr | null, conjunctive: boolean): BoundExpr | null {
     if (!expr) return null;
-    const result = fn(expr);
+    const result = fn(expr, conjunctive);
     if (result !== expr) return result;
 
     switch (expr.kind) {
-      case BoundExprKind.BINARY:
+      case BoundExprKind.BINARY: {
+        const childConjunctive = conjunctive && expr.op === 'AND';
         return {
           ...expr,
-          left: this.walkAndReplace(expr.left, fn),
-          right: this.walkAndReplace(expr.right, fn),
+          left: this.walkAndReplace(expr.left, fn, childConjunctive),
+          right: this.walkAndReplace(expr.right, fn, childConjunctive),
         } as BoundExpr;
+      }
       case BoundExprKind.UNARY:
-        return { ...expr, operand: this.walkAndReplace(expr.operand, fn) } as BoundExpr;
+        return { ...expr, operand: this.walkAndReplace(expr.operand, fn, false) } as BoundExpr;
       case BoundExprKind.CASE:
         return {
           ...expr,
-          operand: expr.operand ? this.walkAndReplace(expr.operand, fn) : null,
+          operand: expr.operand ? this.walkAndReplace(expr.operand, fn, false) : null,
           whenClauses: expr.whenClauses.map(wc => ({
-            condition: this.walkAndReplace(wc.condition, fn),
-            result: this.walkAndReplace(wc.result, fn),
+            condition: this.walkAndReplace(wc.condition, fn, false),
+            result: this.walkAndReplace(wc.result, fn, false),
           })),
-          elseExpr: expr.elseExpr ? this.walkAndReplace(expr.elseExpr, fn) : null,
+          elseExpr: expr.elseExpr ? this.walkAndReplace(expr.elseExpr, fn, false) : null,
         } as BoundExpr;
       case BoundExprKind.BETWEEN:
         return {
           ...expr,
-          expr: this.walkAndReplace(expr.expr, fn),
-          low: this.walkAndReplace(expr.low, fn),
-          high: this.walkAndReplace(expr.high, fn),
+          expr: this.walkAndReplace(expr.expr, fn, false),
+          low: this.walkAndReplace(expr.low, fn, false),
+          high: this.walkAndReplace(expr.high, fn, false),
         } as BoundExpr;
       default:
         return expr;
@@ -371,6 +470,10 @@ export class LogicalPlanner {
         this._scanQuery(e.plan, refs);
         return;
       case BoundExprKind.EXISTS:
+        this._scanQuery(e.plan, refs);
+        return;
+      case BoundExprKind.QUANTIFIED:
+        this._scanExpr(e.expr, refs);
         this._scanQuery(e.plan, refs);
         return;
     }

@@ -1,10 +1,7 @@
 import { BoundExprKind, getExprType } from '../binder/expression-binder.js';
 import type {
   BoundExpr,
-  BoundColumnRefNode,
   BoundLiteralNode,
-  BoundAggregateNode,
-  BoundWindowNode,
 } from '../binder/expression-binder.js';
 import { DataType, epochDaysToDate, dateToEpochDays, epochMsToTimestamp } from '../storage/data-type.js';
 import type { ColumnValue } from '../storage/data-type.js';
@@ -17,6 +14,7 @@ import type {
   ExecColumn,
 } from './execution-types.js';
 import { resolveColumnIndex } from './column-resolve.js';
+import { exprKey } from './expr-key.js';
 import { binaryValueOp, unaryValueOp, normalizeComparable } from './value-ops.js';
 
 const LIKE_CACHE_MAX = 256;
@@ -29,6 +27,11 @@ interface MappingSchema {
 
 export function compileExpression(expr: BoundExpr | null, columnMapping: ColumnMapping | null): CompiledExpr {
   if (!expr) return () => null;
+
+  const materialized = materializedColumnOf(expr, columnMapping);
+  if (materialized !== null) {
+    return (chunk: DataChunk, rowIdx: number) => chunk.columns[materialized]?.get(rowIdx) ?? null;
+  }
 
   switch (expr.kind) {
     case BoundExprKind.COLUMN_REF: {
@@ -183,28 +186,16 @@ export function compileExpression(expr: BoundExpr | null, columnMapping: ColumnM
       return compileFunction(expr.name, args);
     }
 
-    case BoundExprKind.AGGREGATE: {
-      const aggKey = aggExprKey(expr);
-      if (columnMapping && columnMapping.has(aggKey)) {
-        const colIdx = columnMapping.get(aggKey)!;
-        return (chunk: DataChunk, rowIdx: number) => chunk.columns[colIdx]?.get(rowIdx) ?? null;
-      }
+    case BoundExprKind.AGGREGATE:
       return expr.args.length > 0
         ? compileExpression(expr.args[0], columnMapping)
         : () => null;
-    }
 
     case BoundExprKind.INTERVAL:
       return () => ({ value: expr.value, unit: expr.unit, _isInterval: true });
 
-    case BoundExprKind.WINDOW: {
-      const wKey = windowExprKey(expr);
-      if (columnMapping && columnMapping.has(wKey)) {
-        const colIdx = columnMapping.get(wKey)!;
-        return (chunk: DataChunk, rowIdx: number) => chunk.columns[colIdx]?.get(rowIdx) ?? null;
-      }
+    case BoundExprKind.WINDOW:
       return () => null;
-    }
 
     default:
       return () => null;
@@ -251,6 +242,8 @@ function compileFunction(name: string, args: CompiledExpr[]): CompiledExpr {
       const v1 = args[0](c, r), v2 = args[1](c, r);
       return v1 == v2 ? null : v1;
     };
+    case 'IS_TRUE': return (c: DataChunk, r: number) => args[0](c, r) === true;
+    case 'IS_FALSE': return (c: DataChunk, r: number) => args[0](c, r) === false;
     case 'SQRT': return (c: DataChunk, r: number) => { const v = args[0](c, r); return v !== null ? Math.sqrt(v as number) : null; };
     case 'LENGTH': return (c: DataChunk, r: number) => { const v = args[0](c, r); return v !== null ? String(v).length : null; };
     case 'REPLACE': return (c: DataChunk, r: number) => {
@@ -274,33 +267,22 @@ function likeToRegex(pattern: string): RegExp {
   return new RegExp(regex, 'i');
 }
 
-function aggExprKey(expr: BoundAggregateNode): string {
-  const name = expr.name?.toUpperCase() || 'AGG';
-  const distinctTag = expr.distinct ? '_DISTINCT' : '';
-  if (expr.args.length === 0) return `__AGG__${name}${distinctTag}`;
-  const argKey = expr.args.map((a) => {
-    if (a.kind === BoundExprKind.COLUMN_REF) { const cr = a as BoundColumnRefNode; return `${cr.tableAlias}.${cr.columnName}`.toUpperCase(); }
-    return JSON.stringify(a).slice(0, 30);
-  }).join(',');
-  return `__AGG__${name}${distinctTag}(${argKey})`;
+const MATERIALIZABLE_KINDS: ReadonlySet<BoundExprKind> = new Set([
+  BoundExprKind.BINARY,
+  BoundExprKind.UNARY,
+  BoundExprKind.FUNCTION,
+  BoundExprKind.AGGREGATE,
+  BoundExprKind.CASE,
+  BoundExprKind.CAST,
+  BoundExprKind.EXTRACT,
+  BoundExprKind.WINDOW,
+]);
+
+function materializedColumnOf(expr: BoundExpr, columnMapping: ColumnMapping | null): number | null {
+  if (!columnMapping || !MATERIALIZABLE_KINDS.has(expr.kind)) return null;
+  const index = columnMapping.get(exprKey(expr));
+  return index === undefined ? null : index;
 }
-
-export { aggExprKey };
-
-function windowExprKey(expr: BoundWindowNode): string {
-  const name = expr.name?.toUpperCase() || 'WIN';
-  const argKey = (expr.args || []).map((a) => {
-    if (a.kind === BoundExprKind.COLUMN_REF) { const cr = a as BoundColumnRefNode; return `${cr.tableAlias}.${cr.columnName}`.toUpperCase(); }
-    return JSON.stringify(a).slice(0, 30);
-  }).join(',');
-  const partKey = (expr.partitionBy || []).map((p) => {
-    if (p.kind === BoundExprKind.COLUMN_REF) { const cr = p as BoundColumnRefNode; return `${cr.tableAlias}.${cr.columnName}`.toUpperCase(); }
-    return '';
-  }).join(',');
-  return `__WIN__${name}(${argKey})[${partKey}]`;
-}
-
-export { windowExprKey };
 
 function castValue(val: EvalValue, targetType: DataType): EvalValue {
   if (val === null) return null;

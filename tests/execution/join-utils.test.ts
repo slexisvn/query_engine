@@ -187,3 +187,30 @@ describe('findCommonEquiJoinKeys', () => {
     expect(findCommonEquiJoinKeys(null, leftMapping, rightMapping)).toBeNull();
   });
 });
+
+describe('extractJoinKeys side classification', () => {
+  const sameNameLeft = new Map([['EMP.MGR', 4], ['MGR', 4], ['EMP.ID', 0], ['ID', 0]]);
+  const sameNameRight = new Map([['EMP:1.ID', 0], ['ID', 0], ['EMP:1.MGR', 1], ['MGR', 1]]);
+
+  it('prefers the qualified match when both sides carry the bare name', () => {
+    const result = extractJoinKeys(eq(colRef('EMP', 'MGR'), colRef('EMP:1', 'ID')), sameNameLeft, sameNameRight);
+    expect(result.buildKeys[0].tableAlias).toBe('EMP');
+    expect(result.buildKeys[0].columnName).toBe('MGR');
+    expect(result.probeKeys[0].tableAlias).toBe('EMP:1');
+    expect(result.probeKeys[0].columnName).toBe('ID');
+  });
+
+  it('swaps the sides when the qualified match points the other way', () => {
+    const result = extractJoinKeys(eq(colRef('EMP:1', 'ID'), colRef('EMP', 'MGR')), sameNameLeft, sameNameRight);
+    expect(result.buildKeys[0].tableAlias).toBe('EMP');
+    expect(result.probeKeys[0].tableAlias).toBe('EMP:1');
+  });
+
+  it('still falls back to bare names when neither side is qualified', () => {
+    const bareLeft = new Map([['ID', 0]]);
+    const bareRight = new Map([['KEY', 0]]);
+    const result = extractJoinKeys(eq(colRef('', 'ID'), colRef('', 'KEY')), bareLeft, bareRight);
+    expect(result.buildKeys[0].columnName).toBe('ID');
+    expect(result.probeKeys[0].columnName).toBe('KEY');
+  });
+});

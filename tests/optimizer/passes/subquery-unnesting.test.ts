@@ -33,12 +33,14 @@ function scan(name) {
   return LogicalScan(name, ['id', 'val'], name);
 }
 
-function depJoin(subqueryType, left, right, correlated, condition) {
+function depJoin(subqueryType, left, right, correlated, condition, markColumn = null, compareOp = '=') {
   return {
     type: PlanNodeType.DEPENDENT_JOIN,
     subqueryType,
     correlatedColumns: correlated,
     condition: condition || null,
+    compareOp,
+    markColumn,
     children: [left, right],
   };
 }
@@ -151,34 +153,55 @@ describe('SubqueryUnnesting', () => {
     });
   });
 
-  describe('NOT IN → MARK JOIN + FILTER', () => {
-    it('converts NOT_IN to MARK join with filter on mark = false', () => {
+  describe('MARK JOIN', () => {
+    it('converts a MARK dependent join to a MARK join carrying the requested mark column', () => {
       const subquery = LogicalProject(
         [colRef('b', 'val')],
         scan('b')
       );
-      const plan = depJoin('NOT_IN', scan('a'), subquery, [], colRef('a', 'val'));
+      const plan = depJoin('MARK', scan('a'), subquery, [], colRef('a', 'val'), '__mark_0');
 
       const result = pass.apply(plan);
 
-      expect(result.type).toBe(PlanNodeType.FILTER);
-      const markJoin = result.children[0];
-      expect(markJoin.type).toBe(PlanNodeType.JOIN);
-      expect(markJoin.joinType).toBe(JoinType.MARK);
-      expect(markJoin.markColumn).toBeDefined();
+      expect(result.type).toBe(PlanNodeType.JOIN);
+      expect(result.joinType).toBe(JoinType.MARK);
+      expect(result.markColumn).toBe('__mark_0');
     });
 
-    it('filter checks mark column equals false', () => {
+    it('builds the membership condition from the outer expression and the subquery output', () => {
       const subquery = LogicalProject(
         [colRef('b', 'val')],
         scan('b')
       );
-      const plan = depJoin('NOT_IN', scan('a'), subquery, [], colRef('a', 'val'));
+      const plan = depJoin('MARK', scan('a'), subquery, [], colRef('a', 'val'), '__mark_0');
 
       const result = pass.apply(plan);
 
       expect(result.condition.op).toBe('=');
-      expect(result.condition.right.value).toBe(false);
+      expect(result.condition.left.columnName).toBe('val');
+      expect(result.condition.left.tableAlias).toBe('a');
+      expect(result.condition.right.columnName).toBe('val');
+      expect(result.condition.right.tableAlias).toBe('b');
+    });
+
+    it('uses the dependent join comparison operator in the membership condition', () => {
+      const subquery = LogicalProject(
+        [colRef('b', 'val')],
+        scan('b')
+      );
+      const plan = depJoin('MARK', scan('a'), subquery, [], colRef('a', 'val'), '__mark_0', '>');
+
+      const result = pass.apply(plan);
+
+      expect(result.condition.op).toBe('>');
+    });
+
+    it('leaves an unknown subquery type untouched instead of looping', () => {
+      const plan = depJoin('SOMETHING_ELSE', scan('a'), scan('b'), []);
+
+      const result = pass.apply(plan);
+
+      expect(result.type).toBe(PlanNodeType.DEPENDENT_JOIN);
     });
   });
 

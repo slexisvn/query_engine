@@ -12,7 +12,7 @@ export enum PhysicalNodeType {
   TOP_N = 'TopN',
   LIMIT = 'Limit',
   DISTINCT = 'Distinct',
-  UNION = 'Union',
+  SET_OP = 'SetOp',
   WINDOW = 'Window',
   MATERIALIZE = 'Materialize',
 

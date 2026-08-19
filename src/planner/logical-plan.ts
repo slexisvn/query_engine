@@ -14,7 +14,7 @@ export enum PlanNodeType {
   SORT = 'Sort',
   LIMIT = 'Limit',
   DISTINCT = 'Distinct',
-  UNION = 'Union',
+  SET_OP = 'SetOp',
   CTE_SCAN = 'CTEScan',
   CTE_ANCHOR = 'CTEAnchor',
   DEPENDENT_JOIN = 'DependentJoin',
@@ -29,6 +29,12 @@ export enum PlanNodeType {
   MERGE_EXCHANGE = 'MergeExchange',
   EXCHANGE_RECEIVE = 'ExchangeReceive',
   SINGLE_ROW = 'SingleRow',
+}
+
+export enum SetOpType {
+  UNION = 'UNION',
+  INTERSECT = 'INTERSECT',
+  EXCEPT = 'EXCEPT',
 }
 
 export enum JoinType {
@@ -88,6 +94,7 @@ export interface LogicalJoinNode extends PlanNodeBase {
   type: PlanNodeType.JOIN;
   joinType: JoinType;
   condition: BoundExpr | null;
+  markColumn?: string;
   children: LogicalPlanNode[];
 }
 
@@ -118,8 +125,9 @@ export interface LogicalDistinctNode extends PlanNodeBase {
   children: LogicalPlanNode[];
 }
 
-export interface LogicalUnionNode extends PlanNodeBase {
-  type: PlanNodeType.UNION;
+export interface LogicalSetOpNode extends PlanNodeBase {
+  type: PlanNodeType.SET_OP;
+  op: SetOpType;
   all: boolean;
   children: LogicalPlanNode[];
 }
@@ -144,6 +152,8 @@ export interface LogicalDependentJoinNode extends PlanNodeBase {
   correlatedColumns: BoundColumnRefNode[];
   subqueryType: string;
   condition: BoundExpr | null;
+  compareOp: string;
+  markColumn: string | null;
   children: LogicalPlanNode[];
 }
 
@@ -231,7 +241,7 @@ export interface LogicalEmptyNode extends PlanNodeBase {
 export type LogicalPlanNode =
   | LogicalScanNode | LogicalFilterNode | LogicalProjectNode | LogicalJoinNode
   | LogicalAggregateNode | LogicalSortNode | LogicalLimitNode | LogicalDistinctNode
-  | LogicalUnionNode | LogicalCTEScanNode | LogicalCTEAnchorNode | LogicalDependentJoinNode
+  | LogicalSetOpNode | LogicalCTEScanNode | LogicalCTEAnchorNode | LogicalDependentJoinNode
   | LogicalTopNNode | LogicalIndexScanNode | LogicalWindowNode | LogicalMaterializeNode
   | LogicalExchangeNode | LogicalPartialAggregateNode | LogicalFinalAggregateNode
   | LogicalMergeExchangeNode | LogicalExchangeReceiveNode | LogicalSingleRowNode
@@ -280,8 +290,12 @@ export function LogicalDistinct(child: LogicalPlanNode): LogicalDistinctNode {
   return { type: PlanNodeType.DISTINCT, children: [child] };
 }
 
-export function LogicalUnion(left: LogicalPlanNode, right: LogicalPlanNode, all: boolean): LogicalUnionNode {
-  return { type: PlanNodeType.UNION, all: !!all, children: [left, right] };
+export function LogicalSetOp(op: SetOpType, left: LogicalPlanNode, right: LogicalPlanNode, all: boolean): LogicalSetOpNode {
+  return { type: PlanNodeType.SET_OP, op, all: !!all, children: [left, right] };
+}
+
+export function LogicalUnion(left: LogicalPlanNode, right: LogicalPlanNode, all: boolean): LogicalSetOpNode {
+  return LogicalSetOp(SetOpType.UNION, left, right, all);
 }
 
 export function LogicalCTEScan(cteName: string, cteId: number, alias?: string): LogicalCTEScanNode {
@@ -292,12 +306,14 @@ export function LogicalCTEAnchor(cteName: string, cteId: number, producer: Logic
   return { type: PlanNodeType.CTE_ANCHOR, cteName, cteId, children: [producer, consumer] };
 }
 
-export function LogicalDependentJoin(child: LogicalPlanNode, subquery: LogicalPlanNode, correlatedColumns: BoundColumnRefNode[], subqueryType: string, condition: BoundExpr | null): LogicalDependentJoinNode {
+export function LogicalDependentJoin(child: LogicalPlanNode, subquery: LogicalPlanNode, correlatedColumns: BoundColumnRefNode[], subqueryType: string, condition: BoundExpr | null, markColumn: string | null = null, compareOp: string = '='): LogicalDependentJoinNode {
   return {
     type: PlanNodeType.DEPENDENT_JOIN,
     correlatedColumns,
     subqueryType,
     condition,
+    compareOp,
+    markColumn,
     children: [child, subquery],
   };
 }
@@ -395,6 +411,9 @@ export function planToString(node: LogicalPlanNode, indent: number = 0): string 
       break;
     case PlanNodeType.LIMIT:
       str += `(${node.count}${node.offset ? `, offset=${node.offset}` : ''})`;
+      break;
+    case PlanNodeType.SET_OP:
+      str += `(${node.op}${node.all ? ' ALL' : ''})`;
       break;
     case PlanNodeType.CTE_SCAN:
       str += `(${node.cteName})`;

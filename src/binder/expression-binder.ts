@@ -22,6 +22,7 @@ export enum BoundExprKind {
   EXTRACT = 'BoundExtract',
   INTERVAL = 'BoundInterval',
   WINDOW = 'BoundWindow',
+  QUANTIFIED = 'BoundQuantified',
 }
 
 export type BoundExpr =
@@ -29,7 +30,7 @@ export type BoundExpr =
   | BoundFunctionNode | BoundAggregateNode | BoundCaseNode | BoundCastNode
   | BoundBetweenNode | BoundInListNode | BoundLikeNode | BoundIsNullNode
   | BoundSubqueryNode | BoundExistsNode | BoundExtractNode | BoundIntervalNode
-  | BoundWindowNode;
+  | BoundWindowNode | BoundQuantifiedNode;
 
 export interface BoundWhenClause { condition: BoundExpr; result: BoundExpr; }
 
@@ -79,7 +80,26 @@ export interface BoundExistsNode { kind: BoundExprKind.EXISTS; plan: BoundQuery;
 
 export interface BoundExtractNode { kind: BoundExprKind.EXTRACT; field: string; source: BoundExpr; resultType: DataType; }
 
+export type Quantifier = 'ANY' | 'ALL';
+
+export interface BoundQuantifiedNode {
+  kind: BoundExprKind.QUANTIFIED;
+  op: string;
+  quantifier: Quantifier;
+  expr: BoundExpr;
+  plan: BoundQuery;
+  resultType: DataType;
+}
+
 export interface BoundIntervalNode { kind: BoundExprKind.INTERVAL; value: number; unit: string; resultType: DataType; }
+
+export type FrameMode = 'ROWS' | 'RANGE';
+
+export type FrameBoundType = 'UNBOUNDED_PRECEDING' | 'PRECEDING' | 'CURRENT_ROW' | 'FOLLOWING' | 'UNBOUNDED_FOLLOWING';
+
+export interface BoundFrameBound { type: FrameBoundType; offset: number | null; }
+
+export interface BoundWindowFrame { mode: FrameMode; start: BoundFrameBound; end: BoundFrameBound; }
 
 export interface BoundWindowNode {
   kind: BoundExprKind.WINDOW;
@@ -87,6 +107,7 @@ export interface BoundWindowNode {
   args: BoundExpr[];
   partitionBy: BoundExpr[];
   orderBy: BoundWindowOrderKey[];
+  frame: BoundWindowFrame | null;
   resultType: DataType | null;
 }
 
@@ -154,6 +175,10 @@ export function BoundExists(plan: BoundQuery, negated: boolean): BoundExistsNode
   return { kind: BoundExprKind.EXISTS, plan, negated, resultType: DataType.BOOLEAN };
 }
 
+export function BoundQuantified(op: string, quantifier: Quantifier, expr: BoundExpr, plan: BoundQuery): BoundQuantifiedNode {
+  return { kind: BoundExprKind.QUANTIFIED, op, quantifier, expr, plan, resultType: DataType.BOOLEAN };
+}
+
 export function BoundExtract(field: string, source: BoundExpr): BoundExtractNode {
   return { kind: BoundExprKind.EXTRACT, field, source, resultType: DataType.INT32 };
 }
@@ -162,8 +187,8 @@ export function BoundInterval(value: number, unit: string): BoundIntervalNode {
   return { kind: BoundExprKind.INTERVAL, value, unit, resultType: DataType.INT32 };
 }
 
-export function BoundWindow(name: string, args: BoundExpr[], partitionBy: BoundExpr[], orderBy: BoundWindowOrderKey[], resultType: DataType | null): BoundWindowNode {
-  return { kind: BoundExprKind.WINDOW, name, args, partitionBy, orderBy, resultType };
+export function BoundWindow(name: string, args: BoundExpr[], partitionBy: BoundExpr[], orderBy: BoundWindowOrderKey[], frame: BoundWindowFrame | null, resultType: DataType | null): BoundWindowNode {
+  return { kind: BoundExprKind.WINDOW, name, args, partitionBy, orderBy, frame, resultType };
 }
 
 export function getExprType(expr?: BoundExpr | null): DataType | null {
@@ -234,6 +259,9 @@ export function walkExpr(expr: BoundExpr | null | undefined, fn: (node: BoundExp
       for (const arg of expr.args) walkExpr(arg, fn);
       for (const p of expr.partitionBy) walkExpr(p, fn);
       for (const o of expr.orderBy) walkExpr(o.expr, fn);
+      break;
+    case BoundExprKind.QUANTIFIED:
+      walkExpr(expr.expr, fn);
       break;
     case BoundExprKind.COLUMN_REF:
     case BoundExprKind.LITERAL:

@@ -466,28 +466,40 @@ export class MaxAccumulator implements Accumulator {
   }
 }
 
-export class CountDistinctAccumulator implements Accumulator {
+export class DistinctAccumulator implements Accumulator {
   values: Set<ColumnValue>;
-  constructor() { this.values = new Set(); }
+  makeInner: () => Accumulator;
+  constructor(makeInner: () => Accumulator) {
+    this.values = new Set();
+    this.makeInner = makeInner;
+  }
   add(val: EvalValue): void { if (val !== null && val !== undefined) this.values.add(typeof val === 'bigint' ? Number(val) : val as ColumnValue); }
-  result(): ColumnValue { return this.values.size; }
+  result(): ColumnValue {
+    const inner = this.makeInner();
+    for (const val of this.values) inner.add(val);
+    return inner.result();
+  }
   exportState(): ColumnValue[] { return Array.from(this.values); }
   mergeState(state: ColumnValue[]): void { for (const val of state) this.values.add(val); }
 }
 
+const ACCUMULATORS: ReadonlyMap<string, () => Accumulator> = new Map<string, () => Accumulator>([
+  ['SUM', () => new SumAccumulator()],
+  ['COUNT', () => new CountAccumulator()],
+  ['COUNT_STAR', () => new CountStarAccumulator()],
+  ['AVG', () => new AvgAccumulator()],
+  ['AVG_PARTIAL', () => new AvgAccumulator()],
+  ['AVG_FINAL', () => new AvgFinalAccumulator()],
+  ['MIN', () => new MinAccumulator()],
+  ['MAX', () => new MaxAccumulator()],
+]);
+
+const DISTINCT_SENSITIVE_AGGREGATES: ReadonlySet<string> = new Set(['COUNT', 'SUM', 'AVG']);
+
 export function getAccumulatorFactory(name: string, distinct: boolean = false): () => Accumulator {
-  if (distinct && (name.toUpperCase() === 'COUNT')) {
-    return () => new CountDistinctAccumulator();
-  }
-  switch (name.toUpperCase()) {
-    case 'SUM': return () => new SumAccumulator();
-    case 'COUNT': return () => new CountAccumulator();
-    case 'COUNT_STAR': return () => new CountStarAccumulator();
-    case 'AVG': return () => new AvgAccumulator();
-    case 'AVG_PARTIAL': return () => new AvgAccumulator();
-    case 'AVG_FINAL': return () => new AvgFinalAccumulator();
-    case 'MIN': return () => new MinAccumulator();
-    case 'MAX': return () => new MaxAccumulator();
-    default: throw new Error(`Unknown aggregate: ${name}`);
-  }
+  const upper = name.toUpperCase();
+  const factory = ACCUMULATORS.get(upper);
+  if (!factory) throw new Error(`Unknown aggregate: ${name}`);
+  if (!distinct || !DISTINCT_SENSITIVE_AGGREGATES.has(upper)) return factory;
+  return () => new DistinctAccumulator(factory);
 }

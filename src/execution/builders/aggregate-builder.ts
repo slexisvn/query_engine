@@ -9,7 +9,8 @@ import type {
   LogicalPartialAggregateNode,
   LogicalFinalAggregateNode,
 } from '../../planner/logical-plan.js';
-import { compileExpression, aggExprKey } from '../expression-eval.js';
+import { compileExpression } from '../expression-eval.js';
+import { exprKey, aggregateKey } from '../expr-key.js';
 import { HashAggregateOperator, getAccumulatorFactory } from '../operators/hash-aggregate.js';
 import { StreamAggregateOperator } from '../operators/stream-aggregate.js';
 import { buildAggregateDefs, extractAggregateFragment, buildFragmentSpec } from '../fragment-spec.js';
@@ -221,8 +222,12 @@ function aggregateSchemaMapping(schema: ExecSchema, groupBy: BoundExpr[], aggreg
   }
 
   const groupByCount = groupBy.length;
+  for (let g = 0; g < groupByCount; g++) {
+    columnMapping.set(exprKey(groupBy[g]), g);
+  }
   for (let a = 0; a < aggregates.length; a++) {
-    columnMapping.set(aggExprKey(aggregates[a] as BoundAggregateNode), groupByCount + a);
+    const agg = aggregates[a];
+    columnMapping.set(aggregateKey(agg.name || agg.func || '', !!agg.distinct, (agg.args || []) as BoundExpr[]), groupByCount + a);
   }
   return columnMapping;
 }

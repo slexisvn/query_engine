@@ -176,6 +176,42 @@ describe('join helper predicates', () => {
   });
 });
 
+describe('probeJoinRows three-valued mark', () => {
+  it('marks unknown when a residual condition never resolves', () => {
+    const build = new Map([[1, [{ row: [1, 'b1'] }]]]);
+    const rows = probeJoinRows(
+      [{ row: [1, 'p1'], key: 1 }],
+      (key) => build.get(key) || null,
+      {
+        joinType: JoinType.MARK,
+        buildColCount: 2,
+        probeColCount: 2,
+        conditionEvaluator: () => null,
+        hasNullKey: false,
+        onMatched: null,
+      },
+    );
+    expect(rows).toEqual([[1, 'p1', null]]);
+  });
+
+  it('marks false when the residual condition resolves to false', () => {
+    const build = new Map([[1, [{ row: [1, 'b1'] }]]]);
+    const rows = probeJoinRows(
+      [{ row: [1, 'p1'], key: 1 }],
+      (key) => build.get(key) || null,
+      {
+        joinType: JoinType.MARK,
+        buildColCount: 2,
+        probeColCount: 2,
+        conditionEvaluator: () => false,
+        hasNullKey: false,
+        onMatched: null,
+      },
+    );
+    expect(rows).toEqual([[1, 'p1', false]]);
+  });
+});
+
 describe('buildJoinOutputChunk', () => {
   it('uses provided schemas for build/probe halves and BOOLEAN for the mark column', () => {
     const rows = [[7, 'a', true], [null, 'b', false]];
@@ -188,6 +224,18 @@ describe('buildJoinOutputChunk', () => {
     expect(chunk.toRows()).toEqual(rows);
     expect(chunk.columns[2].dataType).toBe('BOOLEAN');
     expect(chunk.columns[0].dataType).toBe('INT32');
+  });
+
+  it('types every mark-join column from the probe schema', () => {
+    const rows = [[30, 'hr', false]];
+    const chunk = buildJoinOutputChunk(rows, {
+      joinType: JoinType.MARK,
+      buildColCount: 2,
+      buildSchema: ['INT32', 'INT32'],
+      probeSchema: ['INT32', 'VARCHAR'],
+    });
+    expect(chunk.toRows()).toEqual(rows);
+    expect(chunk.columns.map(c => c.dataType)).toEqual(['INT32', 'VARCHAR', 'BOOLEAN']);
   });
 
   it('builds inner-join output with declared types and null padding intact', () => {

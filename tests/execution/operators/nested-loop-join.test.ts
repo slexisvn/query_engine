@@ -206,6 +206,61 @@ describe('NestedLoopJoinOperator', () => {
       expect(rows[1]).toEqual([2, false]);
       expect(rows[2]).toEqual([3, true]);
     });
+
+    it('marks a row null when the condition is unknown and nothing matched', async () => {
+      const outer = [makeChunk([[1], [2]])];
+      const inner = [makeChunk([[1], [null]])];
+
+      const condFn = (adapter, _) => {
+        const left = adapter.columns[0].get();
+        const right = adapter.columns[1].get();
+        if (left === null || right === null) return null;
+        return left === right;
+      };
+
+      const op = new NestedLoopJoinOperator(outer, inner, 1, 1, JoinType.MARK, condFn);
+      const rows = extractRows(await op.execute());
+
+      expect(rows[0]).toEqual([1, true]);
+      expect(rows[1]).toEqual([2, null]);
+    });
+
+    it('marks false when every comparison is known to fail', async () => {
+      const outer = [makeChunk([[2]])];
+      const inner = [makeChunk([[1]])];
+
+      const condFn = (adapter, _) => adapter.columns[0].get() === adapter.columns[1].get();
+
+      const op = new NestedLoopJoinOperator(outer, inner, 1, 1, JoinType.MARK, condFn);
+      const rows = extractRows(await op.execute());
+
+      expect(rows).toEqual([[2, false]]);
+    });
+  });
+
+  describe('SINGLE join', () => {
+    it('keeps the outer row and takes at most one inner match', async () => {
+      const outer = [makeChunk([[1], [2]])];
+      const inner = [makeChunk([[1, 'a'], [1, 'b']], ['INT32', 'VARCHAR'])];
+
+      const condFn = (adapter, _) => adapter.columns[0].get() === adapter.columns[1].get();
+
+      const op = new NestedLoopJoinOperator(outer, inner, 1, 2, JoinType.SINGLE, condFn);
+      const rows = extractRows(await op.execute());
+
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toEqual([1, 1, 'a']);
+      expect(rows[1]).toEqual([2, null, null]);
+    });
+
+    it('pads every outer row when the inner side is empty', async () => {
+      const outer = [makeChunk([[1], [2]])];
+
+      const op = new NestedLoopJoinOperator(outer, [], 1, 1, JoinType.SINGLE, null);
+      const rows = extractRows(await op.execute());
+
+      expect(rows).toEqual([[1, null], [2, null]]);
+    });
   });
 
   describe('edge cases', () => {

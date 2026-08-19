@@ -175,7 +175,7 @@ describe('EmptyPropagation', () => {
     it('neither EMPTY preserves the UNION', () => {
       const plan = LogicalUnion(scan('a'), scan('b'), true);
       const result = pass.apply(plan);
-      expect(result.type).toBe(PlanNodeType.UNION);
+      expect(result.type).toBe(PlanNodeType.SET_OP);
     });
   });
 
