@@ -1,7 +1,7 @@
 import { BoundExprKind, type BoundExpr } from '../binder/expression-binder.js';
 import { toNumericValue } from '../storage/data-type.js';
-import { DefaultCardinalityEstimator } from './join-order/cardinality.js';
-import type { LogicalAggregateNode, LogicalPlanNode } from '../planner/logical-plan.js';
+import { DefaultCardinalityEstimator } from './cardinality.js';
+import type { LogicalAggregateNode, LogicalPlanNode } from './logical-plan.js';
 import type { ColumnStats, StatsProvider } from '../catalog/statistics.js';
 
 export type AggregateStatsProvider = StatsProvider;

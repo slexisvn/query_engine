@@ -384,6 +384,7 @@ export interface FragmentProcessResult {
   plan: LogicalPlanNode;
   exchangeInputs: ExchangeInput[];
   workerNodes: NodeId[];
+  groupsColocated?: boolean;
 }
 
 export interface GatherPlacementResult {
@@ -394,6 +395,7 @@ export interface GatherPlacementResult {
 export interface FragmentizeContext {
   coordinatorId: NodeId;
   scanFilter?: BoundExpr | null;
+  combinedAbove?: boolean;
 }
 
 export enum QueryStatus {

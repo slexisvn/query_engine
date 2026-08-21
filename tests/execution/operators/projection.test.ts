@@ -222,15 +222,15 @@ describe('ProjectionOperator columnar tier', () => {
   });
 
   it('falls back to the scalar evaluator when the columnar tier declines', async () => {
-    const division = {
+    const modulo = {
       kind: BoundExprKind.BINARY,
-      op: '/',
+      op: '%',
       left: colRef(),
       right: { kind: BoundExprKind.LITERAL, value: 2 },
     };
     let scalarCalls = 0;
     const evaluator = (chunk, row) => { scalarCalls++; return chunk.columns[0].get(row) / 2; };
-    const op = new ProjectionOperator([division], [evaluator], ['FLOAT64'], mapping, null);
+    const op = new ProjectionOperator([modulo], [evaluator], ['FLOAT64'], mapping, null);
 
     const result = await op.process(numericChunk([2, 4, 6]));
 

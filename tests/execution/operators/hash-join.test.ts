@@ -241,7 +241,7 @@ describe('HashJoinBuild + HashJoinProbe', () => {
 
   describe('emitUnmatched', () => {
     it('returns build rows not matched during probe', async () => {
-      const buildSide = new HashJoinBuild([keyAt(0)], JoinType.FULL, false, memSpill());
+      const buildSide = new HashJoinBuild([keyAt(0)], JoinType.FULL, false, memSpill(), true);
       await buildSide.consume(makeChunk([
         { type: 'INT32', values: [1, 2, 3] },
         { type: 'VARCHAR', values: ['a', 'b', 'c'] },
@@ -251,7 +251,7 @@ describe('HashJoinBuild + HashJoinProbe', () => {
       const probe = new HashJoinProbe(buildSide, [keyAt(0)], 2, 1, JoinType.FULL);
       await probe.process(makeChunk([{ type: 'INT32', values: [1] }]));
 
-      const unmatched = buildSide.emitUnmatched(1);
+      const unmatched = probe.buildUnmatchedChunk(buildSide.emitUnmatched()).toRows();
 
       expect(unmatched.length).toBe(2);
       const keys = unmatched.map(r => r[0]);
@@ -276,7 +276,7 @@ describe('HashJoinBuild + HashJoinProbe', () => {
       const matchChunk = await probe.process(makeChunk([{ type: 'INT32', values: [1] }]));
       const matchedLabels = (matchChunk ? matchChunk.toRows() : []).map(r => r[1]);
 
-      const unmatched = buildSide.emitUnmatched(1);
+      const unmatched = probe.buildUnmatchedChunk(buildSide.emitUnmatched()).toRows();
       const unmatchedLabels = unmatched.map(r => r[1]);
 
       expect(matchedLabels).toEqual(['a']);
@@ -288,7 +288,7 @@ describe('HashJoinBuild + HashJoinProbe', () => {
       expect(nullKeyRow[2]).toBeNull();
     });
 
-    it('still drops null-key build rows when the build side is not preserved', async () => {
+    it('emits no build rows at all when the build side is not preserved', async () => {
       const buildSide = new HashJoinBuild([keyAt(0)], JoinType.LEFT, false, memSpill(), false);
       await buildSide.consume(makeChunk([
         { type: 'INT32', values: [1, null, 3] },
@@ -299,8 +299,8 @@ describe('HashJoinBuild + HashJoinProbe', () => {
       const probe = new HashJoinProbe(buildSide, [keyAt(0)], 2, 1, JoinType.LEFT);
       await probe.process(makeChunk([{ type: 'INT32', values: [1] }]));
 
-      const unmatchedLabels = buildSide.emitUnmatched(1).map(r => r[1]);
-      expect(unmatchedLabels).toEqual(['c']);
+      const unmatchedLabels = buildSide.emitUnmatched().map(r => r[1]);
+      expect(unmatchedLabels).toEqual([]);
     });
   });
 
@@ -405,7 +405,8 @@ describe('HashJoin spilled outer joins', () => {
     const inMemory = await probe.process(probeChunk(probeKeys));
     if (inMemory && inMemory.size > 0) out.push(...inMemory.toRows());
 
-    for (const row of build.emitUnmatched(2)) out.push(row);
+    const unmatched = build.emitUnmatched();
+    if (unmatched.length > 0) out.push(...probe.buildUnmatchedChunk(unmatched).toRows());
 
     await probe.finalize({ async consume(chunk) { out.push(...chunk.toRows()); } });
     return out;

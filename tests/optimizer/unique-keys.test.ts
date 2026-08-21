@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { columnKey, isUniqueOnKeys } from '../../src/optimizer/unique-keys.js';
+import { columnKey, isUniqueOnKeys, producesDistinctRows } from '../../src/optimizer/unique-keys.js';
 import {
   LogicalScan,
   LogicalProject,
@@ -7,6 +7,8 @@ import {
   LogicalAggregate,
   LogicalDistinct,
   LogicalJoin,
+  LogicalLimit,
+  LogicalSort,
   JoinType,
 } from '../../src/planner/logical-plan.js';
 import { BoundExprKind } from '../../src/binder/expression-binder.js';
@@ -115,5 +117,68 @@ describe('isUniqueOnKeys', () => {
   it('rejects a join', () => {
     const plan = LogicalJoin(JoinType.INNER, null, LogicalScan('users', [], 'u'), LogicalScan('orders', [], 'o'));
     expect(isUniqueOnKeys(plan, keys('U.ID'), catalog)).toBe(false);
+  });
+});
+
+describe('producesDistinctRows', () => {
+  it('accepts an aggregate because it emits one row per group', () => {
+    const plan = LogicalAggregate([colRef('u', 'city')], [], LogicalScan('users', [], 'u'));
+    expect(producesDistinctRows(plan, catalog)).toBe(true);
+  });
+
+  it('accepts a scalar aggregate because it emits a single row', () => {
+    const plan = LogicalAggregate([], [], LogicalScan('users', [], 'u'));
+    expect(producesDistinctRows(plan, catalog)).toBe(true);
+  });
+
+  it('accepts a distinct node', () => {
+    expect(producesDistinctRows(LogicalDistinct(LogicalScan('users', [], 'u')), catalog)).toBe(true);
+  });
+
+  it('accepts a projection of every group key of an aggregate', () => {
+    const aggregate = LogicalAggregate([colRef('u', 'city')], [], LogicalScan('users', [], 'u'));
+    const plan = LogicalProject([colRef('u', 'city', 'city')], aggregate);
+    expect(producesDistinctRows(plan, catalog)).toBe(true);
+  });
+
+  it('rejects a projection that drops a group key of an aggregate', () => {
+    const aggregate = LogicalAggregate([colRef('u', 'city'), colRef('u', 'year')], [], LogicalScan('users', [], 'u'));
+    const plan = LogicalProject([colRef('u', 'city', 'city')], aggregate);
+    expect(producesDistinctRows(plan, catalog)).toBe(false);
+  });
+
+  it('accepts a projection of a primary key', () => {
+    const plan = LogicalProject([colRef('u', 'id', 'id')], LogicalScan('users', [], 'u'));
+    expect(producesDistinctRows(plan, catalog)).toBe(true);
+  });
+
+  it('rejects a projection of a non-key column', () => {
+    const plan = LogicalProject([colRef('u', 'city', 'city')], LogicalScan('users', [], 'u'));
+    expect(producesDistinctRows(plan, catalog)).toBe(false);
+  });
+
+  it('sees through a filter, which cannot create duplicates', () => {
+    const aggregate = LogicalAggregate([colRef('u', 'city')], [], LogicalScan('users', [], 'u'));
+    expect(producesDistinctRows(LogicalFilter(null, aggregate), catalog)).toBe(true);
+  });
+
+  it('sees through a limit, which only drops rows', () => {
+    const aggregate = LogicalAggregate([colRef('u', 'city')], [], LogicalScan('users', [], 'u'));
+    expect(producesDistinctRows(LogicalLimit(5, 0, aggregate), catalog)).toBe(true);
+  });
+
+  it('sees through a sort, which only reorders rows', () => {
+    const aggregate = LogicalAggregate([colRef('u', 'city')], [], LogicalScan('users', [], 'u'));
+    const sorted = LogicalSort([{ expr: colRef('u', 'city'), direction: 'ASC' }], aggregate);
+    expect(producesDistinctRows(sorted, catalog)).toBe(true);
+  });
+
+  it('rejects a bare scan', () => {
+    expect(producesDistinctRows(LogicalScan('users', [], 'u'), catalog)).toBe(false);
+  });
+
+  it('rejects a join', () => {
+    const plan = LogicalJoin(JoinType.INNER, null, LogicalScan('users', [], 'u'), LogicalScan('orders', [], 'o'));
+    expect(producesDistinctRows(plan, catalog)).toBe(false);
   });
 });

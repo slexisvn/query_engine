@@ -170,4 +170,109 @@ describe('subquery and derived table semantics', () => {
     await expect(runQuery("SELECT ID FROM EMP WHERE NAME LIKE ANY (SELECT NAME FROM EMP)"))
       .rejects.toThrow();
   });
+
+  describe('scalar subqueries in HAVING', () => {
+    it('compares a group aggregate against an uncorrelated scalar subquery', async () => {
+      const rows = await runQuery('SELECT DEPT FROM EMP GROUP BY DEPT HAVING SUM(SAL) > (SELECT AVG(SAL) FROM EMP)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ DEPT: 10 }, { DEPT: 20 }, { DEPT: null }]));
+    });
+
+    it('agrees with the literal the subquery evaluates to', async () => {
+      const viaSubquery = await runQuery('SELECT DEPT FROM EMP GROUP BY DEPT HAVING SUM(SAL) > (SELECT AVG(SAL) FROM EMP)');
+      const viaLiteral = await runQuery('SELECT DEPT FROM EMP GROUP BY DEPT HAVING SUM(SAL) > 275');
+      expect(sortedRows(viaSubquery)).toEqual(sortedRows(viaLiteral));
+    });
+
+    it('excludes every group when the comparison is inverted', async () => {
+      const rows = await runQuery('SELECT DEPT FROM EMP GROUP BY DEPT HAVING SUM(SAL) < (SELECT AVG(SAL) FROM EMP)');
+      expect(rows).toEqual([]);
+    });
+
+    it('does not treat equality as trivially true', async () => {
+      const rows = await runQuery('SELECT DEPT FROM EMP GROUP BY DEPT HAVING SUM(SAL) = (SELECT SUM(SAL) FROM EMP WHERE DEPT = 10)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ DEPT: 10 }, { DEPT: 20 }]));
+    });
+
+    it('compares a grouping key against a scalar subquery', async () => {
+      const rows = await runQuery('SELECT DEPT FROM EMP GROUP BY DEPT HAVING DEPT > (SELECT MIN(DEPT) FROM EMP)');
+      expect(rows).toEqual([{ DEPT: 20 }]);
+    });
+
+    it('compares a group aggregate against a correlated scalar subquery', async () => {
+      const rows = await runQuery(
+        'SELECT DEPT, COUNT(*) AS C FROM EMP GROUP BY DEPT HAVING COUNT(*) > (SELECT COUNT(*) FROM EMP E2 WHERE E2.DEPT = EMP.DEPT AND E2.MGR IS NOT NULL)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ DEPT: 10, C: 2 }, { DEPT: null, C: 1 }]));
+    });
+
+    it('agrees with the same comparison applied outside the grouping', async () => {
+      const inHaving = await runQuery(
+        'SELECT DEPT, COUNT(*) AS C FROM EMP GROUP BY DEPT HAVING COUNT(*) > (SELECT COUNT(*) FROM EMP E2 WHERE E2.DEPT = EMP.DEPT AND E2.MGR IS NOT NULL)');
+      const outside = await runQuery(
+        'SELECT DEPT, C FROM (SELECT DEPT, COUNT(*) AS C FROM EMP GROUP BY DEPT) X WHERE C > (SELECT COUNT(*) FROM EMP E2 WHERE E2.DEPT = X.DEPT AND E2.MGR IS NOT NULL)');
+      expect(sortedRows(inHaving)).toEqual(sortedRows(outside));
+    });
+
+    it('counts zero for a correlated subquery in HAVING that matches no row', async () => {
+      const rows = await runQuery(
+        'SELECT DEPT FROM EMP GROUP BY DEPT HAVING (SELECT COUNT(*) FROM DEPT D WHERE D.DEPT = EMP.DEPT) = 0');
+      expect(rows).toEqual([{ DEPT: null }]);
+    });
+
+    it('keeps EXISTS and IN subqueries in HAVING working', async () => {
+      expect(sortedRows(await runQuery('SELECT DEPT FROM EMP GROUP BY DEPT HAVING EXISTS (SELECT 1 FROM DEPT)')))
+        .toEqual(sortedRows([{ DEPT: 10 }, { DEPT: 20 }, { DEPT: null }]));
+      expect(await runQuery("SELECT DEPT FROM EMP GROUP BY DEPT HAVING DEPT IN (SELECT DEPT FROM DEPT WHERE DNAME = 'sales')"))
+        .toEqual([{ DEPT: 10 }]);
+    });
+  });
+  describe('several scalar subqueries in one statement', () => {
+    it('gives each scalar subquery in the SELECT list its own value', async () => {
+      const rows = await runQuery('SELECT (SELECT MIN(SAL) FROM EMP) AS LO, (SELECT MAX(SAL) FROM EMP) AS HI FROM EMP LIMIT 1');
+      expect(rows).toEqual([{ LO: 100, HI: 500 }]);
+    });
+
+    it('subtracts one scalar subquery from another', async () => {
+      const rows = await runQuery('SELECT (SELECT COUNT(*) FROM EMP) - (SELECT COUNT(SAL) FROM EMP) AS N FROM EMP LIMIT 1');
+      expect(rows).toEqual([{ N: 1 }]);
+    });
+
+    it('keeps three scalar subqueries distinct', async () => {
+      const rows = await runQuery('SELECT (SELECT MIN(SAL) FROM EMP) AS A, (SELECT MAX(SAL) FROM EMP) AS B, (SELECT COUNT(*) FROM EMP) AS C FROM EMP LIMIT 1');
+      expect(rows).toEqual([{ A: 100, B: 500, C: 5 }]);
+    });
+
+    it('keeps two scalar subqueries distinct inside one arithmetic expression', async () => {
+      const rows = await runQuery('SELECT (SELECT MAX(SAL) FROM EMP) - (SELECT MIN(SAL) FROM EMP) AS SPAN FROM EMP LIMIT 1');
+      expect(rows).toEqual([{ SPAN: 400 }]);
+    });
+
+    it('keeps two scalar subqueries distinct in a WHERE clause', async () => {
+      const rows = await runQuery('SELECT ID FROM EMP WHERE SAL > (SELECT MIN(SAL) FROM EMP) AND SAL < (SELECT MAX(SAL) FROM EMP)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 2 }, { ID: 3 }]));
+    });
+
+    it('still folds a scalar subquery that appears twice', async () => {
+      const rows = await runQuery('SELECT (SELECT COUNT(*) FROM EMP) + (SELECT COUNT(*) FROM EMP) AS N FROM EMP LIMIT 1');
+      expect(rows).toEqual([{ N: 10 }]);
+    });
+
+    it('keeps scalar subqueries distinct across a derived table boundary', async () => {
+      const rows = await runQuery('SELECT MAX(X) AS N FROM (SELECT (SELECT MAX(SAL) FROM EMP) - (SELECT MIN(SAL) FROM EMP) AS X FROM EMP) Y');
+      expect(rows).toEqual([{ N: 400 }]);
+    });
+  });
+
+  describe('depth of correlation', () => {
+    it('correlates a subquery nested inside another subquery to its own parent', async () => {
+      const rows = await runQuery(
+        'SELECT ID FROM EMP WHERE EXISTS (SELECT 1 FROM DEPT D WHERE D.DEPT = EMP.DEPT AND EXISTS (SELECT 1 FROM EMP E2 WHERE E2.DEPT = D.DEPT))');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 1 }, { ID: 2 }, { ID: 3 }, { ID: 4 }]));
+    });
+
+    it('rejects a correlated reference that reaches past its immediate parent', async () => {
+      await expect(runQuery(
+        'SELECT ID FROM EMP WHERE EXISTS (SELECT 1 FROM DEPT D WHERE D.DEPT = EMP.DEPT AND EXISTS (SELECT 1 FROM EMP E2 WHERE E2.SAL > EMP.SAL))'))
+        .rejects.toThrow(/one level of correlation/);
+    });
+  });
 });

@@ -84,17 +84,33 @@ export class Parser {
   }
 
   parseQueryExpr(): AST.QueryStmt {
-    let left = this.parseSelectStmt();
+    let left = this.parseQueryTerm();
 
-    while (this.isAt(TokenType.UNION) || this.isAt(TokenType.EXCEPT) || this.isAt(TokenType.INTERSECT)) {
+    while (this.isAt(TokenType.UNION) || this.isAt(TokenType.EXCEPT)) {
       const op = this.advance().type;
-      const all = this.tryConsume(TokenType.ALL);
-      if (!all) this.tryConsume(TokenType.DISTINCT);
-      const right = this.parseSelectStmt();
-      left = AST.SetOp(op, left, right, all);
+      const all = this.consumeSetQuantifier();
+      left = AST.SetOp(op, left, this.parseQueryTerm(), all);
     }
 
     return this.attachQueryTail(left, this.parseQueryTail());
+  }
+
+  parseQueryTerm(): AST.QueryStmt {
+    let left = this.parseSelectStmt();
+
+    while (this.isAt(TokenType.INTERSECT)) {
+      const op = this.advance().type;
+      const all = this.consumeSetQuantifier();
+      left = AST.SetOp(op, left, this.parseSelectStmt(), all);
+    }
+
+    return left;
+  }
+
+  consumeSetQuantifier(): boolean {
+    const all = this.tryConsume(TokenType.ALL);
+    if (!all) this.tryConsume(TokenType.DISTINCT);
+    return all;
   }
 
   parseSelectStmt(): AST.QueryStmt {
@@ -515,7 +531,10 @@ export class Parser {
 
     if (token.type === TokenType.NUMBER) {
       this.advance();
-      return AST.Literal(token.value.includes('.') ? parseFloat(token.value) : parseInt(token.value, 10));
+      if (token.value.includes('.')) {
+        return AST.Literal(parseFloat(token.value), DataType.FLOAT64);
+      }
+      return AST.Literal(parseInt(token.value, 10));
     }
 
     if (token.type === TokenType.STRING) {

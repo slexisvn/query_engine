@@ -2,16 +2,18 @@ import { describe, it, expect } from 'vitest';
 import {
   joinKeyOf,
   joinKeyHash,
-  probeJoinRows,
+  joinKeyValues,
+  probeJoinInto,
   emitsOnUnmatchedProbe,
   emitsUnmatchedBuild,
-  buildJoinOutputChunk,
+  JoinOutputBuffer,
   materializeRow,
 } from '../../../src/execution/operators/join-core.js';
 import { JoinType } from '../../../src/planner/logical-plan.js';
 import { Column } from '../../../src/storage/column.js';
 import { DataChunk } from '../../../src/storage/chunk.js';
 import { SabArena } from '../../../src/storage/sab-arena.js';
+import { createKeyedHashTable } from '../../../src/execution/hash-table.js';
 
 function tableOf(buildRows) {
   const map = new Map();
@@ -28,7 +30,8 @@ function tableOf(buildRows) {
 }
 
 function probe(items, table, joinType, extra = {}) {
-  return probeJoinRows(
+  const output = new JoinOutputBuffer({ joinType, buildColCount: 2, probeColCount: 2 });
+  probeJoinInto(
     items.map(([key, ...row]) => ({ key, row: [key, ...row] })),
     (key) => table.get(key) || null,
     {
@@ -39,19 +42,43 @@ function probe(items, table, joinType, extra = {}) {
       hasNullKey: false,
       ...extra,
     },
+    output,
   );
+  return output.toChunk(0, output.length).toRows();
+}
+
+function markRows(conditionEvaluator) {
+  const build = new Map([[1, [{ row: [1, 'b1'] }]]]);
+  const output = new JoinOutputBuffer({ joinType: JoinType.MARK, buildColCount: 2, probeColCount: 2 });
+  probeJoinInto(
+    [{ row: [1, 'p1'], key: 1 }],
+    (key) => build.get(key) || null,
+    {
+      joinType: JoinType.MARK,
+      buildColCount: 2,
+      probeColCount: 2,
+      conditionEvaluator,
+      hasNullKey: false,
+      onMatched: null,
+    },
+    output,
+  );
+  return output.toChunk(0, output.length).toRows();
 }
 
 describe('joinKeyOf', () => {
   const col = (values) => ({ get: (i) => values[i] });
   const chunkLike = (...cols) => ({ columns: cols.map(col) });
+  const scratch = [null];
 
-  it('returns raw value for single key, null on null, Number for bigint', () => {
-    const chunk = chunkLike([5, null, 7n]);
+  it('nulls out a single key on null and treats a bigint as its numeric equal', () => {
+    const chunk = chunkLike([5, null, 5n]);
     const extractor = (c, r) => c.columns[0].get(r);
-    expect(joinKeyOf([extractor], chunk, 0)).toBe(5);
     expect(joinKeyOf([extractor], chunk, 1)).toBeNull();
-    expect(joinKeyOf([extractor], chunk, 2)).toBe(7);
+
+    const table = createKeyedHashTable(1);
+    const entryOf = (row) => table.findOrInsert(joinKeyValues(joinKeyOf([extractor], chunk, row), scratch));
+    expect(entryOf(0)).toBe(entryOf(2));
   });
 
   it('nulls out a multi-part key when any part is null', () => {
@@ -64,8 +91,10 @@ describe('joinKeyOf', () => {
   it('gives equal multi-part keys to equal tuples and distinct keys to distinct tuples', () => {
     const chunk = chunkLike([1, 1, 2], ['a', 'a', 'a']);
     const extractors = [(c, r) => c.columns[0].get(r), (c, r) => c.columns[1].get(r)];
-    expect(joinKeyOf(extractors, chunk, 0)).toBe(joinKeyOf(extractors, chunk, 1));
-    expect(joinKeyOf(extractors, chunk, 0)).not.toBe(joinKeyOf(extractors, chunk, 2));
+    const table = createKeyedHashTable(2);
+    const entryOf = (row) => table.findOrInsert(joinKeyOf(extractors, chunk, row));
+    expect(entryOf(0)).toBe(entryOf(1));
+    expect(entryOf(0)).not.toBe(entryOf(2));
   });
 
   it('does not collide tuples that differ only in where a separator-like character falls', () => {
@@ -75,7 +104,7 @@ describe('joinKeyOf', () => {
   });
 });
 
-describe('probeJoinRows semantics', () => {
+describe('probeJoinInto semantics', () => {
   const build = tableOf([[1, 'b1'], [1, 'b1x'], [2, 'b2']]);
 
   it('INNER emits one row per matching build row and drops unmatched/null', () => {
@@ -168,113 +197,117 @@ describe('join helper predicates', () => {
     expect(emitsUnmatchedBuild(JoinType.SEMI)).toBe(false);
   });
 
-  it('hashes numbers, strings and bigints deterministically and distinctly from 5 vs "5"', () => {
-    expect(joinKeyHash(5)).toBe(joinKeyHash(5));
-    expect(joinKeyHash('abc')).toBe(joinKeyHash('abc'));
-    expect(joinKeyHash(5n)).toBe(joinKeyHash(5n));
-    expect(typeof joinKeyHash(1.5)).toBe('number');
+  it('hashes a key deterministically and keeps 5 apart from the string "5"', () => {
+    const scratchA = [null];
+    const scratchB = [null];
+    expect(joinKeyHash(5, scratchA)).toBe(joinKeyHash(5, scratchB));
+    expect(joinKeyHash('abc', scratchA)).toBe(joinKeyHash('abc', scratchB));
+    expect(joinKeyHash(5n, scratchA)).toBe(joinKeyHash(5, scratchB));
+    expect(joinKeyHash(5, scratchA)).not.toBe(joinKeyHash('5', scratchB));
+    expect(typeof joinKeyHash(1.5, scratchA)).toBe('number');
   });
 });
 
-describe('probeJoinRows three-valued mark', () => {
+describe('probeJoinInto three-valued mark', () => {
   it('marks unknown when a residual condition never resolves', () => {
-    const build = new Map([[1, [{ row: [1, 'b1'] }]]]);
-    const rows = probeJoinRows(
-      [{ row: [1, 'p1'], key: 1 }],
-      (key) => build.get(key) || null,
-      {
-        joinType: JoinType.MARK,
-        buildColCount: 2,
-        probeColCount: 2,
-        conditionEvaluator: () => null,
-        hasNullKey: false,
-        onMatched: null,
-      },
-    );
-    expect(rows).toEqual([[1, 'p1', null]]);
+    expect(markRows(() => null)).toEqual([[1, 'p1', null]]);
   });
 
   it('marks false when the residual condition resolves to false', () => {
-    const build = new Map([[1, [{ row: [1, 'b1'] }]]]);
-    const rows = probeJoinRows(
-      [{ row: [1, 'p1'], key: 1 }],
-      (key) => build.get(key) || null,
-      {
-        joinType: JoinType.MARK,
-        buildColCount: 2,
-        probeColCount: 2,
-        conditionEvaluator: () => false,
-        hasNullKey: false,
-        onMatched: null,
-      },
-    );
-    expect(rows).toEqual([[1, 'p1', false]]);
+    expect(markRows(() => false)).toEqual([[1, 'p1', false]]);
   });
 });
 
-describe('buildJoinOutputChunk', () => {
+describe('JoinOutputBuffer', () => {
+  function bufferOf(layout, entries) {
+    const output = new JoinOutputBuffer(layout);
+    for (const [build, probeRow, mark] of entries) output.push(build, probeRow, mark);
+    return output;
+  }
+
   it('uses provided schemas for build/probe halves and BOOLEAN for the mark column', () => {
-    const rows = [[7, 'a', true], [null, 'b', false]];
-    const chunk = buildJoinOutputChunk(rows, {
-      joinType: JoinType.MARK,
-      buildColCount: 0,
-      buildSchema: null,
-      probeSchema: ['INT32', 'VARCHAR'],
-    });
-    expect(chunk.toRows()).toEqual(rows);
+    const output = bufferOf(
+      { joinType: JoinType.MARK, buildColCount: 0, probeColCount: 2, buildSchema: null, probeSchema: ['INT32', 'VARCHAR'] },
+      [[null, [7, 'a'], true], [null, [null, 'b'], false]],
+    );
+
+    const chunk = output.toChunk(0, output.length);
+
+    expect(chunk.toRows()).toEqual([[7, 'a', true], [null, 'b', false]]);
     expect(chunk.columns[2].dataType).toBe('BOOLEAN');
     expect(chunk.columns[0].dataType).toBe('INT32');
   });
 
   it('types every mark-join column from the probe schema', () => {
-    const rows = [[30, 'hr', false]];
-    const chunk = buildJoinOutputChunk(rows, {
-      joinType: JoinType.MARK,
-      buildColCount: 2,
-      buildSchema: ['INT32', 'INT32'],
-      probeSchema: ['INT32', 'VARCHAR'],
-    });
-    expect(chunk.toRows()).toEqual(rows);
+    const output = bufferOf(
+      { joinType: JoinType.MARK, buildColCount: 2, probeColCount: 2, buildSchema: ['INT32', 'INT32'], probeSchema: ['INT32', 'VARCHAR'] },
+      [[null, [30, 'hr'], false]],
+    );
+
+    const chunk = output.toChunk(0, output.length);
+
+    expect(chunk.toRows()).toEqual([[30, 'hr', false]]);
     expect(chunk.columns.map(c => c.dataType)).toEqual(['INT32', 'VARCHAR', 'BOOLEAN']);
   });
 
   it('builds inner-join output with declared types and null padding intact', () => {
-    const rows = [
-      [1, 'x', 10, 2.5],
-      [null, null, 20, -1.5],
-    ];
-    const chunk = buildJoinOutputChunk(rows, {
-      joinType: JoinType.INNER,
-      buildColCount: 2,
-      buildSchema: ['INT32', 'VARCHAR'],
-      probeSchema: ['INT32', 'FLOAT64'],
-    });
-    expect(chunk.toRows()).toEqual(rows);
+    const output = bufferOf(
+      { joinType: JoinType.INNER, buildColCount: 2, probeColCount: 2, buildSchema: ['INT32', 'VARCHAR'], probeSchema: ['INT32', 'FLOAT64'] },
+      [[[1, 'x'], [10, 2.5]], [null, [20, -1.5]]],
+    );
+
+    const chunk = output.toChunk(0, output.length);
+
+    expect(chunk.toRows()).toEqual([[1, 'x', 10, 2.5], [null, null, 20, -1.5]]);
     expect(chunk.columns.map(c => c.dataType)).toEqual(['INT32', 'VARCHAR', 'INT32', 'FLOAT64']);
+  });
+
+  it('pads the probe half of an unmatched build row with nulls', () => {
+    const output = bufferOf(
+      { joinType: JoinType.LEFT, buildColCount: 2, probeColCount: 2, buildSchema: ['INT32', 'VARCHAR'], probeSchema: ['INT32', 'VARCHAR'] },
+      [[[1, 'x'], null]],
+    );
+
+    expect(output.toChunk(0, output.length).toRows()).toEqual([[1, 'x', null, null]]);
+  });
+
+  it('infers a column type from the data when no schema declares it', () => {
+    const output = bufferOf(
+      { joinType: JoinType.INNER, buildColCount: 1, probeColCount: 1 },
+      [[[null], ['a']], [[2.5], ['b']]],
+    );
+
+    const chunk = output.toChunk(0, output.length);
+
+    expect(chunk.columns.map(c => c.dataType)).toEqual(['FLOAT64', 'VARCHAR']);
+    expect(chunk.toRows()).toEqual([[null, 'a'], [2.5, 'b']]);
+  });
+
+  it('splits accumulated rows into batches without losing or reordering any', () => {
+    const entries = [];
+    for (let i = 0; i < 7; i++) entries.push([[i], [`p${i}`]]);
+    const output = bufferOf(
+      { joinType: JoinType.INNER, buildColCount: 1, probeColCount: 1, buildSchema: ['INT32'], probeSchema: ['VARCHAR'] },
+      entries,
+    );
+
+    const chunks = [...output.chunks(3)];
+
+    expect(chunks.map(c => c.size)).toEqual([3, 3, 1]);
+    expect(chunks.flatMap(c => c.toRows())).toEqual(entries.map(([b, p]) => [b[0], p[0]]));
   });
 
   it('allocates columns on a shared arena when given one', () => {
     const arena = new SabArena(4096);
-    const chunk = buildJoinOutputChunk([[1, 'a'], [2, 'b']], {
-      joinType: JoinType.INNER,
-      buildColCount: 1,
-      buildSchema: ['INT32'],
-      probeSchema: ['VARCHAR'],
-    }, arena);
+    const output = bufferOf(
+      { joinType: JoinType.INNER, buildColCount: 1, probeColCount: 1, buildSchema: ['INT32'], probeSchema: ['VARCHAR'] },
+      [[[1], ['a']], [[2], ['b']]],
+    );
+
+    const chunk = output.toChunk(0, output.length, arena);
+
     expect(chunk.columns[0].data.buffer).toBeInstanceOf(SharedArrayBuffer);
     expect(chunk.columns[1].stringBytes.buffer).toBeInstanceOf(SharedArrayBuffer);
     expect(chunk.toRows()).toEqual([[1, 'a'], [2, 'b']]);
-  });
-});
-
-describe('materializeRow', () => {
-  it('reads one physical row across all columns', () => {
-    const a = new Column('INT32', 3);
-    const b = new Column('VARCHAR', 3);
-    [1, 2, 3].forEach((v, i) => a.set(i, v));
-    ['x', null, 'z'].forEach((v, i) => b.set(i, v));
-    a.length = 3; b.length = 3;
-    const chunk = new DataChunk([a, b], 3);
-    expect(materializeRow(chunk, 1)).toEqual([2, null]);
   });
 });

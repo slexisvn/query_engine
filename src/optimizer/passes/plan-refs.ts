@@ -9,7 +9,7 @@ export interface NamedExpr { outputName?: string; alias?: string; name?: string;
 
 export interface CollectPlanRefsOptions { recurseProject?: boolean; dottedAlias?: boolean; }
 
-function outputName(expr: BoundExpr | NamedExpr): string {
+export function outputName(expr: BoundExpr | NamedExpr): string {
   const named = expr as NamedExpr;
   return (named?.outputName || named?.alias || named?.name || named?.columnName || '').toUpperCase();
 }

@@ -2,7 +2,7 @@ import { DPhypEnumerator } from './dphyp.js';
 import { GreedyJoinEnumerator } from './greedy.js';
 import { Config } from '../../config.js';
 import type { HyperGraph } from './hypergraph.js';
-import type { DefaultCostModel } from './cost-model.js';
+import type { DefaultCostModel } from '../../planner/cost-model.js';
 import type { JoinCardinalityEstimator, JoinEnumerator, JoinOrderEntry } from './join-plan.js';
 
 export interface JoinEnumerationOptions {

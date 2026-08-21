@@ -110,7 +110,7 @@ describe('BinderScope', () => {
       const parent = new BinderScope();
       parent.addTable('t', { originalName: 'T', columns: makeColumns('OUTER_COL') });
 
-      const child = parent.child();
+      const child = parent.subqueryChild();
       child.addTable('s', { originalName: 'S', columns: makeColumns('INNER_COL') });
 
       const result = child.resolveColumn('outer_col');
@@ -119,12 +119,19 @@ describe('BinderScope', () => {
       expect(result.column.name).toBe('OUTER_COL');
     });
 
-    it('increments depth through multiple parent scopes', () => {
+    it('leaves depth unchanged across a scope that is not a query boundary', () => {
+      const parent = new BinderScope();
+      parent.addTable('t', { originalName: 'T', columns: makeColumns('OUTER_COL') });
+
+      expect(parent.child().resolveColumn('outer_col').depth).toBe(0);
+      expect(parent.subqueryChild().child().resolveColumn('outer_col').depth).toBe(1);
+    });
+
+    it('counts one depth level per enclosing subquery scope', () => {
       const root = new BinderScope();
       root.addTable('t', { originalName: 'T', columns: makeColumns('ROOT_COL') });
 
-      const child = root.child();
-      const grandchild = child.child();
+      const grandchild = root.subqueryChild().subqueryChild();
 
       const result = grandchild.resolveColumn('root_col');
       expect(result.depth).toBe(2);
@@ -158,10 +165,8 @@ describe('BinderScope', () => {
       const parent = new BinderScope();
       parent.addTable('t1', { originalName: 'T1', columns: makeColumns('A', 'B') });
 
-      const child = parent.child();
-
-      const result = child.resolveColumn('a', 't1');
-      expect(result.depth).toBe(1);
+      expect(parent.subqueryChild().resolveColumn('a', 't1').depth).toBe(1);
+      expect(parent.child().resolveColumn('a', 't1').depth).toBe(0);
     });
   });
 

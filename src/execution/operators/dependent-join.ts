@@ -4,6 +4,7 @@ import { DataType } from '../../storage/data-type.js';
 import type { ColumnValue } from '../../storage/data-type.js';
 import type { ExecColumn, ExecSchema } from '../execution-types.js';
 import { materializeActiveRow } from './join-core.js';
+import { SCALAR_OUTPUT_NAME } from '../../planner/logical-plan.js';
 
 type JoinRow = ColumnValue[];
 
@@ -13,12 +14,12 @@ export class DependentJoinOperator {
   resultRows: JoinRow[];
   resultSchema: ExecSchema;
 
-  constructor(subqueryType: string, outerSchema: ExecSchema) {
+  constructor(subqueryType: string, outerSchema: ExecSchema, scalarColumn: string | null = null) {
     this.subqueryType = subqueryType;
     this.outerSchema = outerSchema;
     this.resultRows = [];
     this.resultSchema = this.subqueryType === 'SCALAR'
-      ? [...outerSchema, { name: '_scalar', dataType: DataType.FLOAT64, tableAlias: '' } as ExecColumn]
+      ? [...outerSchema, { name: scalarColumn ?? SCALAR_OUTPUT_NAME, dataType: DataType.FLOAT64, tableAlias: '' } as ExecColumn]
       : outerSchema;
   }
 

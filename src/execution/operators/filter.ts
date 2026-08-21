@@ -6,6 +6,7 @@ import type { BoundExpr, BoundColumnRefNode } from '../../binder/expression-bind
 import { isFixedWidth } from '../../storage/data-type.js';
 import type { AnyTypedArray, ColumnValue, DataType } from '../../storage/data-type.js';
 import type { CompiledExpr, ColumnMapping } from '../execution-types.js';
+import { optionalColumnIndex, UNRESOLVED_COLUMN } from '../column-resolve.js';
 
 const OP_TO_FILTER: Record<string, string> = {
   '=': 'filterEq',
@@ -105,11 +106,14 @@ export class FilterOperator {
     const operation = OP_TO_FILTER[op];
     if (!this.parallelDispatch!.canParallelize(operation, dataType, 1)) return null;
 
+    const columnIndex = optionalColumnIndex(columnRef, this.columnMapping);
+    if (columnIndex === UNRESOLVED_COLUMN) return null;
+
     return {
       type: 'simple',
       operation,
       dataType,
-      columnIndex: columnRef.columnIndex,
+      columnIndex,
       value: literal,
     };
   }
@@ -125,11 +129,14 @@ export class FilterOperator {
     const high = this._extractLiteralValue(between.high);
     if (low === null || high === null) return null;
 
+    const columnIndex = optionalColumnIndex(colRef, this.columnMapping);
+    if (columnIndex === UNRESOLVED_COLUMN) return null;
+
     return {
       type: 'between',
       operation: 'filterBetween',
       dataType: colRef.dataType as DataType,
-      columnIndex: colRef.columnIndex,
+      columnIndex,
       low,
       high,
     };
@@ -253,8 +260,8 @@ export class FilterOperator {
     return this._applySelectionVector(chunk, merged.data, merged.count);
   }
 
-  _getColumnData(chunk: DataChunk, column: AnyColumn): AnyTypedArray | null {
-    if (chunk.selectionVector) return null;
+  _getColumnData(chunk: DataChunk, column: AnyColumn | undefined): AnyTypedArray | null {
+    if (chunk.selectionVector || !column) return null;
     const data = (column as Column).data;
     if (!data) return null;
     return data.subarray(0, column.length);

@@ -34,8 +34,8 @@ function physicalJoinTypes(plan, statistics) {
 }
 
 import { TableStatistics, ColumnStatistics, EquiDepthHistogram } from '../../src/catalog/statistics.js';
-import { DefaultCostModel } from '../../src/optimizer/join-order/cost-model.js';
-import { DefaultCardinalityEstimator } from '../../src/optimizer/join-order/cardinality.js';
+import { DefaultCostModel } from '../../src/planner/cost-model.js';
+import { DefaultCardinalityEstimator } from '../../src/planner/cardinality.js';
 
 const catalog = createTPCHCatalog();
 

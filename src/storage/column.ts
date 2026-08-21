@@ -1,4 +1,4 @@
-import { DataType, isFixedWidth, typedArrayCtorFor, type AnyTypedArray, type ColumnValue } from './data-type.js';
+import { DataType, getDecimalScaleNumber, isFixedWidth, typedArrayCtorFor, type AnyTypedArray, type ColumnValue } from './data-type.js';
 import { bitmapWordCount, setBit, clearBit, testBit } from '../utils/bitmap.js';
 import { heapAllocator, type Allocator } from './sab-arena.js';
 
@@ -79,6 +79,9 @@ export class Column {
     if (this.dataType === DataType.BOOLEAN) {
       return val !== 0;
     }
+    if (this.dataType === DataType.DECIMAL) {
+      return Number(val) / getDecimalScaleNumber();
+    }
     return val;
   }
 
@@ -94,8 +97,14 @@ export class Column {
       this._setString(index, value as string);
     } else if (this.dataType === DataType.BOOLEAN) {
       (this.data! as Uint8Array)[index] = value ? 1 : 0;
+    } else if (this.dataType === DataType.DECIMAL) {
+      (this.data! as BigInt64Array)[index] = typeof value === 'bigint'
+        ? value
+        : BigInt(Math.round(Number(value) * getDecimalScaleNumber()));
+    } else if (this.data instanceof BigInt64Array) {
+      this.data[index] = typeof value === 'bigint' ? value : BigInt(Math.trunc(Number(value)));
     } else {
-      (this.data! as Float64Array)[index] = value as number;
+      (this.data! as Float64Array)[index] = typeof value === 'bigint' ? Number(value) : (value as number);
     }
 
     if (index >= this.length) {

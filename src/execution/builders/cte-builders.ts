@@ -132,7 +132,7 @@ export async function buildMaterialize(executor: ExecutorLike, physical: Physica
 export async function buildDependentJoin(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
   const node = physical.logical as LogicalDependentJoinNode;
   const outer = await executor.buildPipeline(physical.children[0]);
-  const dummyOp = new DependentJoinOperator(node.subqueryType, outer.schema);
+  const dummyOp = new DependentJoinOperator(node.subqueryType, outer.schema, node.markColumn);
 
   return {
     schema: dummyOp.resultSchema,
@@ -146,7 +146,7 @@ export async function buildDependentJoin(executor: ExecutorLike, physical: Physi
       graph.addDependency(currentPipelineId, outerPipelineId);
 
       const source: SourceGenerator = async function* () {
-        const runtimeOp = new DependentJoinOperator(node.subqueryType, outer.schema);
+        const runtimeOp = new DependentJoinOperator(node.subqueryType, outer.schema, node.markColumn);
         const isCorrelated = (node.correlatedColumns || []).length > 0;
         let cachedInnerChunks: DataChunk[] | null = null;
 

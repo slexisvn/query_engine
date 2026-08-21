@@ -9,6 +9,7 @@ import { OuterToInnerJoin } from './passes/outer-to-inner.js';
 import { AggregatePushdown } from './passes/aggregate-pushdown.js';
 import { JoinReorder } from './passes/join-reorder.js';
 import { JoinElimination } from './passes/join-elimination.js';
+import { DistinctElimination } from './passes/distinct-elimination.js';
 import { ProjectionPushdown } from './passes/projection-pushdown.js';
 import { LimitPushdown } from './passes/limit-pushdown.js';
 import { EmptyPropagation } from './passes/empty-propagation.js';
@@ -52,6 +53,7 @@ export function createDefaultOptimizer({ catalog, statistics }: OptimizerPipelin
     .registerPass(new JoinReorder(statsMap))
     .registerPass(new PredicatePushdown())
     .registerPass(new JoinElimination(catalog))
+    .registerPass(new DistinctElimination(catalog))
     .registerPass(new ProjectionPushdown())
     .registerPass(new LimitPushdown())
     .registerPass(new EmptyPropagation())

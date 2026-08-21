@@ -3,6 +3,7 @@ import type {
 } from '../../planner/logical-plan.js';
 import type {
   NodeId,
+  ChannelId,
   FragmentId,
   ExchangeInput,
   OutputPartitioning,
@@ -26,6 +27,10 @@ export const FragmentState: Record<string, FragmentStateEnum> = {
   FAILED: 'failed' as FragmentStateEnum,
   CANCELLED: 'cancelled' as FragmentStateEnum,
 };
+
+export function fragmentOutputChannel(fragmentId: FragmentId): ChannelId {
+  return `frag-${fragmentId}-output`;
+}
 
 let _nextFragmentId = 1;
 

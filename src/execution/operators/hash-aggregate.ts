@@ -2,7 +2,9 @@ import { Column } from '../../storage/column.js';
 import { Config, DEFAULT_CHUNK_SIZE } from '../../config.js';
 import { RowMemoryBudget } from '../memory-budget.js';
 import { partialGroupsToChunk, chunkToPartialGroups } from './aggregate-state-codec.js';
-import { encodeCompositeKey } from '../composite-key.js';
+import type { PartialGroup } from './aggregate-state-codec.js';
+import { createKeyedHashTable } from '../hash-table.js';
+import type { KeyedHashTable } from '../hash-table.js';
 import type { ChunkSpillStore } from '../../storage/spill-manager/spill-manager.js';
 import { DataChunk } from '../../storage/chunk.js';
 import { DataType, type ColumnValue } from '../../storage/data-type.js';
@@ -39,17 +41,8 @@ interface AggregateDef {
   _columnMapping: ColumnMapping;
 }
 
-type GroupKey = string | number | bigint | boolean | null;
-
 interface GroupState {
-  groupValues: ColumnValue[];
   accumulators: Accumulator[];
-}
-
-interface PartialGroup {
-  key: GroupKey;
-  groupValues: ColumnValue[];
-  states: AccumulatorState[];
 }
 
 interface CountContribution { kind: 'count'; n: number; }
@@ -62,7 +55,8 @@ export class HashAggregateOperator {
   groupByTypes: DataType[];
   aggregateDefs: AggregateDef[];
   hasCachedValues: boolean;
-  groups: Map<GroupKey, GroupState>;
+  groups: KeyedHashTable;
+  groupStates: GroupState[];
   spillStore: ChunkSpillStore | null;
   spillPartitionCount: number;
   memoryBudget: RowMemoryBudget;
@@ -78,7 +72,8 @@ export class HashAggregateOperator {
     this.groupByTypes = groupByTypes;
     this.aggregateDefs = aggregateDefs;
     this.hasCachedValues = aggregateDefs.some((def) => def.valueKey);
-    this.groups = new Map();
+    this.groups = createKeyedHashTable(groupByExtractors.length);
+    this.groupStates = [];
     this.spillStore = spillStore;
     this.spillPartitionCount = Config.aggSpillPartitions;
     this.memoryBudget = new RowMemoryBudget();
@@ -100,8 +95,29 @@ export class HashAggregateOperator {
       this.spilledPartitions.add(p);
     }
 
-    this.groups.clear();
+    this._resetGroups();
     this.memoryBudget.reset();
+  }
+
+  _resetGroups(): void {
+    this.groups.clear();
+    this.groupStates.length = 0;
+  }
+
+  _groupStateFor(values: readonly EvalValue[]): GroupState {
+    const entry = this.groups.findOrInsert(values);
+    let state = this.groupStates[entry];
+    if (state === undefined) {
+      state = { accumulators: this.aggregateDefs.map((def) => def.createAccumulator()) };
+      this.groupStates[entry] = state;
+    }
+    return state;
+  }
+
+  _groupValuesAt(entry: number): ColumnValue[] {
+    const values: ColumnValue[] = new Array(this.groups.arity);
+    for (let g = 0; g < this.groups.arity; g++) values[g] = this.groups.keyAt(entry, g);
+    return values;
   }
 
   async init(): Promise<void> {}
@@ -151,31 +167,21 @@ export class HashAggregateOperator {
       }
     }
 
-    const keyParts: EvalValue[] = new Array(groupByCount);
-    for (let i = 0; i < size; i++) {
-      let key: GroupKey;
-      if (groupByCount === 0) {
-        key = GLOBAL_GROUP_KEY;
-      } else if (groupByCount === 1) {
-        key = groupByVals[0][i] as GroupKey;
-      } else {
-        for (let g = 0; g < groupByCount; g++) keyParts[g] = groupByVals[g][i];
-        key = encodeCompositeKey(keyParts);
-      }
-
-      let group = this.groups.get(key);
-      if (!group) {
-        const gv: ColumnValue[] = new Array(groupByCount);
-        for (let g = 0; g < groupByCount; g++) gv[g] = groupByVals[g][i] as ColumnValue;
-        group = {
-          groupValues: gv,
-          accumulators: this.aggregateDefs.map((def) => def.createAccumulator()),
-        };
-        this.groups.set(key, group);
-      }
-
+    if (groupByCount === 0) {
+      const group = this._groupStateFor(EMPTY_GROUP_KEY);
       for (let a = 0; a < aggCount; a++) {
-        group.accumulators[a].add(aggVals[a][i]);
+        const accumulator = group.accumulators[a];
+        const values = aggVals[a];
+        for (let i = 0; i < size; i++) accumulator.add(values[i]);
+      }
+    } else {
+      const keyParts: EvalValue[] = new Array(groupByCount);
+      for (let i = 0; i < size; i++) {
+        for (let g = 0; g < groupByCount; g++) keyParts[g] = groupByVals[g][i];
+        const group = this._groupStateFor(keyParts);
+        for (let a = 0; a < aggCount; a++) {
+          group.accumulators[a].add(aggVals[a][i]);
+        }
       }
     }
 
@@ -200,27 +206,16 @@ export class HashAggregateOperator {
     const ordered = [...this.spilledPartitions].sort((a, b) => a - b);
 
     for (const partition of ordered) {
-      this.groups.clear();
+      this._resetGroups();
       for await (const spilled of spillStore.readChunks(this.partitionHandle(partition))) {
-        this.absorbPartials(chunkToPartialGroups(spilled).map((record) => ({
-          key: this.groupKeyOf(record.groupValues),
-          groupValues: record.groupValues,
-          states: record.states,
-        })));
+        this.absorbPartials(chunkToPartialGroups(spilled));
       }
       for (const chunk of this.emitResidentGroups()) chunks.push(chunk);
     }
 
-    this.groups.clear();
+    this._resetGroups();
     await spillStore.clearAll();
     return chunks;
-  }
-
-  groupKeyOf(groupValues: ColumnValue[]): GroupKey {
-    if (groupValues.length === 0) return GLOBAL_GROUP_KEY;
-    if (groupValues.length === 1) return groupValues[0] as GroupKey;
-
-    return encodeCompositeKey(groupValues);
   }
 
   emitResidentGroups(): DataChunk[] {
@@ -244,7 +239,7 @@ export class HashAggregateOperator {
     const totalCols = groupByCount + aggCount;
     const chunks: DataChunk[] = [];
 
-    const allGroups: GroupState[] = Array.from(this.groups.values());
+    const allGroups = this.groupStates;
     for (let start = 0; start < allGroups.length; start += DEFAULT_CHUNK_SIZE) {
       const end = Math.min(start + DEFAULT_CHUNK_SIZE, allGroups.length);
       const batchSize = end - start;
@@ -260,7 +255,7 @@ export class HashAggregateOperator {
       for (let r = 0; r < batchSize; r++) {
         const group = allGroups[start + r];
         for (let g = 0; g < groupByCount; g++) {
-          const value = group.groupValues[g];
+          const value = this.groups.keyAt(start + r, g);
           columns[g].set(r, typeof value === 'bigint' ? Number(value) : value);
         }
         for (let a = 0; a < aggCount; a++) {
@@ -278,11 +273,10 @@ export class HashAggregateOperator {
   exportPartials(partitionCount: number): PartialGroup[][] {
     const mask = partitionCount - 1;
     const partitions: PartialGroup[][] = Array.from({ length: partitionCount }, () => []);
-    for (const [key, group] of this.groups) {
-      partitions[hashGroupKey(key) & mask].push({
-        key,
-        groupValues: group.groupValues,
-        states: group.accumulators.map((acc) => acc.exportState()),
+    for (let entry = 0; entry < this.groupStates.length; entry++) {
+      partitions[this.groups.hashOf(entry) & mask].push({
+        groupValues: this._groupValuesAt(entry),
+        states: this.groupStates[entry].accumulators.map((acc) => acc.exportState()),
       });
     }
     return partitions;
@@ -291,14 +285,7 @@ export class HashAggregateOperator {
   absorbPartials(partials: PartialGroup[]): void {
     const aggCount = this.aggregateDefs.length;
     for (const partial of partials) {
-      let group = this.groups.get(partial.key);
-      if (!group) {
-        group = {
-          groupValues: partial.groupValues,
-          accumulators: this.aggregateDefs.map((def) => def.createAccumulator()),
-        };
-        this.groups.set(partial.key, group);
-      }
+      const group = this._groupStateFor(partial.groupValues);
       for (let a = 0; a < aggCount; a++) {
         group.accumulators[a].mergeState(partial.states[a]);
       }
@@ -350,14 +337,7 @@ export class HashAggregateOperator {
         : { kind: 'value', result };
     }
 
-    let group = this.groups.get(GLOBAL_GROUP_KEY);
-    if (!group) {
-      group = {
-        groupValues: [],
-        accumulators: this.aggregateDefs.map((def) => def.createAccumulator()),
-      };
-      this.groups.set(GLOBAL_GROUP_KEY, group);
-    }
+    const group = this._groupStateFor(EMPTY_GROUP_KEY);
 
     for (let a = 0; a < contributions.length; a++) {
       const c = contributions[a];
@@ -371,12 +351,7 @@ export class HashAggregateOperator {
   }
 }
 
-export const GLOBAL_GROUP_KEY = '__ALL__';
-
-export function hashGroupKey(key: GroupKey): number {
-  if (key === null || key === undefined) return 0;
-  return hashValue(key);
-}
+const EMPTY_GROUP_KEY: readonly EvalValue[] = [];
 
 export class SumAccumulator implements Accumulator {
   sum: number;

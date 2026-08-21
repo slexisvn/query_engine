@@ -15,14 +15,14 @@ import {
 import type { BoundExpr, LiteralValue } from '../binder/expression-binder.js';
 import { DataType, normalizeTypeName } from '../storage/data-type.js';
 import type { ColumnValue } from '../storage/data-type.js';
-import type { CatalogLike } from '../binder/binder.js';
+import type { CatalogLike, FunctionRegistryLike } from '../binder/binder.js';
 import { inferValueType } from './type-inference.js';
 import {
   inferArithmeticType,
   inferComparisonType,
   inferLogicalType,
-  inferAggregateResultType,
-} from './expr-types.js';
+  inferAggregateType,
+} from '../binder/type-inference.js';
 import { bindScalarSql } from './sql-expr-binder.js';
 
 type LiteralInput = ColumnValue | Date | undefined;
@@ -45,12 +45,12 @@ interface SchemaLike {
 
 interface BindContextLike {
   catalog: CatalogLike;
-  functionRegistry: object;
+  functionRegistry: FunctionRegistryLike;
 }
 
 type BuildFn = (schema: SchemaLike, ctx: BindContextLike) => BoundExpr;
 
-type BinaryTypeFn = (left: DataType, right: DataType) => DataType;
+type BinaryTypeFn = (left: DataType, right: DataType, op: string) => DataType;
 
 interface ColBindResult {
   expr: BoundExpr;
@@ -98,7 +98,7 @@ export class Col {
     return new Col((schema, ctx) => {
       const l = this._build(schema, ctx);
       const r = right._build(schema, ctx);
-      return BoundBinary(op, l, r, typeFn(getExprType(l) as DataType, getExprType(r) as DataType));
+      return BoundBinary(op, l, r, typeFn(getExprType(l) as DataType, getExprType(r) as DataType, op));
     });
   }
 
@@ -191,7 +191,7 @@ function aggregate(name: string): (column: Col | string) => Col {
     const arg = column instanceof Col ? column : col(column);
     const built = new Col((schema, ctx) => {
       const argExpr = arg._build(schema, ctx);
-      return BoundAggregate(name, [argExpr], false, inferAggregateResultType(name, getExprType(argExpr) as DataType));
+      return BoundAggregate(name, [argExpr], false, inferAggregateType(name, getExprType(argExpr) as DataType));
     }, name.toLowerCase());
     return built;
   };

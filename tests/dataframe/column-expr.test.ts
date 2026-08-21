@@ -39,7 +39,8 @@ describe('col builder', () => {
 
   it('produces boolean comparisons and arithmetic types', () => {
     expect(col('age').gt(lit(18)).bind(schema(), ctx).dataType).toBe(DataType.BOOLEAN);
-    expect(col('age').add(lit(1)).bind(schema(), ctx).dataType).toBe(DataType.INT32);
+    expect(col('age').add(lit(1)).bind(schema(), ctx).dataType).toBe(DataType.INT64);
+    expect(col('age').div(lit(2)).bind(schema(), ctx).dataType).toBe(DataType.FLOAT64);
     expect(col('age').and(col('age')).bind(schema(), ctx).dataType).toBe(DataType.BOOLEAN);
   });
 
@@ -54,9 +55,19 @@ describe('col builder', () => {
     expect(countStar().bind(schema(), ctx).expr.name).toBe('COUNT_STAR');
   });
 
+  it('matches the SQL binder on integer division and widening', () => {
+    expect(col('age').div(lit(2)).bind(schema(), ctx).dataType).toBe(DataType.FLOAT64);
+    expect(col('age').mul(lit(3)).bind(schema(), ctx).dataType).toBe(DataType.INT64);
+    expect(col('age').sub(lit(1)).bind(schema(), ctx).dataType).toBe(DataType.INT64);
+  });
+
+  it('widens SUM over an integer column like the SQL binder', () => {
+    expect(sum('age').bind(schema(), ctx).dataType).toBe(DataType.INT64);
+  });
+
   it('binds raw SQL expressions against the schema', () => {
     const { expr: e, dataType } = expr('age + 1').bind(schema(), ctx);
     expect(e.kind).toBe(BoundExprKind.BINARY);
-    expect(dataType).toBe(DataType.INT32);
+    expect(dataType).toBe(DataType.INT64);
   });
 });

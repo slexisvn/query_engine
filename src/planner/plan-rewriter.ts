@@ -1,39 +1,6 @@
 import * as LP from './logical-plan.js';
-import { getChildren, setChildren, PlanNodeType, type LogicalPlanNode } from './logical-plan.js';
-
-type RewriteMethod =
-  | 'rewriteScan' | 'rewriteFilter' | 'rewriteProject' | 'rewriteJoin' | 'rewriteAggregate'
-  | 'rewriteSort' | 'rewriteLimit' | 'rewriteDistinct' | 'rewriteSetOp' | 'rewriteCTEScan'
-  | 'rewriteCTEAnchor' | 'rewriteDependentJoin' | 'rewriteMaterialize' | 'rewriteEmpty'
-  | 'rewriteTopN' | 'rewriteIndexScan' | 'rewriteWindow' | 'rewriteExchange'
-  | 'rewritePartialAggregate' | 'rewriteFinalAggregate' | 'rewriteMergeExchange'
-  | 'rewriteExchangeReceive' | 'rewriteSingleRow';
-
-const REWRITE_METHOD = {
-  [PlanNodeType.SCAN]: 'rewriteScan',
-  [PlanNodeType.FILTER]: 'rewriteFilter',
-  [PlanNodeType.PROJECT]: 'rewriteProject',
-  [PlanNodeType.JOIN]: 'rewriteJoin',
-  [PlanNodeType.AGGREGATE]: 'rewriteAggregate',
-  [PlanNodeType.SORT]: 'rewriteSort',
-  [PlanNodeType.LIMIT]: 'rewriteLimit',
-  [PlanNodeType.DISTINCT]: 'rewriteDistinct',
-  [PlanNodeType.SET_OP]: 'rewriteSetOp',
-  [PlanNodeType.CTE_SCAN]: 'rewriteCTEScan',
-  [PlanNodeType.CTE_ANCHOR]: 'rewriteCTEAnchor',
-  [PlanNodeType.DEPENDENT_JOIN]: 'rewriteDependentJoin',
-  [PlanNodeType.MATERIALIZE]: 'rewriteMaterialize',
-  [PlanNodeType.EMPTY]: 'rewriteEmpty',
-  [PlanNodeType.TOP_N]: 'rewriteTopN',
-  [PlanNodeType.INDEX_SCAN]: 'rewriteIndexScan',
-  [PlanNodeType.WINDOW]: 'rewriteWindow',
-  [PlanNodeType.EXCHANGE]: 'rewriteExchange',
-  [PlanNodeType.PARTIAL_AGGREGATE]: 'rewritePartialAggregate',
-  [PlanNodeType.FINAL_AGGREGATE]: 'rewriteFinalAggregate',
-  [PlanNodeType.MERGE_EXCHANGE]: 'rewriteMergeExchange',
-  [PlanNodeType.EXCHANGE_RECEIVE]: 'rewriteExchangeReceive',
-  [PlanNodeType.SINGLE_ROW]: 'rewriteSingleRow',
-} as const satisfies Record<PlanNodeType, RewriteMethod>;
+import { getChildren, setChildren, type LogicalPlanNode } from './logical-plan.js';
+import { descriptorOf } from './plan-node-descriptor.js';
 
 type NodeRewriteFn<C> = (node: LogicalPlanNode, context?: C) => LogicalPlanNode;
 
@@ -63,7 +30,8 @@ export class PlanRewriter<C = undefined> {
   rewriteSingleRow?(node: LP.LogicalSingleRowNode, context?: C): LogicalPlanNode;
 
   rewrite(node: LogicalPlanNode, context?: C): LogicalPlanNode {
-    const handler = this[REWRITE_METHOD[node.type]] as NodeRewriteFn<C> | undefined;
+    const method = descriptorOf(node.type).rewriteMethod;
+    const handler = (method ? this[method] : undefined) as NodeRewriteFn<C> | undefined;
     return handler ? handler.call(this, node, context) : this.rewriteDefault(node, context);
   }
 

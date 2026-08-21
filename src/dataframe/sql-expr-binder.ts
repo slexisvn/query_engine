@@ -1,6 +1,6 @@
 import { parseExpression } from '../parser/parser.js';
 import { Binder } from '../binder/binder.js';
-import type { CatalogLike } from '../binder/binder.js';
+import type { CatalogLike, FunctionRegistryLike } from '../binder/binder.js';
 import { BinderScope } from '../binder/scope.js';
 import type { ColumnInfo } from '../binder/scope.js';
 import { BoundExprKind, getExprType } from '../binder/expression-binder.js';
@@ -41,7 +41,7 @@ function deriveOutputName(expr: BoundExpr | null): string | null {
   return null;
 }
 
-export function bindScalarSql(sqlString: string, schema: SchemaLike, catalog: CatalogLike, functionRegistry: object): ScalarBindResult {
+export function bindScalarSql(sqlString: string, schema: SchemaLike, catalog: CatalogLike, functionRegistry: FunctionRegistryLike): ScalarBindResult {
   const ast = parseExpression(sqlString);
   const scope = new BinderScope();
   for (const [alias, columns] of groupByAlias(schema)) {

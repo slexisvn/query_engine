@@ -77,6 +77,14 @@ export function toNumericValue(value?: ColumnValue): number | null {
   return null;
 }
 
+export function castToNumber(value: ColumnValue): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  if (typeof value === 'string' && value.trim() === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
 export function isFixedWidth(dataType: DataType): boolean {
   return FIXED_WIDTH_TYPES.has(dataType);
 }

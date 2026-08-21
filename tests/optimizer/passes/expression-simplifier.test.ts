@@ -59,6 +59,44 @@ describe('simplifyExpression', () => {
     });
   });
 
+  describe('factoring common conjuncts out of an OR', () => {
+    function literalsUnder(expr, acc = []) {
+      if (!expr || typeof expr !== 'object') return acc;
+      if (expr.kind === BoundExprKind.LITERAL) acc.push(expr.value);
+      for (const val of Object.values(expr)) {
+        if (Array.isArray(val)) val.forEach(v => literalsUnder(v, acc));
+        else if (val && typeof val === 'object') literalsUnder(val, acc);
+      }
+      return acc;
+    }
+
+    it('keeps a numeric literal apart from the same digits as a string', () => {
+      const left = bin(bin(colRef('t', 'x'), '=', lit(1, 'INT32')), 'AND', bin(colRef('t', 'y'), '=', lit(2, 'INT32')));
+      const right = bin(bin(colRef('t', 'x'), '=', lit('1', 'VARCHAR')), 'AND', bin(colRef('t', 'z'), '=', lit(3, 'INT32')));
+
+      const literals = literalsUnder(simplifyExpression(bin(left, 'OR', right)));
+      expect(literals).toContain(1);
+      expect(literals).toContain('1');
+    });
+
+    it('factors a genuinely shared conjunct out of both branches', () => {
+      const shared = () => bin(colRef('t', 'x'), '=', lit(1, 'INT32'));
+      const left = bin(shared(), 'AND', bin(colRef('t', 'y'), '=', lit(2, 'INT32')));
+      const right = bin(shared(), 'AND', bin(colRef('t', 'z'), '=', lit(3, 'INT32')));
+
+      const literals = literalsUnder(simplifyExpression(bin(left, 'OR', right)));
+      expect(literals.filter(v => v === 1)).toHaveLength(1);
+    });
+
+    it('treats differently-cased references to one column as the same conjunct', () => {
+      const left = bin(bin(colRef('T', 'X'), '=', lit(1, 'INT32')), 'AND', bin(colRef('t', 'y'), '=', lit(2, 'INT32')));
+      const right = bin(bin(colRef('t', 'x'), '=', lit(1, 'INT32')), 'AND', bin(colRef('t', 'z'), '=', lit(3, 'INT32')));
+
+      const literals = literalsUnder(simplifyExpression(bin(left, 'OR', right)));
+      expect(literals.filter(v => v === 1)).toHaveLength(1);
+    });
+  });
+
   describe('OR simplification', () => {
     it('OR(true, X) => true', () => {
       const result = simplifyExpression(bin(lit(true), 'OR', colRef('t', 'a')));

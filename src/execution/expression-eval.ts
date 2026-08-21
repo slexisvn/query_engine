@@ -3,7 +3,7 @@ import type {
   BoundExpr,
   BoundLiteralNode,
 } from '../binder/expression-binder.js';
-import { DataType, epochDaysToDate, dateToEpochDays, epochMsToTimestamp } from '../storage/data-type.js';
+import { DataType, castToNumber, epochDaysToDate, dateToEpochDays, epochMsToTimestamp } from '../storage/data-type.js';
 import type { ColumnValue } from '../storage/data-type.js';
 import type { DataChunk } from '../storage/chunk.js';
 import type {
@@ -13,8 +13,8 @@ import type {
   ColumnMapping,
   ExecColumn,
 } from './execution-types.js';
-import { resolveColumnIndex } from './column-resolve.js';
-import { exprKey } from './expr-key.js';
+import { resolveColumnIndex, UnresolvedReferenceError } from './column-resolve.js';
+import { exprKey } from '../binder/expr-key.js';
 import { binaryValueOp, unaryValueOp, normalizeComparable } from './value-ops.js';
 
 const LIKE_CACHE_MAX = 256;
@@ -45,7 +45,9 @@ export function compileExpression(expr: BoundExpr | null, columnMapping: ColumnM
     case BoundExprKind.BINARY: {
       const left = compileExpression(expr.left, columnMapping);
       const right = compileExpression(expr.right, columnMapping);
-      return compileBinaryOp(expr.op, left, right);
+      const timestampOperand = getExprType(expr.left) === DataType.TIMESTAMP
+        || getExprType(expr.right as BoundExpr) === DataType.TIMESTAMP;
+      return compileBinaryOp(expr.op, left, right, timestampOperand);
     }
 
     case BoundExprKind.UNARY: {
@@ -187,23 +189,33 @@ export function compileExpression(expr: BoundExpr | null, columnMapping: ColumnM
     }
 
     case BoundExprKind.AGGREGATE:
-      return expr.args.length > 0
-        ? compileExpression(expr.args[0], columnMapping)
-        : () => null;
+      throw new UnresolvedReferenceError(`aggregate ${describeAggregate(expr)}`, columnMapping);
 
     case BoundExprKind.INTERVAL:
       return () => ({ value: expr.value, unit: expr.unit, _isInterval: true });
 
     case BoundExprKind.WINDOW:
-      return () => null;
+      throw new UnresolvedReferenceError(`window function ${describeWindow(expr)}`, columnMapping);
 
     default:
       return () => null;
   }
 }
 
-function compileBinaryOp(op: string, left: CompiledExpr, right: CompiledExpr): CompiledExpr {
-  const apply = binaryValueOp(op);
+function describeArgs(args: readonly BoundExpr[]): string {
+  return args.map((arg) => exprKey(arg)).join(', ');
+}
+
+function describeAggregate(expr: Extract<BoundExpr, { kind: BoundExprKind.AGGREGATE }>): string {
+  return `${expr.name.toUpperCase()}(${expr.distinct ? 'DISTINCT ' : ''}${describeArgs(expr.args)})`;
+}
+
+function describeWindow(expr: Extract<BoundExpr, { kind: BoundExprKind.WINDOW }>): string {
+  return `${expr.name.toUpperCase()}(${describeArgs(expr.args)})`;
+}
+
+function compileBinaryOp(op: string, left: CompiledExpr, right: CompiledExpr, timestampOperand: boolean): CompiledExpr {
+  const apply = binaryValueOp(op, timestampOperand);
   if (!apply) return () => null;
   return (c: DataChunk, r: number) => apply(left(c, r), right(c, r));
 }
@@ -249,6 +261,7 @@ function compileFunction(name: string, args: CompiledExpr[]): CompiledExpr {
     case 'REPLACE': return (c: DataChunk, r: number) => {
       const s = args[0](c, r), from = args[1](c, r), to = args[2](c, r);
       if (s === null || from === null || to === null) return null;
+      if (from === '') return String(s);
       return String(s).split(String(from)).join(String(to));
     };
     default: return () => null;
@@ -264,7 +277,7 @@ function likeToRegex(pattern: string): RegExp {
     else regex += ch;
   }
   regex += '$';
-  return new RegExp(regex, 'i');
+  return new RegExp(regex);
 }
 
 const MATERIALIZABLE_KINDS: ReadonlySet<BoundExprKind> = new Set([
@@ -287,9 +300,15 @@ function materializedColumnOf(expr: BoundExpr, columnMapping: ColumnMapping | nu
 function castValue(val: EvalValue, targetType: DataType): EvalValue {
   if (val === null) return null;
   switch (targetType) {
-    case DataType.INT32: return parseInt(val as string, 10) | 0;
-    case DataType.INT64: return BigInt(parseInt(val as string, 10));
-    case DataType.FLOAT64: return parseFloat(val as string);
+    case DataType.INT32: {
+      const numeric = castToNumber(val as ColumnValue);
+      return numeric === null ? null : Math.trunc(numeric);
+    }
+    case DataType.INT64: {
+      const numeric = castToNumber(val as ColumnValue);
+      return numeric === null ? null : BigInt(Math.trunc(numeric));
+    }
+    case DataType.FLOAT64: return castToNumber(val as ColumnValue);
     case DataType.VARCHAR: {
       if (typeof val === 'bigint') return String(Number(val));
       return String(val);

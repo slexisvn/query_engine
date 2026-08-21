@@ -222,6 +222,18 @@ describe('MergeJoinOperator', () => {
       expect(rows[0][1]).toBe(10);
     });
 
+    it('re-evaluates the residual for every pair when both sides have duplicate keys', async () => {
+      const condition = (adapter, _) => adapter.row[1] < adapter.row[3];
+      const rows = await merge(
+        [{ type: 'INT32', values: [1, 1, 1] }, { type: 'INT32', values: [10, 20, 30] }],
+        [{ type: 'INT32', values: [1, 1] }, { type: 'INT32', values: [15, 25] }],
+        JoinType.INNER,
+        { condition }
+      );
+
+      expect(rows).toEqual([[1, 10, 1, 15], [1, 10, 1, 25], [1, 20, 1, 25]]);
+    });
+
     it('emits null row for LEFT join when condition rejects all matches', async () => {
       const condition = (adapter, _) => false;
       const rows = await merge(
@@ -367,6 +379,18 @@ describe('MergeJoinOperator', () => {
 
       expect(rows.length).toBe(1);
       expect(rows[0]).toEqual([1, 'x']);
+    });
+
+    it('finds a match on the last build row of a duplicate-key group', async () => {
+      const condition = (adapter, _) => adapter.row[1] > 25;
+      const rows = await merge(
+        [{ type: 'INT32', values: [1, 1, 1] }, { type: 'INT32', values: [10, 20, 30] }],
+        [{ type: 'INT32', values: [1] }, { type: 'INT32', values: [25] }],
+        JoinType.SEMI,
+        { condition }
+      );
+
+      expect(rows).toEqual([[1, 25]]);
     });
 
     it('excludes probe rows when residual rejects all matching build rows', async () => {
@@ -540,6 +564,20 @@ describe('MergeJoinOperator', () => {
         JoinType.SINGLE,
       );
       expect(rows).toEqual([[null, null, null, 'pn']]);
+    });
+  });
+
+  describe('MARK JOIN with a two-sided residual', () => {
+    it('marks each probe row by its own matches within a duplicate-key group', async () => {
+      const condition = (adapter, _) => adapter.row[1] < adapter.row[3];
+      const rows = await merge(
+        [{ type: 'INT32', values: [1, 1] }, { type: 'INT32', values: [10, 20] }],
+        [{ type: 'INT32', values: [1, 1] }, { type: 'INT32', values: [5, 25] }],
+        JoinType.MARK,
+        { condition }
+      );
+
+      expect(rows).toEqual([[1, 5, false], [1, 25, true]]);
     });
   });
 

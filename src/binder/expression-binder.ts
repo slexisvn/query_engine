@@ -58,7 +58,6 @@ export interface BoundAggregateNode { kind: BoundExprKind.AGGREGATE; name: strin
 
 export interface BoundCaseNode {
   kind: BoundExprKind.CASE;
-  operand: BoundExpr | null;
   whenClauses: BoundWhenClause[];
   elseExpr: BoundExpr | null;
   resultType: DataType;
@@ -143,8 +142,8 @@ export function BoundAggregate(name: string, args: BoundExpr[], distinct: boolea
   return { kind: BoundExprKind.AGGREGATE, name, args, distinct, resultType };
 }
 
-export function BoundCase(operand: BoundExpr | null, whenClauses: BoundWhenClause[], elseExpr: BoundExpr | null, resultType: DataType): BoundCaseNode {
-  return { kind: BoundExprKind.CASE, operand, whenClauses, elseExpr, resultType };
+export function BoundCase(whenClauses: BoundWhenClause[], elseExpr: BoundExpr | null, resultType: DataType): BoundCaseNode {
+  return { kind: BoundExprKind.CASE, whenClauses, elseExpr, resultType };
 }
 
 export function BoundCast(expr: BoundExpr, targetType: DataType): BoundCastNode {
@@ -208,9 +207,9 @@ export function collectCorrelatedColumns(expr: BoundExpr): BoundColumnRefNode[] 
   return refs;
 }
 
-export function walkExpr(expr: BoundExpr | null | undefined, fn: (node: BoundExpr) => void): void {
+export function walkExpr(expr: BoundExpr | null | undefined, fn: (node: BoundExpr) => boolean | void): void {
   if (!expr) return;
-  fn(expr);
+  if (fn(expr) === false) return;
   switch (expr.kind) {
     case BoundExprKind.BINARY:
       walkExpr(expr.left, fn);
@@ -224,7 +223,6 @@ export function walkExpr(expr: BoundExpr | null | undefined, fn: (node: BoundExp
       for (const arg of expr.args) walkExpr(arg, fn);
       break;
     case BoundExprKind.CASE:
-      if (expr.operand) walkExpr(expr.operand, fn);
       for (const wc of expr.whenClauses) {
         walkExpr(wc.condition, fn);
         walkExpr(wc.result, fn);

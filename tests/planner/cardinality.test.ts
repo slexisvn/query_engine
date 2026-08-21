@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { DefaultCardinalityEstimator } from '../../../src/optimizer/join-order/cardinality.js';
-import { BoundExprKind } from '../../../src/binder/expression-binder.js';
-import { PlanNodeType, JoinType } from '../../../src/planner/logical-plan.js';
-import { EquiDepthHistogram } from '../../../src/catalog/statistics.js';
+import { DefaultCardinalityEstimator } from '../../src/planner/cardinality.js';
+import { BoundExprKind } from '../../src/binder/expression-binder.js';
+import { PlanNodeType, JoinType } from '../../src/planner/logical-plan.js';
+import { EquiDepthHistogram } from '../../src/catalog/statistics.js';
 
 function makeColRef(table, column) {
   return { kind: BoundExprKind.COLUMN_REF, tableAlias: table, columnName: column };
@@ -308,7 +308,7 @@ describe('DefaultCardinalityEstimator', () => {
     });
 
     it('AND selectivity with high correlation produces higher selectivity than independent', async () => {
-      const { TableStatistics, ColumnStatistics } = await import('../../../src/catalog/statistics.js');
+      const { TableStatistics, ColumnStatistics } = await import('../../src/catalog/statistics.js');
       const columns = new Map();
       columns.set('PRICE', new ColumnStatistics({ ndv: 1000, min: 0, max: 10000, nullFraction: 0 }));
       columns.set('COST', new ColumnStatistics({ ndv: 800, min: 0, max: 9000, nullFraction: 0 }));

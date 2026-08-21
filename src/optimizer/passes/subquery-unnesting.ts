@@ -2,8 +2,9 @@ import { OptimizationPass } from '../pass.js';
 import { PlanNodeType, JoinType, LogicalJoin, LogicalFilter, LogicalAggregate, getChildren, setChildren, type LogicalPlanNode, type LogicalDependentJoinNode, type LogicalProjectNode, type ProjectedExpr } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { BoundExprKind, type BoundExpr, type BoundColumnRefNode } from '../../binder/expression-binder.js';
-import { combineConjuncts } from './predicate-pushdown.js';
+import { combineConjuncts } from '../../binder/conjuncts.js';
 import { DataType } from '../../storage/data-type.js';
+import { SCALAR_OUTPUT_NAME } from '../../planner/logical-plan.js';
 
 interface CorrelationResult {
   cleanedPlan: LogicalPlanNode;
@@ -47,7 +48,7 @@ const UNNESTERS: Record<string, Unnester> = {
   NOT_EXISTS: (r, left, subquery, correlated) => r.unnestNotExists(left, subquery, correlated),
   IN: (r, left, subquery, correlated, node) => r.unnestIn(left, subquery, correlated, node.condition, node.compareOp),
   MARK: (r, left, subquery, correlated, node) => r.unnestMark(left, subquery, correlated, node.condition, node.compareOp, node.markColumn!),
-  SCALAR: (r, left, subquery, correlated) => r.unnestScalar(left, subquery, correlated),
+  SCALAR: (r, left, subquery, correlated, node) => r.unnestScalar(left, subquery, correlated, node.markColumn),
 };
 
 class UnnestingRewriter extends PlanRewriter {
@@ -118,7 +119,7 @@ class UnnestingRewriter extends PlanRewriter {
     return combineConjuncts(conditions);
   }
 
-  unnestScalar(left: LogicalPlanNode, subquery: LogicalPlanNode, correlated: BoundColumnRefNode[]): LogicalPlanNode {
+  unnestScalar(left: LogicalPlanNode, subquery: LogicalPlanNode, correlated: BoundColumnRefNode[], scalarColumn: string | null): LogicalPlanNode {
     const { cleanedPlan, joinCondition, correlatedPredicates } = this.extractCorrelation(subquery, correlated);
     const outputRef = this.getSubqueryOutputRef(subquery);
 
@@ -127,13 +128,13 @@ class UnnestingRewriter extends PlanRewriter {
 
       const innerPlan = this.removeProjection(cleanedPlan);
       const aggregatedPlan = this.addGroupBy(innerPlan, groupByExprs);
-      const scalarPlan = this.projectScalarOutput(aggregatedPlan, groupByExprs, outputRef);
+      const scalarPlan = this.projectScalarOutput(aggregatedPlan, groupByExprs, outputRef, scalarColumn);
       return LogicalJoin(JoinType.LEFT, joinCondition, left, scalarPlan);
     }
 
     const innerRefs = this.getInnerCorrelationRefs(correlatedPredicates, correlated);
     const innerPlan = innerRefs.length > 0 ? this.removeProjection(cleanedPlan) : cleanedPlan;
-    return LogicalJoin(JoinType.SINGLE, joinCondition, left, this.projectScalarOutput(innerPlan, innerRefs, outputRef));
+    return LogicalJoin(JoinType.SINGLE, joinCondition, left, this.projectScalarOutput(innerPlan, innerRefs, outputRef, scalarColumn));
   }
 
   getInnerCorrelationRefs(correlatedPredicates: BoundExpr[], correlated: BoundColumnRefNode[]): BoundExpr[] {
@@ -209,7 +210,7 @@ class UnnestingRewriter extends PlanRewriter {
     const correlatedPreds: BoundExpr[] = [];
     const localPreds: BoundExpr[] = [];
 
-    const preds = this.splitAnd(expr);
+    const preds = this.splitConjuncts(expr);
     for (const pred of preds) {
       if (this.hasCorrelatedRef(pred, correlated)) {
         correlatedPreds.push(pred);
@@ -271,7 +272,6 @@ class UnnestingRewriter extends PlanRewriter {
       case BoundExprKind.CASE:
         return {
           ...expr,
-          operand: expr.operand ? this.rewriteExprRefs(expr.operand, correlated) : null,
           whenClauses: expr.whenClauses.map(wc => ({
             condition: this.rewriteExprRefs(wc.condition, correlated),
             result: this.rewriteExprRefs(wc.result, correlated),
@@ -317,10 +317,10 @@ class UnnestingRewriter extends PlanRewriter {
     }
   }
 
-  splitAnd(expr: BoundExpr | null): BoundExpr[] {
+  splitConjuncts(expr: BoundExpr | null): BoundExpr[] {
     if (!expr) return [];
     if (expr.kind === BoundExprKind.BINARY && expr.op === 'AND') {
-      return [...this.splitAnd(expr.left), ...this.splitAnd(expr.right)];
+      return [...this.splitConjuncts(expr.left), ...this.splitConjuncts(expr.right)];
     }
     return [expr];
   }
@@ -363,12 +363,16 @@ class UnnestingRewriter extends PlanRewriter {
     return exprs;
   }
 
-  projectScalarOutput(plan: LogicalPlanNode, groupByExprs: BoundExpr[], outputRef: ProjectedExpr | null): LogicalPlanNode {
+  projectScalarOutput(plan: LogicalPlanNode, groupByExprs: BoundExpr[], outputRef: ProjectedExpr | null, scalarColumn: string | null): LogicalPlanNode {
     if (!outputRef) return plan;
-    const scalarExpr = { ...outputRef, outputName: '_scalar' };
+    const scalarExpr = { ...outputRef, outputName: scalarColumn ?? SCALAR_OUTPUT_NAME };
+    const expressions = [...groupByExprs, scalarExpr];
+    if (plan.type === PlanNodeType.PROJECT && !plan.outputAlias) {
+      return { ...plan, expressions };
+    }
     const project: LogicalProjectNode = {
       type: PlanNodeType.PROJECT,
-      expressions: [...groupByExprs, scalarExpr],
+      expressions,
       children: [plan],
     };
     return project;

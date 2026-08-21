@@ -5,7 +5,7 @@ import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 import type { BoundExpr, BoundColumnRefNode } from '../../binder/expression-binder.js';
 import { Config } from '../../config.js';
-import { splitAnd } from '../planner/expr-utils.js';
+import { splitConjuncts } from '../../binder/conjuncts.js';
 
 interface TableStatisticsLike {
   rowCount: number;
@@ -19,9 +19,18 @@ interface PartitionTableInfoLike {
 interface PartitionMapLike {
   getTableInfo(tableName: string): PartitionTableInfoLike | null;
   isColocated(tableA: string, tableB: string): boolean;
+  isReplicated(tableName: string): boolean;
 }
 
 type StringJoinKeys = { leftKeys: string[]; rightKeys: string[] };
+
+const REPLICATED_SIDE_ALLOWED_BY_JOIN_TYPE: Partial<Record<string, 'left' | 'right' | 'any'>> = {
+  [JoinType.INNER]: 'any',
+  [JoinType.LEFT]: 'right',
+  [JoinType.RIGHT]: 'left',
+  [JoinType.SEMI]: 'right',
+  [JoinType.ANTI]: 'right',
+};
 
 export const DistributionStrategy = {
   COLOCATED: 'colocated',
@@ -80,6 +89,11 @@ class DistributionAwareJoinRewriter extends PlanRewriter {
     const leftTable = this._findScanTable(newNode.children[0]);
     const rightTable = this._findScanTable(newNode.children[1]);
 
+    if (this._joinsAgainstReplicatedTable(newNode)) {
+      (newNode as LogicalJoinNode & { _distributionStrategy: string })._distributionStrategy = DistributionStrategy.COLOCATED;
+      return newNode;
+    }
+
     if (leftTable && rightTable && this._areColocated(leftTable, rightTable, joinKeys)) {
       (newNode as LogicalJoinNode & { _distributionStrategy: string })._distributionStrategy = DistributionStrategy.COLOCATED;
       return newNode;
@@ -119,6 +133,40 @@ class DistributionAwareJoinRewriter extends PlanRewriter {
     return newNode;
   }
 
+  _joinsAgainstReplicatedTable(node: LogicalJoinNode): boolean {
+    if (!this._partitionMap) return false;
+
+    const allowedSide = REPLICATED_SIDE_ALLOWED_BY_JOIN_TYPE[node.joinType];
+    if (!allowedSide) return false;
+
+    const leftTables = this._scanTables(node.children[0]);
+    const rightTables = this._scanTables(node.children[1]);
+    if (leftTables.length === 0 || rightTables.length === 0) return false;
+
+    const allReplicated = (tables: string[]): boolean =>
+      tables.every((table) => (this._partitionMap as PartitionMapLike).isReplicated(table));
+    const anyPartitioned = (tables: string[]): boolean =>
+      tables.some((table) => (this._partitionMap as PartitionMapLike).getTableInfo(table) !== null);
+
+    const leftReplicated = allReplicated(leftTables);
+    const rightReplicated = allReplicated(rightTables);
+    if (leftReplicated === rightReplicated) return false;
+
+    const replicatedSide = leftReplicated ? 'left' : 'right';
+    if (allowedSide !== 'any' && allowedSide !== replicatedSide) return false;
+
+    return anyPartitioned(leftReplicated ? rightTables : leftTables);
+  }
+
+  _scanTables(node: LogicalPlanNode, into: string[] = []): string[] {
+    if (node.type === PlanNodeType.SCAN || node.type === PlanNodeType.INDEX_SCAN) {
+      into.push((node as LogicalPlanNode & { table: string }).table);
+      return into;
+    }
+    for (const child of getChildren(node)) this._scanTables(child, into);
+    return into;
+  }
+
   _areColocated(leftTable: string, rightTable: string, joinKeys: StringJoinKeys): boolean {
     if (!this._partitionMap) return false;
 
@@ -148,7 +196,7 @@ class DistributionAwareJoinRewriter extends PlanRewriter {
     const rightKeys: string[] = [];
     if (!condition) return { leftKeys, rightKeys };
 
-    const preds = splitAnd(condition);
+    const preds = splitConjuncts(condition);
     for (const pred of preds) {
       if (pred.kind === BoundExprKind.BINARY && pred.op === '='
         && pred.left?.kind === BoundExprKind.COLUMN_REF

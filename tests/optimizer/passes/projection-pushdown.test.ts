@@ -9,6 +9,7 @@ import {
   LogicalJoin,
   LogicalAggregate,
   LogicalSort,
+  LogicalTopN,
   LogicalLimit,
 } from '../../../src/planner/logical-plan.js';
 import { BoundExprKind } from '../../../src/binder/expression-binder.js';
@@ -90,6 +91,28 @@ describe('ProjectionPushdown', () => {
       const colNames = scanNode.columns.map(c => c.name || c.columnName);
       expect(colNames).toContain('id');
       expect(colNames).toContain('age');
+    });
+
+    it('includes TopN key columns in required set', () => {
+      const s = scanWith('t', ['id', 'name', 'age', 'extra']);
+      const topN = LogicalTopN(
+        [{ expr: colRef('t', 'age'), direction: 'DESC' }],
+        8,
+        0,
+        s
+      );
+      const plan = LogicalProject(
+        [colRef('t', 'id')],
+        topN
+      );
+
+      const result = pass.apply(plan);
+
+      const scanNode = result.children[0].children[0];
+      const colNames = scanNode.columns.map(c => c.name || c.columnName);
+      expect(colNames).toContain('id');
+      expect(colNames).toContain('age');
+      expect(colNames).not.toContain('extra');
     });
   });
 
@@ -254,6 +277,74 @@ describe('ProjectionPushdown', () => {
       const leftCols = leftScan.columns.map(c => c.name || c.columnName);
       expect(leftCols).not.toContain('extra1');
       expect(leftCols).not.toContain('extra2');
+    });
+  });
+
+  describe('intermediate project stays consistent with its pruned child', () => {
+    function collectRefs(expr, acc = []) {
+      if (!expr || typeof expr !== 'object') return acc;
+      if (expr.kind === BoundExprKind.COLUMN_REF) { acc.push(expr.columnName.toUpperCase()); return acc; }
+      for (const val of Object.values(expr)) {
+        if (Array.isArray(val)) val.forEach(v => collectRefs(v, acc));
+        else if (val && typeof val === 'object') collectRefs(val, acc);
+      }
+      return acc;
+    }
+    function findNode(n, type) {
+      if (!n) return null;
+      if (n.type === type) return n;
+      for (const c of n.children || []) {
+        const found = findNode(c, type);
+        if (found) return found;
+      }
+      return null;
+    }
+    function deepest(n, type) {
+      let found = null;
+      const walk = (node) => {
+        if (!node) return;
+        if (node.type === type) found = node;
+        (node.children || []).forEach(walk);
+      };
+      walk(n);
+      return found;
+    }
+
+    it('drops the outputs it stopped pushing down, so no expression outlives its source column', () => {
+      const inner = LogicalProject(
+        [colRef('t1', 'id'), colRef('t1', 'col1'), colRef('t1', 'col2')],
+        scanWith('t1', ['id', 'col1', 'col2'])
+      );
+      const plan = LogicalProject(
+        [colRef('x', 'id')],
+        LogicalFilter(bin(colRef('x', 'id'), '>', lit(1)), inner)
+      );
+
+      const result = pass.apply(plan);
+      const prunedInner = deepest(result, PlanNodeType.PROJECT);
+      const scanCols = findNode(result, PlanNodeType.SCAN).columns.map(c => (c.name || c.columnName).toUpperCase());
+
+      const referenced = prunedInner.expressions.flatMap(e => collectRefs(e));
+      for (const ref of referenced) expect(scanCols).toContain(ref);
+    });
+
+    it('keeps every output when the parent needs them all', () => {
+      const inner = LogicalProject(
+        [colRef('t1', 'id'), colRef('t1', 'col1')],
+        scanWith('t1', ['id', 'col1'])
+      );
+      const plan = LogicalProject([colRef('x', 'id'), colRef('x', 'col1')], inner);
+
+      const prunedInner = deepest(pass.apply(plan), PlanNodeType.PROJECT);
+      expect(prunedInner.expressions).toHaveLength(2);
+    });
+
+    it('leaves a project alone when none of its outputs are referenced', () => {
+      const inner = LogicalProject([colRef('t1', 'id')], scanWith('t1', ['id']));
+      const plan = LogicalAggregate([], [{ func: 'COUNT', args: [] }], inner);
+
+      const prunedInner = deepest(pass.apply(plan), PlanNodeType.PROJECT);
+      expect(prunedInner.expressions).toHaveLength(1);
     });
   });
 

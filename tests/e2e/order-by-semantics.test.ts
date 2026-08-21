@@ -84,4 +84,75 @@ describe('ORDER BY semantics', () => {
       ]);
     });
   });
+
+  describe('aggregates as sort keys', () => {
+    it('sorts by an aggregate that is not in the select list', async () => {
+      const rows = await runQuery('SELECT DEPT FROM EMP GROUP BY DEPT ORDER BY COUNT(*) ASC, DEPT NULLS LAST');
+      expect(rows).toEqual([{ DEPT: null }, { DEPT: 10 }, { DEPT: 20 }]);
+    });
+
+    it('reverses when the unselected aggregate sort key is descending', async () => {
+      const rows = await runQuery('SELECT DEPT FROM EMP GROUP BY DEPT ORDER BY COUNT(*) DESC, DEPT NULLS LAST');
+      expect(rows).toEqual([{ DEPT: 10 }, { DEPT: 20 }, { DEPT: null }]);
+    });
+
+    it('sorts by an unselected SUM', async () => {
+      const rows = await runQuery('SELECT DEPT FROM EMP GROUP BY DEPT ORDER BY SUM(SAL) DESC, DEPT NULLS LAST');
+      expect(rows).toEqual([{ DEPT: null }, { DEPT: 10 }, { DEPT: 20 }]);
+    });
+
+    it('agrees with the same aggregate projected under an alias', async () => {
+      const unselected = await runQuery('SELECT DEPT FROM EMP GROUP BY DEPT ORDER BY COUNT(*) ASC, DEPT NULLS LAST');
+      const selected = await runQuery('SELECT DEPT, COUNT(*) AS C FROM EMP GROUP BY DEPT ORDER BY C ASC, DEPT NULLS LAST');
+      expect(unselected.map(row => row.DEPT)).toEqual(selected.map(row => row.DEPT));
+    });
+  });
+  describe('sort keys over SELECT DISTINCT', () => {
+    it('sorts by an aliased distinct output', async () => {
+      const rows = await runQuery('SELECT DISTINCT SAL AS S FROM EMP ORDER BY S');
+      expect(rows).toEqual([{ S: 100 }, { S: 200 }, { S: 300 }, { S: 500 }, { S: null }]);
+    });
+
+    it('sorts descending by an aliased distinct output', async () => {
+      const rows = await runQuery('SELECT DISTINCT DEPT AS D FROM EMP ORDER BY D DESC');
+      expect(rows).toEqual([{ D: null }, { D: 20 }, { D: 10 }]);
+    });
+
+    it('sorts by an unaliased distinct output', async () => {
+      const rows = await runQuery('SELECT DISTINCT SAL FROM EMP ORDER BY SAL');
+      expect(rows).toEqual([{ SAL: 100 }, { SAL: 200 }, { SAL: 300 }, { SAL: 500 }, { SAL: null }]);
+    });
+
+    it('sorts by a computed distinct output referenced by alias', async () => {
+      const rows = await runQuery('SELECT DISTINCT SAL + 1 AS S FROM EMP ORDER BY S');
+      expect(rows).toEqual([{ S: 101 }, { S: 201 }, { S: 301 }, { S: 501 }, { S: null }]);
+    });
+
+    it('sorts by a computed distinct output repeated in the ORDER BY', async () => {
+      const rows = await runQuery('SELECT DISTINCT SAL + 1 FROM EMP ORDER BY SAL + 1 DESC');
+      expect(rows.map(row => Object.values(row)[0])).toEqual([null, 501, 301, 201, 101]);
+    });
+
+    it('sorts by an ordinal over a distinct output', async () => {
+      const rows = await runQuery('SELECT DISTINCT SAL AS S FROM EMP ORDER BY 1');
+      expect(rows).toEqual([{ S: 100 }, { S: 200 }, { S: 300 }, { S: 500 }, { S: null }]);
+    });
+
+    it('sorts by several distinct outputs', async () => {
+      const rows = await runQuery('SELECT DISTINCT DEPT AS D, SAL AS S FROM EMP ORDER BY D ASC, S DESC');
+      expect(rows).toEqual([
+        { D: 10, S: 200 }, { D: 10, S: 100 }, { D: 20, S: null }, { D: 20, S: 300 }, { D: null, S: 500 },
+      ]);
+    });
+
+    it('applies a LIMIT to the sorted distinct output', async () => {
+      const rows = await runQuery('SELECT DISTINCT DEPT AS D FROM EMP ORDER BY D DESC LIMIT 2');
+      expect(rows).toEqual([{ D: null }, { D: 20 }]);
+    });
+
+    it('rejects a sort key that is not in the distinct output', async () => {
+      await expect(runQuery('SELECT DISTINCT DEPT FROM EMP ORDER BY SAL'))
+        .rejects.toThrow(/must appear in the SELECT DISTINCT list/);
+    });
+  });
 });

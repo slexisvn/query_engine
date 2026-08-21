@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { GreedyJoinEnumerator } from '../../../src/optimizer/join-order/greedy.js';
 import { DPhypEnumerator } from '../../../src/optimizer/join-order/dphyp.js';
-import { DefaultCostModel } from '../../../src/optimizer/join-order/cost-model.js';
+import { DefaultCostModel } from '../../../src/planner/cost-model.js';
 import { HyperGraph } from '../../../src/optimizer/join-order/hypergraph.js';
 import {
   buildGraph,

@@ -20,7 +20,7 @@ import type {
   ExecSchema,
   EvalValue,
 } from './execution-types.js';
-import { resolveColumnIndex } from './column-resolve.js';
+import { optionalColumnIndex, UNRESOLVED_COLUMN } from './column-resolve.js';
 
 export enum StageKind {
   FILTER = 'filter',
@@ -56,16 +56,20 @@ interface AggregateDef {
   _columnMapping: ColumnMapping;
 }
 
-interface StageChain {
+interface ScanChain {
   table: string;
   alias: string;
   scanColumns: ColumnInfo[];
   stages: Stage[];
 }
 
-export interface FragmentSpec {
+export interface StageChain {
   baseSchema: ExecSchema;
   stages: Stage[];
+}
+
+export interface FragmentSpec {
+  source: StageChain;
   groupBy: BoundExpr[];
   aggregates: AggregateSpec[];
 }
@@ -87,15 +91,9 @@ interface InstantiatedFragment {
   aggregate: HashAggregateOperator;
 }
 
-interface SideSpec {
-  baseSchema: ExecSchema;
-  stages: Stage[];
-  schema: ExecSchema;
-}
-
 interface JoinSpecInput {
-  build: SideSpec;
-  probe: SideSpec;
+  build: StageChain;
+  probe: StageChain;
   buildKeys: BoundExpr[];
   probeKeys: BoundExpr[];
   residualCondition: BoundExpr | null;
@@ -108,16 +106,14 @@ interface JoinSpecInput {
 }
 
 export interface JoinSpec {
-  build: SideSpec;
-  probe: SideSpec;
+  build: StageChain;
+  probe: StageChain;
   buildKeys: BoundExpr[];
   probeKeys: BoundExpr[];
   residualCondition: BoundExpr | null;
   joinType: string;
   buildPreserved: boolean;
   uniqueKeys: boolean;
-  buildColCount: number;
-  probeColCount: number;
 }
 
 interface InstantiatedJoinSpec {
@@ -126,6 +122,8 @@ interface InstantiatedJoinSpec {
   buildExtractors: CompiledExpr[];
   probeExtractors: CompiledExpr[];
   conditionEvaluator: CompiledExpr | null;
+  buildColCount: number;
+  probeColCount: number;
 }
 
 interface AggregateLike {
@@ -142,8 +140,14 @@ interface ExprMeta {
   resultType?: DataType | string | null;
 }
 
+const WIDE_STORAGE_TYPES: ReadonlySet<DataType> = new Set([
+  DataType.DECIMAL,
+  DataType.INT64,
+  DataType.TIMESTAMP,
+]);
+
 export function normalizeExecType(dt: DataType | string): DataType {
-  if (dt === DataType.DECIMAL || dt === DataType.INT64) return DataType.FLOAT64;
+  if (WIDE_STORAGE_TYPES.has(dt as DataType)) return DataType.FLOAT64;
   return dt as DataType;
 }
 
@@ -270,7 +274,7 @@ export function buildAggregateDefs(aggregates: AggregateSpec[], columnMapping: C
   });
 }
 
-export function extractStageChain(startNode: LogicalPlanNode | null): StageChain | null {
+export function extractScanChain(startNode: LogicalPlanNode | null): ScanChain | null {
   const stages: Stage[] = [];
   let current: LogicalPlanNode | null = startNode;
   while (current) {
@@ -295,11 +299,11 @@ export function extractStageChain(startNode: LogicalPlanNode | null): StageChain
   return null;
 }
 
-export function extractAggregateFragment(node: LogicalPlanNode): StageChain | null {
-  return extractStageChain((node.children || [])[0] ?? null);
+export function extractAggregateFragment(node: LogicalPlanNode): ScanChain | null {
+  return extractScanChain((node.children || [])[0] ?? null);
 }
 
-export function stagedSchemaOf(baseSchema: ExecSchema, stages: Stage[]): ExecSchema {
+export function stageChainSchema({ baseSchema, stages }: StageChain): ExecSchema {
   let schema = baseSchema;
   for (const stage of stages) {
     if (stage.kind === StageKind.PROJECT) {
@@ -309,7 +313,7 @@ export function stagedSchemaOf(baseSchema: ExecSchema, stages: Stage[]): ExecSch
   return schema;
 }
 
-function stagesResolvable(baseSchema: ExecSchema, stages: Stage[]): boolean {
+export function stageChainResolvable({ baseSchema, stages }: StageChain): boolean {
   let schema = baseSchema;
   let mapping = schemaMappingOf(schema);
   for (const stage of stages) {
@@ -324,7 +328,7 @@ function stagesResolvable(baseSchema: ExecSchema, stages: Stage[]): boolean {
   return true;
 }
 
-export function instantiateStages(baseSchema: ExecSchema, stages: Stage[]): InstantiatedStages {
+export function instantiateStageChain({ baseSchema, stages }: StageChain): InstantiatedStages {
   let schema = baseSchema;
   let mapping = schemaMappingOf(schema);
   const operators: (FilterOperator | ProjectionOperator)[] = [];
@@ -349,7 +353,7 @@ export function instantiateStages(baseSchema: ExecSchema, stages: Stage[]): Inst
 }
 
 export function buildFragmentSpec(
-  fragment: StageChain,
+  fragment: ScanChain,
   node: LogicalPlanNode & { groupBy?: BoundExpr[]; aggregates: BoundExpr[] },
   storageSchema: ExecSchema,
 ): BuiltFragmentSpec | null {
@@ -387,8 +391,7 @@ export function buildFragmentSpec(
   const baseSchema = columnIndexes.map((i: number) => aliased[i]);
 
   const spec: FragmentSpec = {
-    baseSchema,
-    stages: fragment.stages,
+    source: { baseSchema, stages: fragment.stages },
     groupBy: node.groupBy || [],
     aggregates: (node.aggregates as BoundAggregateNode[]).map((agg: BoundAggregateNode) => ({
       name: agg.name,
@@ -408,8 +411,8 @@ export function buildFragmentSpec(
 }
 
 function validateFragmentSpec(spec: FragmentSpec): boolean {
-  if (!stagesResolvable(spec.baseSchema, spec.stages)) return false;
-  const mapping = schemaMappingOf(stagedSchemaOf(spec.baseSchema, spec.stages));
+  if (!stageChainResolvable(spec.source)) return false;
+  const mapping = schemaMappingOf(stageChainSchema(spec.source));
   for (const groupExpr of spec.groupBy) {
     if (!exprResolvable(groupExpr, mapping)) return false;
   }
@@ -420,7 +423,7 @@ function validateFragmentSpec(spec: FragmentSpec): boolean {
 }
 
 export function instantiateFragment(spec: FragmentSpec): InstantiatedFragment {
-  const { operators, mapping } = instantiateStages(spec.baseSchema, spec.stages);
+  const { operators, mapping } = instantiateStageChain(spec.source);
 
   const groupByEvals = spec.groupBy.map((expr: BoundExpr) => compileExpression(expr, mapping));
   const groupByTypes = spec.groupBy.map((expr: BoundExpr) => {
@@ -439,19 +442,15 @@ export function instantiateAggregate(spec: FragmentSpec): HashAggregateOperator 
   return instantiateFragment(spec).aggregate;
 }
 
-function execResolvedIndex(ref: BoundColumnRefNode, mapping: ColumnMapping): number | undefined {
-  return resolveColumnIndex(ref, mapping);
-}
-
 function refsResolveIdentically(
   exprOrList: BoundExpr | BoundExpr[] | null,
   mainMapping: ColumnMapping,
   workerMapping: ColumnMapping,
 ): boolean {
   for (const ref of collectColumnRefs(exprOrList)) {
-    const mainIdx = execResolvedIndex(ref, mainMapping);
-    const workerIdx = execResolvedIndex(ref, workerMapping);
-    if (mainIdx === undefined || mainIdx === null || mainIdx !== workerIdx) return false;
+    const mainIdx = optionalColumnIndex(ref, mainMapping);
+    if (mainIdx === UNRESOLVED_COLUMN) return false;
+    if (mainIdx !== optionalColumnIndex(ref, workerMapping)) return false;
   }
   return true;
 }
@@ -474,12 +473,14 @@ export function buildJoinSpec({
   build, probe, buildKeys, probeKeys, residualCondition,
   joinType, buildPreserved, uniqueKeys, buildMapping, probeMapping, combinedMapping,
 }: JoinSpecInput): JoinSpec | null {
-  if (!stagesResolvable(build.baseSchema, build.stages)) return null;
-  if (!stagesResolvable(probe.baseSchema, probe.stages)) return null;
+  if (!stageChainResolvable(build)) return null;
+  if (!stageChainResolvable(probe)) return null;
 
-  const workerBuildMapping = schemaMappingOf(stagedSchemaOf(build.baseSchema, build.stages));
-  const workerProbeMapping = schemaMappingOf(stagedSchemaOf(probe.baseSchema, probe.stages));
-  const workerCombinedMapping = schemaMappingOf([...build.schema, ...probe.schema]);
+  const buildSchema = stageChainSchema(build);
+  const probeSchema = stageChainSchema(probe);
+  const workerBuildMapping = schemaMappingOf(buildSchema);
+  const workerProbeMapping = schemaMappingOf(probeSchema);
+  const workerCombinedMapping = schemaMappingOf([...buildSchema, ...probeSchema]);
 
   if (!refsResolveIdentically(buildKeys, buildMapping, workerBuildMapping)) return null;
   if (!refsResolveIdentically(probeKeys, probeMapping, workerProbeMapping)) return null;
@@ -494,15 +495,13 @@ export function buildJoinSpec({
     joinType,
     buildPreserved: !!buildPreserved,
     uniqueKeys: !!uniqueKeys,
-    buildColCount: build.schema.length,
-    probeColCount: probe.schema.length,
   };
 }
 
 export function instantiateJoinSpec(spec: JoinSpec): InstantiatedJoinSpec {
-  const build = instantiateStages(spec.build.baseSchema, spec.build.stages);
-  const probe = instantiateStages(spec.probe.baseSchema, spec.probe.stages);
-  const combinedMapping = schemaMappingOf([...spec.build.schema, ...spec.probe.schema]);
+  const build = instantiateStageChain(spec.build);
+  const probe = instantiateStageChain(spec.probe);
+  const combinedMapping = schemaMappingOf([...build.schema, ...probe.schema]);
   return {
     buildOperators: build.operators,
     probeOperators: probe.operators,
@@ -511,5 +510,7 @@ export function instantiateJoinSpec(spec: JoinSpec): InstantiatedJoinSpec {
     conditionEvaluator: spec.residualCondition
       ? compileExpression(spec.residualCondition, combinedMapping)
       : null,
+    buildColCount: build.schema.length,
+    probeColCount: probe.schema.length,
   };
 }

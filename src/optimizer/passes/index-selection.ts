@@ -2,7 +2,7 @@ import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { PlanNodeType, LogicalIndexScan, LogicalFilter, type LogicalPlanNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
 import { BoundExprKind, type BoundExpr, type LiteralValue } from '../../binder/expression-binder.js';
-import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
+import { splitConjuncts, combineConjuncts } from '../../binder/conjuncts.js';
 import { Config } from '../../config.js';
 import { toNumericValue, type ColumnValue } from '../../storage/data-type.js';
 import type { ColumnStats, StatsProvider } from '../../catalog/statistics.js';

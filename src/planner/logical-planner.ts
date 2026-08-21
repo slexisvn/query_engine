@@ -1,11 +1,12 @@
 import * as LP from './logical-plan.js';
-import { BoundExprKind, BoundColumnRef, collectCorrelatedColumns, type BoundExpr, type BoundColumnRefNode, type BoundLiteralNode } from '../binder/expression-binder.js';
+import { BoundExprKind, BoundColumnRef, collectCorrelatedColumns, getExprType, type BoundExpr, type BoundColumnRefNode, type BoundLiteralNode } from '../binder/expression-binder.js';
 import type { BoundQuery, BoundSelect, BoundSetOp, BoundFrom, OutputColumn } from '../binder/binder.js';
 import { DataType } from '../storage/data-type.js';
+import { exprKey } from '../binder/expr-key.js';
+import { projectedColumnName } from './project-schema.js';
+import { formatExpression } from './plan-formatter.js';
 
 let _cteIdCounter = 0;
-
-export const SCALAR_OUTPUT_NAME = '_scalar';
 
 const EMPTY_INPUT_AGGREGATES: ReadonlyMap<string, BoundLiteralNode> = new Map([
   ['COUNT', { kind: BoundExprKind.LITERAL, value: 0, dataType: DataType.INT64 }],
@@ -72,6 +73,26 @@ function projectionExpr(item: { expr: BoundExpr; alias: string | null; inferredN
   const name = item.alias || item.inferredName;
   if (!name) return item.expr;
   return { ...item.expr, outputName: name };
+}
+
+function orderKeysOverProjection(orderKeys: LP.LogicalOrderKey[], projections: LP.ProjectedExpr[]): LP.LogicalOrderKey[] {
+  const positions = new Map<string, number>();
+  projections.forEach((expr, index) => {
+    const key = exprKey(expr);
+    if (!positions.has(key)) positions.set(key, index);
+  });
+
+  return orderKeys.map(key => {
+    const index = positions.get(exprKey(key.expr));
+    if (index === undefined) {
+      throw new Error(`ORDER BY expression must appear in the SELECT DISTINCT list: ${formatExpression(key.expr)}`);
+    }
+    const projected = projections[index];
+    return {
+      ...key,
+      expr: BoundColumnRef('', projectedColumnName(projected, index), index, getExprType(projected)),
+    };
+  });
 }
 
 export class LogicalPlanner {
@@ -163,7 +184,7 @@ export class LogicalPlanner {
       node = LP.LogicalProject(projections, node);
       node = LP.LogicalDistinct(node);
       if (bound.orderBy) {
-        node = LP.LogicalSort(bound.orderBy, node);
+        node = LP.LogicalSort(orderKeysOverProjection(bound.orderBy, projections), node);
       }
     } else {
       if (bound.orderBy) {
@@ -284,11 +305,12 @@ export class LogicalPlanner {
         const subPlan = this.planQuery(node.plan);
         const correlated = this.findCorrelatedRefs(node.plan);
 
+        const scalarColumn = LP.nextScalarOutputName();
         subqueryJoins.push((child) =>
-          LP.LogicalDependentJoin(child, subPlan, correlated, 'SCALAR', null)
+          LP.LogicalDependentJoin(child, subPlan, correlated, 'SCALAR', null, scalarColumn)
         );
         const scalarType = node.plan.outputColumns[0]?.dataType ?? DataType.FLOAT64;
-        const scalarRef = BoundColumnRef('', SCALAR_OUTPUT_NAME, -1, scalarType);
+        const scalarRef = BoundColumnRef('', scalarColumn, -1, scalarType);
         const emptyValue = emptyInputValue(node.plan);
         if (!emptyValue) return scalarRef;
         return {
@@ -324,7 +346,6 @@ export class LogicalPlanner {
       case BoundExprKind.CASE:
         return {
           ...expr,
-          operand: expr.operand ? this.walkAndReplace(expr.operand, fn, false) : null,
           whenClauses: expr.whenClauses.map(wc => ({
             condition: this.walkAndReplace(wc.condition, fn, false),
             result: this.walkAndReplace(wc.result, fn, false),
@@ -361,7 +382,6 @@ export class LogicalPlanner {
         for (const a of expr.args) this._collectWindows(a, out);
         return;
       case BoundExprKind.CASE:
-        if (expr.operand) this._collectWindows(expr.operand, out);
         for (const wc of expr.whenClauses) {
           this._collectWindows(wc.condition, out);
           this._collectWindows(wc.result, out);
@@ -373,108 +393,112 @@ export class LogicalPlanner {
 
   findCorrelatedRefs(boundQuery: BoundQuery): BoundColumnRefNode[] {
     const refs: BoundColumnRefNode[] = [];
-    this._scanQuery(boundQuery, refs);
+    this._scanQuery(boundQuery, refs, 0);
     return refs;
   }
 
-  _scanQuery(q: BoundQuery, refs: BoundColumnRefNode[]): void {
+  _scanQuery(q: BoundQuery, refs: BoundColumnRefNode[], level: number): void {
     if (q.type === 'SetOp') {
-      this._scanQuery(q.left, refs);
-      this._scanQuery(q.right, refs);
+      this._scanQuery(q.left, refs, level);
+      this._scanQuery(q.right, refs, level);
       return;
     }
-    if (q.plan) this._scanFrom(q.plan, refs);
-    if (q.where) this._scanExpr(q.where, refs);
-    if (q.having) this._scanExpr(q.having, refs);
-    for (const g of q.groupBy || []) this._scanExpr(g, refs);
-    for (const a of q.aggregates) this._scanExpr(a, refs);
-    for (const item of q.selectItems) this._scanExpr(item.expr, refs);
-    for (const ok of q.orderBy || []) this._scanExpr(ok.expr, refs);
-    if (q.limit) this._scanExpr(q.limit, refs);
-    if (q.offset) this._scanExpr(q.offset, refs);
+    if (q.plan) this._scanFrom(q.plan, refs, level);
+    if (q.where) this._scanExpr(q.where, refs, level);
+    if (q.having) this._scanExpr(q.having, refs, level);
+    for (const g of q.groupBy || []) this._scanExpr(g, refs, level);
+    for (const a of q.aggregates) this._scanExpr(a, refs, level);
+    for (const item of q.selectItems) this._scanExpr(item.expr, refs, level);
+    for (const ok of q.orderBy || []) this._scanExpr(ok.expr, refs, level);
+    if (q.limit) this._scanExpr(q.limit, refs, level);
+    if (q.offset) this._scanExpr(q.offset, refs, level);
   }
 
-  _scanFrom(f: BoundFrom, refs: BoundColumnRefNode[]): void {
+  _scanFrom(f: BoundFrom, refs: BoundColumnRefNode[], level: number): void {
     switch (f.type) {
       case 'JoinRef':
-        this._scanFrom(f.left, refs);
-        this._scanFrom(f.right, refs);
-        if (f.condition) this._scanExpr(f.condition, refs);
+        this._scanFrom(f.left, refs, level);
+        this._scanFrom(f.right, refs, level);
+        if (f.condition) this._scanExpr(f.condition, refs, level);
         return;
       case 'SubqueryRef':
-        this._scanQuery(f.query, refs);
+        this._scanQuery(f.query, refs, level + 1);
         return;
       case 'CTERef':
-        this._scanQuery(f.query, refs);
+        this._scanQuery(f.query, refs, level + 1);
         return;
     }
   }
 
-  _scanExpr(e: BoundExpr | null, refs: BoundColumnRefNode[]): void {
+  _scanExpr(e: BoundExpr | null, refs: BoundColumnRefNode[], level: number): void {
     if (!e) return;
     switch (e.kind) {
-      case BoundExprKind.COLUMN_REF:
-        if (e.isCorrelated) refs.push(e);
+      case BoundExprKind.COLUMN_REF: {
+        const outward = e.depth - level;
+        if (outward > 1) {
+          throw new Error(`Correlated reference to ${e.tableAlias ? `${e.tableAlias}.` : ''}${e.columnName} spans ${outward} query levels; only one level of correlation is supported`);
+        }
+        if (outward === 1) refs.push(e);
         return;
+      }
       case BoundExprKind.BINARY:
-        this._scanExpr(e.left, refs);
-        this._scanExpr(e.right, refs);
+        this._scanExpr(e.left, refs, level);
+        this._scanExpr(e.right, refs, level);
         return;
       case BoundExprKind.UNARY:
-        this._scanExpr(e.operand, refs);
+        this._scanExpr(e.operand, refs, level);
         return;
       case BoundExprKind.FUNCTION:
       case BoundExprKind.AGGREGATE:
-        for (const a of e.args) this._scanExpr(a, refs);
+        for (const a of e.args) this._scanExpr(a, refs, level);
         return;
       case BoundExprKind.CASE:
-        if (e.operand) this._scanExpr(e.operand, refs);
         for (const wc of e.whenClauses) {
-          this._scanExpr(wc.condition, refs);
-          this._scanExpr(wc.result, refs);
+          this._scanExpr(wc.condition, refs, level);
+          this._scanExpr(wc.result, refs, level);
         }
-        if (e.elseExpr) this._scanExpr(e.elseExpr, refs);
+        if (e.elseExpr) this._scanExpr(e.elseExpr, refs, level);
         return;
       case BoundExprKind.CAST:
-        this._scanExpr(e.expr, refs);
+        this._scanExpr(e.expr, refs, level);
         return;
       case BoundExprKind.BETWEEN:
-        this._scanExpr(e.expr, refs);
-        this._scanExpr(e.low, refs);
-        this._scanExpr(e.high, refs);
+        this._scanExpr(e.expr, refs, level);
+        this._scanExpr(e.low, refs, level);
+        this._scanExpr(e.high, refs, level);
         return;
       case BoundExprKind.IN_LIST:
-        this._scanExpr(e.expr, refs);
+        this._scanExpr(e.expr, refs, level);
         if (Array.isArray(e.list)) {
-          for (const item of e.list) this._scanExpr(item, refs);
+          for (const item of e.list) this._scanExpr(item, refs, level);
         } else {
-          this._scanExpr(e.list, refs);
+          this._scanExpr(e.list, refs, level);
         }
         return;
       case BoundExprKind.LIKE:
-        this._scanExpr(e.expr, refs);
-        this._scanExpr(e.pattern, refs);
+        this._scanExpr(e.expr, refs, level);
+        this._scanExpr(e.pattern, refs, level);
         return;
       case BoundExprKind.IS_NULL:
-        this._scanExpr(e.expr, refs);
+        this._scanExpr(e.expr, refs, level);
         return;
       case BoundExprKind.EXTRACT:
-        this._scanExpr(e.source, refs);
+        this._scanExpr(e.source, refs, level);
         return;
       case BoundExprKind.WINDOW:
-        for (const a of e.args) this._scanExpr(a, refs);
-        for (const p of e.partitionBy) this._scanExpr(p, refs);
-        for (const ok of e.orderBy) this._scanExpr(ok.expr, refs);
+        for (const a of e.args) this._scanExpr(a, refs, level);
+        for (const p of e.partitionBy) this._scanExpr(p, refs, level);
+        for (const ok of e.orderBy) this._scanExpr(ok.expr, refs, level);
         return;
       case BoundExprKind.SUBQUERY:
-        this._scanQuery(e.plan, refs);
+        this._scanQuery(e.plan, refs, level + 1);
         return;
       case BoundExprKind.EXISTS:
-        this._scanQuery(e.plan, refs);
+        this._scanQuery(e.plan, refs, level + 1);
         return;
       case BoundExprKind.QUANTIFIED:
-        this._scanExpr(e.expr, refs);
-        this._scanQuery(e.plan, refs);
+        this._scanExpr(e.expr, refs, level);
+        this._scanQuery(e.plan, refs, level + 1);
         return;
     }
   }

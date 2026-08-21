@@ -22,9 +22,21 @@ interface StoredTableInfo {
 
 export class PartitionMap {
   private _tables: Map<string, StoredTableInfo>;
+  private _replicated: Set<string>;
 
   constructor() {
     this._tables = new Map();
+    this._replicated = new Set();
+  }
+
+  registerReplicatedTable(tableName: string): void {
+    const upper = tableName.toUpperCase();
+    this._tables.delete(upper);
+    this._replicated.add(upper);
+  }
+
+  isReplicated(tableName: string): boolean {
+    return this._replicated.has(tableName.toUpperCase());
   }
 
   registerTable(
@@ -41,6 +53,7 @@ export class PartitionMap {
       }
     }
 
+    this._replicated.delete(upper);
     this._tables.set(upper, {
       strategy,
       partitionCount,

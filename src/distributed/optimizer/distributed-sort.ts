@@ -39,18 +39,22 @@ class DistributedSortRewriter extends PlanRewriter {
     const newNode = this.rewriteChildren(node);
 
     if (this._hasExchangeBelow(newNode)) {
+      const offset = newNode.offset || 0;
+      const fetchCount = newNode.count + offset;
       const localTopN: LogicalTopNNode = {
         ...newNode,
+        count: fetchCount,
+        offset: 0,
         children: [newNode.children[0]],
       };
 
-      const mergeExchange = LogicalMergeExchange(newNode.orderKeys, newNode.count, localTopN);
-      mergeExchange._cardinality = Math.min(newNode.count || Infinity, newNode._cardinality || Infinity);
+      const mergeExchange = LogicalMergeExchange(newNode.orderKeys, fetchCount, localTopN);
+      mergeExchange._cardinality = Math.min(fetchCount || Infinity, newNode._cardinality || Infinity);
 
       return {
         type: PlanNodeType.LIMIT,
         count: newNode.count,
-        offset: newNode.offset || 0,
+        offset,
         children: [mergeExchange],
       } as LogicalLimitNode;
     }

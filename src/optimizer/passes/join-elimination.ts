@@ -3,7 +3,7 @@ import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { PlanNodeType, JoinType, getChildren, type LogicalPlanNode, type LogicalJoinNode } from '../../planner/logical-plan.js';
 import { BoundExprKind, type BoundExpr, type BoundColumnRefNode } from '../../binder/expression-binder.js';
 import type { ColumnInfo } from '../../binder/scope.js';
-import { splitAnd } from '../sort-properties.js';
+import { splitConjuncts } from '../../binder/conjuncts.js';
 import { columnKey, isUniqueOnKeys, type UniqueKeyCatalog } from '../unique-keys.js';
 
 interface NamedExpr {
@@ -84,7 +84,7 @@ function preservesLeftCardinality(join: LogicalJoinNode, catalog: UniqueKeyCatal
   const rightNames = collectOutputNames(right);
   const rightKeys = new Set<string>();
 
-  for (const pred of splitAnd(join.condition)) {
+  for (const pred of splitConjuncts(join.condition)) {
     if (pred.kind !== BoundExprKind.BINARY || pred.op !== '=') continue;
     for (const side of [pred.left, pred.right]) {
       if (side.kind !== BoundExprKind.COLUMN_REF) continue;

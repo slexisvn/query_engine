@@ -165,4 +165,52 @@ describe('FilterOperator', () => {
       expect(result.getValue(0, 0)).toBe(42);
     });
   });
+
+  describe('parallel filtering resolves columns through the mapping', () => {
+    const predicate = {
+      kind: 'BoundBinary',
+      op: '>',
+      left: { kind: 'BoundColumnRef', tableAlias: 'T', columnName: 'VAL', columnIndex: 4, dataType: 'INT32' },
+      right: { kind: 'BoundLiteral', value: 2, dataType: 'INT32' },
+      resultType: 'BOOLEAN',
+    };
+
+    function dispatchSpy() {
+      const seen = [];
+      return {
+        seen,
+        canParallelize: () => true,
+        filterParallel: async (data, length) => {
+          seen.push([...data.slice(0, length)]);
+          const sv = new Uint32Array(length);
+          let count = 0;
+          for (let i = 0; i < length; i++) if (data[i] > 2) sv[count++] = i;
+          return { selectionVector: sv, matchCount: count };
+        },
+      };
+    }
+
+    it('reads the column the mapping points at, not the binder index', async () => {
+      const dispatch = dispatchSpy();
+      const mapping = new Map([['T.VAL', 0], ['VAL', 0]]);
+      const op = new FilterOperator(predicate, (chunk, row) => chunk.columns[0].get(row) > 2, mapping, dispatch);
+      const chunk = makeChunk([{ type: 'INT32', values: [1, 5, 3] }]);
+
+      const result = await op.process(chunk);
+
+      expect(dispatch.seen).toEqual([[1, 5, 3]]);
+      expect(chunkRows(result)).toEqual([[5], [3]]);
+    });
+
+    it('falls back to scalar evaluation when the column is not in the mapping', async () => {
+      const dispatch = dispatchSpy();
+      const op = new FilterOperator(predicate, (chunk, row) => chunk.columns[0].get(row) > 2, new Map(), dispatch);
+      const chunk = makeChunk([{ type: 'INT32', values: [1, 5, 3] }]);
+
+      const result = await op.process(chunk);
+
+      expect(dispatch.seen).toEqual([]);
+      expect(chunkRows(result)).toEqual([[5], [3]]);
+    });
+  });
 });

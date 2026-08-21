@@ -4,8 +4,8 @@ import { HashJoinBuild, HashJoinProbe } from '../../../src/execution/operators/h
 import { SpillManager } from '../../../src/storage/spill-manager/spill-manager.js';
 import { MemoryStorage } from '../../../src/storage/spill-manager/memory-storage.js';
 import { JoinType } from '../../../src/planner/logical-plan.js';
-import { isBuildSidePreserved } from '../../../src/optimizer/join-build-side.js';
-import { chooseJoinBuildSide } from '../../../src/optimizer/join-build-side.js';
+import { isBuildSidePreserved } from '../../../src/planner/join-build-side.js';
+import { chooseJoinBuildSide } from '../../../src/planner/join-build-side.js';
 import { Column } from '../../../src/storage/column.js';
 import { DataChunk } from '../../../src/storage/chunk.js';
 import { DataType } from '../../../src/storage/data-type.js';

@@ -1,11 +1,9 @@
 import { OptimizationPass } from '../pass.js';
-import { getChildren, setChildren, type LogicalPlanNode, type ProjectedExpr, type LogicalScanNode, type LogicalProjectNode, type LogicalFilterNode, type LogicalJoinNode, type LogicalAggregateNode, type LogicalSortNode, type LogicalDependentJoinNode, type LogicalSetOpNode, type LogicalCTEAnchorNode, type LogicalDistinctNode } from '../../planner/logical-plan.js';
+import { getChildren, setChildren, type LogicalPlanNode, type ProjectedExpr, type LogicalScanNode, type LogicalProjectNode, type LogicalFilterNode, type LogicalJoinNode, type LogicalAggregateNode, type LogicalSortNode, type LogicalTopNNode, type LogicalDependentJoinNode, type LogicalSetOpNode, type LogicalCTEAnchorNode, type LogicalDistinctNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
 import type { ColumnInfo } from '../../binder/scope.js';
-import { collectPlanRefs as collectPlanRefsShared, refBelongsToPlan as refBelongsToPlanShared, type PlanRefs } from './plan-refs.js';
-
-interface NamedExpr { outputName?: string; alias?: string; name?: string; columnName?: string; }
+import { collectPlanRefs as collectPlanRefsShared, refBelongsToPlan as refBelongsToPlanShared, outputName, type NamedExpr, type PlanRefs } from './plan-refs.js';
 
 function collectPlanRefs(node: LogicalPlanNode): PlanRefs {
   return collectPlanRefsShared(node, { recurseProject: true });
@@ -52,6 +50,10 @@ class ColumnPruner extends PlanRewriter<RequiredColumns> {
     return pruneSort(this, node, required);
   }
 
+  override rewriteTopN(node: LogicalTopNNode, required: RequiredColumns = null): LogicalPlanNode {
+    return pruneSort(this, node, required);
+  }
+
   override rewriteDependentJoin(node: LogicalDependentJoinNode, required: RequiredColumns = null): LogicalPlanNode {
     return pruneDependentJoin(this, node, required);
   }
@@ -80,13 +82,17 @@ function pruneScan(node: LogicalScanNode, required: RequiredColumns): LogicalPla
 }
 
 function pruneProject(pruner: ColumnPruner, node: LogicalProjectNode, required: RequiredColumns): LogicalPlanNode {
+  const expressions = node.expressions || [];
+  const kept = required
+    ? expressions.filter((expr, index) => outputNeeded(expr, required, index))
+    : expressions;
+  const emitted = kept.length > 0 && kept.length < expressions.length ? kept : expressions;
+
   const childRequired = new Set<string>();
-  for (const [index, expr] of (node.expressions || []).entries()) {
-    if (!required || outputNeeded(expr, required, index)) {
-      collectExprColumns(expr, childRequired);
-    }
-  }
-  return pruner.rewriteChildren(node, childRequired);
+  for (const expr of emitted) collectExprColumns(expr, childRequired);
+
+  const pruned = emitted === expressions ? node : { ...node, expressions: emitted };
+  return pruner.rewriteChildren(pruned, childRequired);
 }
 
 function pruneAggregate(pruner: ColumnPruner, node: LogicalAggregateNode): LogicalPlanNode {
@@ -98,7 +104,7 @@ function pruneAggregate(pruner: ColumnPruner, node: LogicalAggregateNode): Logic
   return pruner.rewriteChildren(node, childRequired);
 }
 
-function pruneSort(pruner: ColumnPruner, node: LogicalSortNode, required: RequiredColumns): LogicalPlanNode {
+function pruneSort(pruner: ColumnPruner, node: LogicalSortNode | LogicalTopNNode, required: RequiredColumns): LogicalPlanNode {
   if (!required) return pruner.rewriteChildren(node, null);
   let childRequired = copyRefs(required);
   for (const key of node.orderKeys || []) childRequired = addExprRefs(childRequired, key.expr);
@@ -168,11 +174,6 @@ function collectExprColumns(expr: ExprChild, required: Set<string>): void {
       collectExprColumns(val, required);
     }
   }
-}
-
-function outputName(expr: BoundExpr | NamedExpr): string {
-  const named = expr as NamedExpr;
-  return (named?.outputName || named?.alias || named?.name || named?.columnName || '').toUpperCase();
 }
 
 function outputNeeded(expr: BoundExpr | NamedExpr, required: Set<string>, index?: number): boolean {

@@ -1,6 +1,6 @@
 import { bestJoinOf, type JoinCardinalityEstimator, type JoinEnumerator, type JoinOrderEntry } from './join-plan.js';
 import type { HyperGraph } from './hypergraph.js';
-import type { DefaultCostModel } from './cost-model.js';
+import type { DefaultCostModel } from '../../planner/cost-model.js';
 
 export class GreedyJoinEnumerator implements JoinEnumerator {
   graph: HyperGraph;

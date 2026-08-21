@@ -32,7 +32,10 @@ export class BloomFilter {
   }
 
   add(value: ColumnValue): void {
-    const primary = hashValue(value);
+    this.addHash(hashValue(value));
+  }
+
+  addHash(primary: number): void {
     const secondary = (Math.imul(primary ^ (primary >>> 15), SECOND_HASH_MIX) >>> 0) | 1;
 
     for (let i = 0; i < this.hashCount; i++) {
@@ -45,7 +48,10 @@ export class BloomFilter {
   }
 
   mightContain(value: ColumnValue): boolean {
-    const primary = hashValue(value);
+    return this.mightContainHash(hashValue(value));
+  }
+
+  mightContainHash(primary: number): boolean {
     const secondary = (Math.imul(primary ^ (primary >>> 15), SECOND_HASH_MIX) >>> 0) | 1;
 
     for (let i = 0; i < this.hashCount; i++) {

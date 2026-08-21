@@ -106,4 +106,60 @@ describe('set operation semantics', () => {
         .rejects.toThrow(/set operation/);
     });
   });
+
+  describe('OFFSET over UNION ALL', () => {
+    it('skips rows of the combined result, not of each branch', async () => {
+      const all = await runQuery('SELECT ID AS X FROM EMP WHERE ID <= 3 UNION ALL SELECT ID AS X FROM EMP WHERE ID >= 4');
+      const offset = await runQuery(
+        'SELECT ID AS X FROM EMP WHERE ID <= 3 UNION ALL SELECT ID AS X FROM EMP WHERE ID >= 4 LIMIT 3 OFFSET 1');
+      expect(offset).toEqual(all.slice(1, 4));
+    });
+
+    it('reaches rows contributed by the right branch', async () => {
+      const rows = await runQuery(
+        'SELECT ID AS X FROM EMP WHERE ID <= 3 UNION ALL SELECT ID AS X FROM EMP WHERE ID >= 4 LIMIT 10 OFFSET 3');
+      expect(rows).toEqual([{ X: 4 }, { X: 5 }]);
+    });
+
+    it('returns nothing once the offset passes the combined row count', async () => {
+      const rows = await runQuery(
+        'SELECT ID AS X FROM EMP WHERE ID <= 3 UNION ALL SELECT ID AS X FROM EMP WHERE ID >= 4 LIMIT 3 OFFSET 5');
+      expect(rows).toEqual([]);
+    });
+
+    it('is unaffected when there is no offset', async () => {
+      const rows = await runQuery(
+        'SELECT ID AS X FROM EMP WHERE ID <= 3 UNION ALL SELECT ID AS X FROM EMP WHERE ID >= 4 LIMIT 2');
+      expect(rows).toEqual([{ X: 1 }, { X: 2 }]);
+    });
+  });
+
+  describe('operator precedence', () => {
+    it('binds INTERSECT tighter than UNION', async () => {
+      const chained = await runQuery(
+        'SELECT DEPT AS X FROM EMP INTERSECT SELECT DEPT AS X FROM DEPT UNION SELECT 99 AS X FROM E0');
+      const explicit = await runQuery(
+        'SELECT X FROM (SELECT DEPT AS X FROM EMP INTERSECT SELECT DEPT AS X FROM DEPT) A UNION SELECT 99 AS X FROM E0');
+      expect(sortedRows(chained)).toEqual(sortedRows(explicit));
+      expect(sortedRows(chained)).toEqual(sortedRows([{ X: 10 }, { X: 20 }, { X: 99 }]));
+    });
+
+    it('binds INTERSECT tighter than UNION when it appears on the right', async () => {
+      const rows = await runQuery(
+        'SELECT 99 AS X FROM E0 UNION SELECT DEPT AS X FROM EMP INTERSECT SELECT DEPT AS X FROM DEPT');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ X: 10 }, { X: 20 }, { X: 99 }]));
+    });
+
+    it('binds INTERSECT tighter than EXCEPT', async () => {
+      const rows = await runQuery(
+        'SELECT DEPT AS X FROM DEPT EXCEPT SELECT DEPT AS X FROM EMP INTERSECT SELECT 10 AS X FROM E0');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ X: 20 }, { X: 30 }]));
+    });
+
+    it('keeps UNION and EXCEPT left-associative', async () => {
+      const rows = await runQuery(
+        'SELECT DEPT AS X FROM DEPT UNION SELECT 99 AS X FROM E0 EXCEPT SELECT 30 AS X FROM E0');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ X: 10 }, { X: 20 }, { X: 99 }]));
+    });
+  });
 });

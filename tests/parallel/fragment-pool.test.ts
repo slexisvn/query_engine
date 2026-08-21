@@ -34,7 +34,7 @@ function chunkFrom(schema, rows) {
 }
 
 function specOf({ schema = SCHEMA, stages = [], groupBy = [], aggregates }) {
-  return { baseSchema: schema, stages, groupBy, aggregates };
+  return { source: { baseSchema: schema, stages }, groupBy, aggregates };
 }
 
 function toRows(chunks, names) {

@@ -91,3 +91,18 @@ export function isUniqueOnKeys(node: LogicalPlanNode, keys: ColumnKeySet, catalo
 
   return false;
 }
+
+export function producesDistinctRows(node: LogicalPlanNode, catalog: UniqueKeyCatalog | null): boolean {
+  if (node.type === PlanNodeType.AGGREGATE || node.type === PlanNodeType.DISTINCT) return true;
+
+  if (node.type === PlanNodeType.PROJECT) {
+    const outputs = projectOutputKeys(node);
+    return outputs !== null && isUniqueOnKeys(node, outputs, catalog);
+  }
+
+  if (PASS_THROUGH_TYPES.has(node.type) && node.children?.[0]) {
+    return producesDistinctRows(node.children[0], catalog);
+  }
+
+  return false;
+}

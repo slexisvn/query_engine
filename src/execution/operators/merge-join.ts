@@ -21,9 +21,13 @@ interface RowAdapterColumn {
 }
 
 interface RowAdapter {
-  row: ColumnValue[] | null;
+  row: ColumnValue[];
   columns: RowAdapterColumn[];
-  setRow(r: ColumnValue[]): void;
+}
+
+interface GroupMatch {
+  row: JoinRow | null;
+  sawUnknown: boolean;
 }
 
 type RowEvaluator = (adapter: RowAdapter, rowIdx: number) => EvalValue;
@@ -251,13 +255,8 @@ export class MergeJoinOperator {
   emitGroup(buildGroup: JoinRow[], probeGroup: JoinRow[]): void {
     if (this.emitsProbeOnly || this.emitsMark) {
       for (const probeRow of probeGroup) {
-        let matched = false;
-        let sawUnknown = false;
-        for (const buildRow of buildGroup) {
-          const holds = this.conditionValue(buildRow, probeRow);
-          if (holds === null) sawUnknown = true;
-          else if (holds) { matched = true; break; }
-        }
+        const { row, sawUnknown } = this.firstMatch(buildGroup, probeRow);
+        const matched = row !== null;
         if (this.joinType === JoinType.SEMI && matched) this.output.push(probeRow.row);
         else if (this.joinType === JoinType.ANTI && !matched) this.output.push(probeRow.row);
         else if (this.emitsMark) {
@@ -269,7 +268,7 @@ export class MergeJoinOperator {
 
     if (this.emitsSingleMatch) {
       for (const probeRow of probeGroup) {
-        const match = buildGroup.find((buildRow) => this.conditionHolds(buildRow, probeRow));
+        const match = this.firstMatch(buildGroup, probeRow).row;
         this.output.push(match ? [...match.row, ...probeRow.row] : this.probeWithNullBuild(probeRow));
       }
       return;
@@ -277,8 +276,10 @@ export class MergeJoinOperator {
 
     for (const buildRow of buildGroup) {
       let matchedAny = false;
+      this.bindBuild(buildRow);
       for (const probeRow of probeGroup) {
-        if (!this.conditionHolds(buildRow, probeRow)) continue;
+        this.bindProbe(probeRow);
+        if (this.boundConditionValue() !== true) continue;
         this.output.push([...buildRow.row, ...probeRow.row]);
         matchedAny = true;
       }
@@ -286,13 +287,39 @@ export class MergeJoinOperator {
     }
   }
 
-  conditionHolds(buildRow: JoinRow, probeRow: JoinRow): boolean {
-    return this.conditionValue(buildRow, probeRow) === true;
+  firstMatch(buildGroup: JoinRow[], probeRow: JoinRow): GroupMatch {
+    if (this.evaluateCondition === null) {
+      return { row: buildGroup.length > 0 ? buildGroup[0] : null, sawUnknown: false };
+    }
+
+    this.bindProbe(probeRow);
+    let sawUnknown = false;
+    for (const buildRow of buildGroup) {
+      this.bindBuild(buildRow);
+      const holds = this.boundConditionValue();
+      if (holds === null) sawUnknown = true;
+      else if (holds) return { row: buildRow, sawUnknown };
+    }
+    return { row: null, sawUnknown };
   }
 
-  conditionValue(buildRow: JoinRow, probeRow: JoinRow): boolean | null {
-    if (!this.adapter || !this.evaluateCondition) return true;
-    this.adapter.setRow([...buildRow.row, ...probeRow.row]);
+  bindBuild(buildRow: JoinRow): void {
+    if (this.adapter === null) return;
+    const combined = this.adapter.row;
+    const source = buildRow.row;
+    for (let c = 0; c < source.length; c++) combined[c] = source[c];
+  }
+
+  bindProbe(probeRow: JoinRow): void {
+    if (this.adapter === null) return;
+    const combined = this.adapter.row;
+    const source = probeRow.row;
+    const base = this.buildColCount;
+    for (let c = 0; c < source.length; c++) combined[base + c] = source[c];
+  }
+
+  boundConditionValue(): boolean | null {
+    if (this.adapter === null || this.evaluateCondition === null) return true;
     const result = this.evaluateCondition(this.adapter, 0);
     if (result === null || result === undefined) return null;
     return !!result;
@@ -355,12 +382,11 @@ export class MergeJoinOperator {
     const totalCols = this.buildTypes.length + this.probeTypes.length;
     const columns: RowAdapterColumn[] = new Array(totalCols);
     const adapter: RowAdapter = {
-      row: null,
+      row: new Array<ColumnValue>(totalCols).fill(null),
       columns,
-      setRow(r: ColumnValue[]) { this.row = r; },
     };
     for (let c = 0; c < totalCols; c++) {
-      columns[c] = { get: () => adapter.row![c] };
+      columns[c] = { get: () => adapter.row[c] };
     }
     return adapter;
   }

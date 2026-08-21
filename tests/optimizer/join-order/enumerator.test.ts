@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { enumerateJoinOrder, selectJoinEnumerator } from '../../../src/optimizer/join-order/enumerator.js';
 import { DPhypEnumerator } from '../../../src/optimizer/join-order/dphyp.js';
 import { GreedyJoinEnumerator } from '../../../src/optimizer/join-order/greedy.js';
-import { DefaultCostModel } from '../../../src/optimizer/join-order/cost-model.js';
+import { DefaultCostModel } from '../../../src/planner/cost-model.js';
 import { Config } from '../../../src/config.js';
 import {
   buildGraph,

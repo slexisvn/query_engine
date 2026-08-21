@@ -1,5 +1,5 @@
-import { BoundExprKind } from '../binder/expression-binder.js';
-import type { BoundExpr } from '../binder/expression-binder.js';
+import { BoundExprKind } from './expression-binder.js';
+import type { BoundExpr } from './expression-binder.js';
 
 type KeyBuilder = (expr: BoundExpr) => string;
 
@@ -37,7 +37,7 @@ const KEY_BUILDERS: Record<BoundExprKind, KeyBuilder> = {
   [BoundExprKind.CASE]: (e) => {
     const node = e as Extract<BoundExpr, { kind: BoundExprKind.CASE }>;
     const whens = node.whenClauses.map((wc) => `${exprKey(wc.condition)}=>${exprKey(wc.result)}`).join(',');
-    return `case(${node.operand ? exprKey(node.operand) : ''},${whens},${node.elseExpr ? exprKey(node.elseExpr) : ''})`;
+    return `case(${whens},${node.elseExpr ? exprKey(node.elseExpr) : ''})`;
   },
   [BoundExprKind.CAST]: (e) => {
     const node = e as Extract<BoundExpr, { kind: BoundExprKind.CAST }>;
@@ -114,7 +114,8 @@ function structuralKey(expr: BoundExpr): string {
   return `raw(${JSON.stringify(expr)})`;
 }
 
-export function exprKey(expr: BoundExpr): string {
+export function exprKey(expr: BoundExpr | null | undefined): string {
+  if (!expr) return 'none';
   const cached = cache.get(expr);
   if (cached !== undefined) return cached;
   const build = KEY_BUILDERS[expr.kind];

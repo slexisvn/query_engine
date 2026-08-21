@@ -3,6 +3,9 @@ import { DataChunk } from '../../storage/chunk.js';
 import { DataType } from '../../storage/data-type.js';
 import type { ColumnValue } from '../../storage/data-type.js';
 import { Config } from '../../config.js';
+import { keyIdentityText } from '../../execution/hash-table.js';
+
+const NULL_PARTITION = 0;
 
 export const StrategyType = {
   HASH: 'hash',
@@ -81,10 +84,12 @@ export class PartitionStrategy {
 
 export class HashPartitionStrategy extends PartitionStrategy {
   _seed: number;
+  _keyParts: ColumnValue[];
 
   constructor(options: HashPartitionOptions = {}) {
     super();
     this._seed = options.seed || 0x9747b28c;
+    this._keyParts = [null];
   }
 
   override get type(): StrategyTypeValue {
@@ -92,6 +97,7 @@ export class HashPartitionStrategy extends PartitionStrategy {
   }
 
   override partitionFor(key: ColumnValue, partitionCount: number): number {
+    if (key === null || key === undefined) return NULL_PARTITION;
     const hash = murmur3(this._normalizeKey(key), this._seed);
     return hash % partitionCount;
   }
@@ -104,16 +110,15 @@ export class HashPartitionStrategy extends PartitionStrategy {
     for (let i = 0; i < size; i++) {
       const rowIdx = chunk.selectionVector ? chunk.selectionVector[i] : i;
       const key = col.get(rowIdx);
-      assignments[i] = key === null ? 0 : this.partitionFor(key, partitionCount);
+      assignments[i] = this.partitionFor(key, partitionCount);
     }
 
     return this._scatterByAssignments(chunk, assignments, partitionCount);
   }
 
   _normalizeKey(key: ColumnValue): string {
-    if (typeof key === 'bigint') return key.toString();
-    if (key === null || key === undefined) return '\0';
-    return String(key);
+    this._keyParts[0] = key;
+    return keyIdentityText(this._keyParts, 1);
   }
 }
 
@@ -134,7 +139,7 @@ export class RangePartitionStrategy extends PartitionStrategy {
   }
 
   override partitionFor(key: ColumnValue): number {
-    if (key === null || key === undefined) return 0;
+    if (key === null || key === undefined) return NULL_PARTITION;
     return this._binarySearch(key);
   }
 

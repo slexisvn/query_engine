@@ -3,13 +3,13 @@ import { PlanNodeType, JoinType, LogicalJoin, LogicalFilter, getChildren, type L
 import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { buildHyperGraph } from '../join-order/hypergraph.js';
 import { enumerateJoinOrder } from '../join-order/enumerator.js';
-import { DefaultCostModel } from '../join-order/cost-model.js';
-import { DefaultCardinalityEstimator, type TableStats } from '../join-order/cardinality.js';
+import { DefaultCostModel } from '../../planner/cost-model.js';
+import { DefaultCardinalityEstimator, type TableStats } from '../../planner/cardinality.js';
 import { collectTableRefs } from '../expr-walk.js';
 import type { JoinPlan } from '../join-order/join-plan.js';
 import type { Relation } from '../join-order/hypergraph.js';
 import type { BoundExpr } from '../../binder/expression-binder.js';
-import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
+import { splitConjuncts, combineConjuncts } from '../../binder/conjuncts.js';
 
 const SYNTHETIC_RELATION_PREFIX = '_rel_';
 

@@ -1,6 +1,6 @@
 import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
 import type { LogicalPlanNode } from '../../planner/logical-plan.js';
-import type { DefaultCostModel } from './cost-model.js';
+import type { DefaultCostModel } from '../../planner/cost-model.js';
 import { DataType } from '../../storage/data-type.js';
 
 export interface JoinPlan {

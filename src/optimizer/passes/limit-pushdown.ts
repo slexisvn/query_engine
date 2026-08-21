@@ -23,8 +23,9 @@ class LimitPushdownRewriter extends PlanRewriter {
     }
 
     if (child.type === PlanNodeType.SET_OP && child.op === SetOpType.UNION && child.all) {
-      const leftLimit = { ...node, children: [child.children[0]] };
-      const rightLimit = { ...node, children: [child.children[1]] };
+      const branchLimit = { ...node, count: node.count + (node.offset || 0), offset: 0 };
+      const leftLimit = { ...branchLimit, children: [child.children[0]] };
+      const rightLimit = { ...branchLimit, children: [child.children[1]] };
 
       const newUnion = {
         ...child,
@@ -38,7 +39,7 @@ class LimitPushdownRewriter extends PlanRewriter {
     }
 
     if (child.type === PlanNodeType.SORT) {
-      const newSort = { ...child, limit: node.count, offset: node.offset || 0 };
+      const newSort = { ...child, limit: node.count + (node.offset || 0), offset: 0 };
       return { ...node, children: [newSort] };
     }
 

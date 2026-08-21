@@ -65,8 +65,8 @@ describe('compileColumnarProjection eligibility', () => {
     expect(compileColumnarProjection(bin(lit(1), '-', col('PRICE')), mapping)).not.toBeNull();
   });
 
-  it('declines division because of its null-on-zero rule', () => {
-    expect(compileColumnarProjection(bin(col('QTY'), '/', lit(2)), mapping)).toBeNull();
+  it('accepts division', () => {
+    expect(compileColumnarProjection(bin(col('QTY'), '/', lit(2)), mapping)).not.toBeNull();
   });
 
   it('declines a comparison operator', () => {
@@ -81,8 +81,13 @@ describe('compileColumnarProjection eligibility', () => {
     expect(compileColumnarProjection(bin(lit(1), '+', lit(2)), mapping)).toBeNull();
   });
 
-  it('declines a nested expression operand', () => {
-    expect(compileColumnarProjection(bin(bin(col('QTY'), '+', lit(1)), '*', lit(2)), mapping)).toBeNull();
+  it('accepts a nested expression operand', () => {
+    expect(compileColumnarProjection(bin(bin(col('QTY'), '+', lit(1)), '*', lit(2)), mapping)).not.toBeNull();
+  });
+
+  it('declines a function call operand', () => {
+    const upper = { kind: BoundExprKind.FUNCTION, name: 'UPPER', args: [col('LABEL')] };
+    expect(compileColumnarProjection(bin(upper, '+', lit(1)), mapping)).toBeNull();
   });
 
   it('declines an unknown column', () => {
@@ -252,4 +257,65 @@ describe('compileColumnarProjection conformance with the scalar evaluator', () =
       }
     });
   }
+});
+
+describe('columnar results match the scalar evaluator', () => {
+  const chunk = numericChunk([
+    { type: 'INT32', values: [2, 4, 0, 7] },
+    { type: 'FLOAT64', values: [1.5, 0, 3.25, 2] },
+  ]);
+
+  const cases = {
+    'division by a column that holds zero': bin(col('QTY'), '/', col('PRICE')),
+    'division by a literal': bin(col('QTY'), '/', lit(2)),
+    'nested arithmetic': bin(bin(col('QTY'), '+', lit(1)), '*', bin(col('QTY'), '-', lit(1))),
+    'nested division inside multiplication': bin(bin(col('QTY'), '/', col('PRICE')), '*', lit(2)),
+    'unary negation': { kind: BoundExprKind.UNARY, op: '-', operand: bin(col('QTY'), '+', lit(1)) },
+    'column plus column': bin(col('QTY'), '+', col('PRICE')),
+    'literal minus column': bin(lit(10), '-', col('QTY')),
+  };
+
+  for (const [name, expr] of Object.entries(cases)) {
+    it(`agrees on ${name}`, () => {
+      const columnar = compileColumnarProjection(expr, mapping);
+      expect(columnar).not.toBeNull();
+      const produced = columnar(chunk);
+
+      const scalar = compileExpression(expr, mapping);
+      for (let i = 0; i < chunk.size; i++) {
+        expect(produced.get(i)).toEqual(scalar(chunk, i));
+      }
+    });
+  }
+
+  it('propagates nulls through a nested expression', () => {
+    const nullable = numericChunk([
+      { type: 'INT32', values: [1, null, 3] },
+      { type: 'FLOAT64', values: [2, 2, null] },
+    ]);
+    const expr = bin(bin(col('QTY'), '+', lit(1)), '*', col('PRICE'));
+
+    const produced = compileColumnarProjection(expr, mapping)(nullable);
+    const scalar = compileExpression(expr, mapping);
+    for (let i = 0; i < nullable.size; i++) {
+      expect(produced.get(i)).toEqual(scalar(nullable, i));
+    }
+  });
+
+  it('honours a selection vector the way the scalar evaluator does', () => {
+    const selected = numericChunk([
+      { type: 'INT32', values: [1, 2, 3, 4] },
+      { type: 'FLOAT64', values: [10, 20, 30, 40] },
+    ]);
+    selected.selectionVector = new Uint32Array([1, 3]);
+    selected.size = 2;
+
+    const expr = bin(bin(col('QTY'), '*', lit(2)), '+', col('PRICE'));
+    const produced = compileColumnarProjection(expr, mapping)(selected);
+    const scalar = compileExpression(expr, mapping);
+
+    for (let i = 0; i < selected.size; i++) {
+      expect(produced.get(i)).toEqual(scalar(selected, selected.activeRowIndex(i)));
+    }
+  });
 });

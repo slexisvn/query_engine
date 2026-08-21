@@ -216,7 +216,6 @@ export interface EncodedChunkSet {
 export type AccumulatorState = ColumnValue | { sum: number; count: number } | ColumnValue[];
 
 export interface PartialGroupRecord {
-  key: string | number | bigint | boolean | null;
   groupValues: ColumnValue[];
   states: AccumulatorState[];
 }

@@ -129,4 +129,49 @@ describe('PartitionMap', () => {
     expect(snap.ORDERS).toBeDefined();
     expect(snap.ORDERS.partitionCount).toBe(2);
   });
+  describe('replicated tables', () => {
+    it('reports a registered replicated table', () => {
+      pm.registerReplicatedTable('dim');
+
+      expect(pm.isReplicated('dim')).toBe(true);
+    });
+
+    it('is case-insensitive for replicated table names', () => {
+      pm.registerReplicatedTable('Dim');
+
+      expect(pm.isReplicated('DIM')).toBe(true);
+    });
+
+    it('reports an unknown table as not replicated', () => {
+      expect(pm.isReplicated('missing')).toBe(false);
+    });
+
+    it('reports a partitioned table as not replicated', () => {
+      pm.registerTable('orders', new HashPartitionStrategy(), 2, new Map());
+
+      expect(pm.isReplicated('orders')).toBe(false);
+    });
+
+    it('keeps a replicated table out of the partitioned table info', () => {
+      pm.registerReplicatedTable('dim');
+
+      expect(pm.getTableInfo('dim')).toBeNull();
+    });
+
+    it('stops reporting a table as replicated once it is partitioned', () => {
+      pm.registerReplicatedTable('dim');
+      pm.registerTable('dim', new HashPartitionStrategy(), 2, new Map());
+
+      expect(pm.isReplicated('dim')).toBe(false);
+      expect(pm.getTableInfo('dim')).not.toBeNull();
+    });
+
+    it('stops reporting a table as partitioned once it is replicated', () => {
+      pm.registerTable('dim', new HashPartitionStrategy(), 2, new Map());
+      pm.registerReplicatedTable('dim');
+
+      expect(pm.getTableInfo('dim')).toBeNull();
+      expect(pm.isReplicated('dim')).toBe(true);
+    });
+  });
 });

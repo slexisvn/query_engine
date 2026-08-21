@@ -2,6 +2,8 @@ import fs from 'fs';
 import csv from 'csv-parser';
 import path from 'path';
 import { DataType, DEFAULT_CHUNK_SIZE, Table } from '../../index.js';
+import { castToNumber } from '../../storage/data-type.js';
+import { reconcileTypes } from '../../dataframe/type-inference.js';
 import type { ColumnSchema, ColumnValue, QueryEngine } from '../../index.js';
 import { DataLoader } from './data-loader.js';
 
@@ -12,6 +14,10 @@ interface CSVLoadOptions {
 }
 
 type CSVRow = Record<string, string>;
+
+const SCHEMA_SAMPLE_ROWS = 1000;
+const INT32_MIN = -2147483648;
+const INT32_MAX = 2147483647;
 
 export class CSVLoader extends DataLoader {
   allowedDir: string | null;
@@ -53,10 +59,22 @@ export class CSVLoader extends DataLoader {
       let rowIndex = 0;
       let done = false;
 
+      let sample: CSVRow[] = [];
+
       const flushBatch = async (): Promise<void> => {
         if (batch.length === 0) return;
         await (table as Table).insertRows(batch);
         batch = [];
+      };
+
+      const materializeTable = (): void => {
+        if (table) return;
+        schema = this.inferSchema(sample);
+        const pageStore = engine.storageBackend.createPageStore(engine.tempManager.allocate('buffer', tableName));
+        table = new Table(tableName, schema, pageStore);
+        this.registerToCatalog(engine, tableName, schema, table);
+        for (const pending of sample) batch.push(this.convertRow(pending, schema));
+        sample = [];
       };
 
       const fileStream = fs.createReadStream(resolvedPath);
@@ -66,17 +84,12 @@ export class CSVLoader extends DataLoader {
         if (done) return;
         done = true;
         fileStream.destroy();
+        materializeTable();
         flushBatch().then(() => resolve(tableName)).catch(reject);
       };
 
       stream.on('data', (data: CSVRow) => {
         if (done) return;
-        if (!schema) {
-          schema = this.inferSchema(data);
-          const pageStore = engine.storageBackend.createPageStore(engine.tempManager.allocate('buffer', tableName));
-          table = new Table(tableName, schema, pageStore);
-          this.registerToCatalog(engine, tableName, schema, table);
-        }
 
         const currentRow = rowIndex++;
         if (maxRows !== null && currentRow >= maxRows) {
@@ -87,7 +100,14 @@ export class CSVLoader extends DataLoader {
           return;
         }
 
-        batch.push(this.convertRow(data, schema));
+        if (!table) {
+          sample.push(data);
+          if (sample.length < SCHEMA_SAMPLE_ROWS) return;
+          materializeTable();
+        } else {
+          batch.push(this.convertRow(data, schema as ColumnSchema[]));
+        }
+
         if (batch.length >= DEFAULT_CHUNK_SIZE) {
           stream.pause();
           flushBatch().then(() => stream.resume()).catch(reject);
@@ -98,6 +118,7 @@ export class CSVLoader extends DataLoader {
         if (done) return;
         done = true;
         try {
+          materializeTable();
           await flushBatch();
           resolve(tableName);
         } catch (err) {
@@ -109,19 +130,25 @@ export class CSVLoader extends DataLoader {
     });
   }
 
-  inferSchema(firstRow: CSVRow): ColumnSchema[] {
-    return this.buildSchema(firstRow, (value: string) => {
-      let type = DataType.VARCHAR;
-      if (value && value.trim() !== '') {
-        const trimmed = value.trim();
-        if (/^(true|false)$/i.test(trimmed)) {
-          type = DataType.BOOLEAN;
-        } else if (!isNaN(Number(trimmed))) {
-          type = Number.isInteger(Number(trimmed)) ? DataType.INT32 : DataType.FLOAT64;
-        }
+  classifyValue(value: string): DataType | null {
+    if (value === undefined || value === null || value.trim() === '') return null;
+    const trimmed = value.trim();
+    if (/^(true|false)$/i.test(trimmed)) return DataType.BOOLEAN;
+    const numeric = castToNumber(trimmed);
+    if (numeric === null) return DataType.VARCHAR;
+    if (!Number.isInteger(numeric)) return DataType.FLOAT64;
+    return numeric >= INT32_MIN && numeric <= INT32_MAX ? DataType.INT32 : DataType.INT64;
+  }
+
+  inferSchema(sample: CSVRow[]): ColumnSchema[] {
+    const resolved = new Map<string, DataType | null>();
+    for (const key of Object.keys(sample[0] ?? {})) resolved.set(key, null);
+    for (const row of sample) {
+      for (const [key, current] of resolved) {
+        resolved.set(key, reconcileTypes(current, this.classifyValue(row[key])));
       }
-      return type;
-    });
+    }
+    return [...resolved].map(([name, dataType]) => ({ name, dataType: dataType ?? DataType.VARCHAR }));
   }
 
   convertRow(rowObj: CSVRow, schema: ColumnSchema[]): ColumnValue[] {
@@ -142,11 +169,16 @@ export class CSVLoader extends DataLoader {
           row[i] = trimmed.toLowerCase() === 'true';
           break;
         case DataType.INT32:
-          row[i] = parseInt(trimmed, 10);
+        case DataType.FLOAT64: {
+          const numeric = castToNumber(trimmed);
+          row[i] = numeric === null ? null : (schema[i].dataType === DataType.INT32 ? Math.trunc(numeric) : numeric);
           break;
-        case DataType.FLOAT64:
-          row[i] = parseFloat(trimmed);
+        }
+        case DataType.INT64: {
+          const numeric = castToNumber(trimmed);
+          row[i] = numeric === null ? null : BigInt(Math.trunc(numeric));
           break;
+        }
         default:
           row[i] = val;
           break;

@@ -1,7 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { WindowOperator } from '../../../src/execution/operators/window.js';
 import { Column } from '../../../src/storage/column.js';
 import { DataChunk } from '../../../src/storage/chunk.js';
+import { DataType } from '../../../src/storage/data-type.js';
+import { SpillManager } from '../../../src/storage/spill-manager/spill-manager.js';
+import { MemoryStorage } from '../../../src/storage/spill-manager/memory-storage.js';
+import { captureMemoryLimit, limitResidentRows } from '../../helpers/memory-limits.js';
 
 function makeChunk(colDefs) {
   const size = colDefs[0].values.length;
@@ -33,9 +37,16 @@ function compileExpr(expr, mapping) {
   return () => null;
 }
 
-function buildOperator(chunks, schema, windowExprs) {
+function buildOperator(chunks, schema, windowExprs, spillStore = null) {
   const mapping = buildMapping(schema);
-  return new WindowOperator(windowExprs, schema, mapping, (expr) => compileExpr(expr, mapping));
+  return new WindowOperator(windowExprs, schema, mapping, (expr) => compileExpr(expr, mapping), spillStore);
+}
+
+async function runWindow(op, chunks) {
+  for (const chunk of chunks) await op.consume(chunk);
+  const out = [];
+  for await (const chunk of op.stream()) out.push(chunk);
+  return out;
 }
 
 const schema = [
@@ -71,7 +82,7 @@ describe('WindowOperator', () => {
         resultType: 'INT32',
       }]);
 
-      const rows = (await op.execute(chunks))[0].toRows();
+      const rows = (await runWindow(op, chunks))[0].toRows();
 
       expect(rows.map(r => r[2])).toEqual([1, 1]);
     });
@@ -88,7 +99,7 @@ describe('WindowOperator', () => {
         resultType: 'FLOAT64',
       }]);
 
-      const result = await op.execute(chunks);
+      const result = await runWindow(op, chunks);
       const rows = result[0].toRows();
       expect(rows[0][3]).toBe(600);
       expect(rows[1][3]).toBe(600);
@@ -107,7 +118,7 @@ describe('WindowOperator', () => {
         resultType: 'FLOAT64',
       }]);
 
-      const result = await op.execute(chunks);
+      const result = await runWindow(op, chunks);
       const rows = result[0].toRows();
       const deptA = rows.filter((_, i) => chunks[0].columns[1].get(i) === 'A');
       const sums = deptA.map(r => r[3]).sort((a, b) => a - b);
@@ -124,7 +135,7 @@ describe('WindowOperator', () => {
         resultType: 'FLOAT64',
       }]);
 
-      const result = await op.execute(chunks);
+      const result = await runWindow(op, chunks);
       const rows = result[0].toRows();
       for (const row of rows) expect(row[3]).toBe(800);
     });
@@ -141,7 +152,7 @@ describe('WindowOperator', () => {
         resultType: 'INT64',
       }]);
 
-      const result = await op.execute(chunks);
+      const result = await runWindow(op, chunks);
       const rows = result[0].toRows();
       expect(rows[0][3]).toBe(3);
       expect(rows[1][3]).toBe(3);
@@ -160,7 +171,7 @@ describe('WindowOperator', () => {
         resultType: 'INT64',
       }]);
 
-      const result = await op.execute(chunks);
+      const result = await runWindow(op, chunks);
       const rows = result[0].toRows();
       const deptA = rows.filter((_, i) => chunks[0].columns[1].get(i) === 'A');
       const counts = deptA.map(r => r[3]).sort((a, b) => a - b);
@@ -179,7 +190,7 @@ describe('WindowOperator', () => {
         resultType: 'INT32',
       }]);
 
-      const result = await op.execute(chunks);
+      const result = await runWindow(op, chunks);
       const rows = result[0].toRows();
       expect(rows[0][3]).toBe(100);
       expect(rows[1][3]).toBe(100);
@@ -198,7 +209,7 @@ describe('WindowOperator', () => {
         resultType: 'INT32',
       }]);
 
-      const result = await op.execute(chunks);
+      const result = await runWindow(op, chunks);
       const rows = result[0].toRows();
       const deptA = [rows[0][3], rows[1][3], rows[2][3]];
       expect(deptA[0]).toBe(100);
@@ -218,7 +229,7 @@ describe('WindowOperator', () => {
         resultType: 'INT32',
       }]);
 
-      const result = await op.execute(chunks);
+      const result = await runWindow(op, chunks);
       const rows = result[0].toRows();
       expect(rows[0][3]).toBe(300);
       expect(rows[1][3]).toBe(300);
@@ -237,7 +248,7 @@ describe('WindowOperator', () => {
         resultType: 'INT32',
       }]);
 
-      const result = await op.execute(chunks);
+      const result = await runWindow(op, chunks);
       const rows = result[0].toRows();
       const deptA = rows.filter((_, i) => chunks[0].columns[1].get(i) === 'A');
       const maxes = deptA.map(r => r[3]).sort((a, b) => a - b);
@@ -256,7 +267,7 @@ describe('WindowOperator', () => {
         resultType: 'INT64',
       }]);
 
-      const result = await op.execute(chunks);
+      const result = await runWindow(op, chunks);
       const rows = result[0].toRows();
       const deptA = rows.filter((_, i) => chunks[0].columns[1].get(i) === 'A');
       const rns = deptA.map(r => r[3]).sort((a, b) => a - b);
@@ -282,7 +293,7 @@ describe('WindowOperator', () => {
         resultType: 'INT64',
       }]);
 
-      const result = await op.execute(chunks);
+      const result = await runWindow(op, chunks);
       const rows = result[0].toRows();
       const ranks = rows.map(r => r[3]);
       expect(ranks).toEqual([1, 1, 3, 3]);
@@ -304,7 +315,7 @@ describe('WindowOperator', () => {
         resultType: 'INT64',
       }]);
 
-      const result = await op.execute(chunks);
+      const result = await runWindow(op, chunks);
       const rows = result[0].toRows();
       const ranks = rows.map(r => r[3]);
       expect(ranks).toEqual([1, 1, 2, 2]);
@@ -329,7 +340,7 @@ describe('WindowOperator over filtered input', () => {
       resultType: 'INT64',
     }]);
 
-    const rows = (await op.execute([chunk])).flatMap(c => c.toRows());
+    const rows = (await runWindow(op, [chunk])).flatMap(c => c.toRows());
 
     expect(rows.map(r => r[0])).toEqual([2, 4]);
     expect(rows.map(r => r[1])).toEqual(['B', 'B']);
@@ -352,11 +363,107 @@ describe('WindowOperator over filtered input', () => {
       resultType: 'INT64',
     }]);
 
-    const rows = (await op.execute([chunk])).flatMap(c => c.toRows());
+    const rows = (await runWindow(op, [chunk])).flatMap(c => c.toRows());
     const byId = new Map(rows.map(r => [r[0], r[3]]));
 
     expect(byId.get(2)).toBe(1);
     expect(byId.get(3)).toBe(2);
     expect(byId.get(4)).toBe(1);
+  });
+});
+
+describe('WindowOperator memory budget', () => {
+  const ROW_SCHEMA = [DataType.INT32, DataType.VARCHAR, DataType.INT32];
+  const ROW_COUNT = 240;
+  const CHUNK_SIZE = 16;
+  const DEPARTMENTS = 7;
+  let restoreMemoryLimit;
+
+  beforeEach(() => { restoreMemoryLimit = captureMemoryLimit(); });
+  afterEach(() => { restoreMemoryLimit(); });
+
+  function memSpill() {
+    return new SpillManager(new MemoryStorage());
+  }
+
+  function staffChunks() {
+    const chunks = [];
+    for (let start = 0; start < ROW_COUNT; start += CHUNK_SIZE) {
+      const size = Math.min(CHUNK_SIZE, ROW_COUNT - start);
+      const ids = [], depts = [], salaries = [];
+      for (let i = start; i < start + size; i++) {
+        ids.push(i);
+        depts.push(`d${i % DEPARTMENTS}`);
+        salaries.push((i * 37) % 101);
+      }
+      chunks.push(makeChunk([
+        { type: 'INT32', values: ids },
+        { type: 'VARCHAR', values: depts },
+        { type: 'INT32', values: salaries },
+      ]));
+    }
+    return chunks;
+  }
+
+  const SPECS = {
+    'a partition-wide total': [
+      { name: 'SUM', args: [{ columnName: 'salary' }], partitionBy: [{ columnName: 'dept' }], orderBy: [], resultType: 'FLOAT64' },
+    ],
+    'a rank within an ordered partition': [
+      { name: 'ROW_NUMBER', args: [], partitionBy: [{ columnName: 'dept' }], orderBy: [{ expr: { columnName: 'salary' }, direction: 'ASC' }], resultType: 'INT64' },
+    ],
+    'a running frame over the whole input': [
+      { name: 'SUM', args: [{ columnName: 'salary' }], partitionBy: [], orderBy: [{ expr: { columnName: 'id' }, direction: 'ASC' }], resultType: 'FLOAT64' },
+    ],
+    'two window expressions partitioned by different keys': [
+      { name: 'SUM', args: [{ columnName: 'salary' }], partitionBy: [{ columnName: 'dept' }], orderBy: [], resultType: 'FLOAT64' },
+      { name: 'RANK', args: [], partitionBy: [{ columnName: 'salary' }], orderBy: [{ expr: { columnName: 'id' }, direction: 'DESC' }], resultType: 'INT64' },
+    ],
+    'a lag over an ordered partition': [
+      { name: 'LAG', args: [{ columnName: 'salary' }], partitionBy: [{ columnName: 'dept' }], orderBy: [{ expr: { columnName: 'id' }, direction: 'ASC' }], resultType: 'INT32' },
+    ],
+  };
+
+  async function windowRows(windowExprs, spillStore) {
+    const chunks = staffChunks();
+    const op = buildOperator(chunks, schema, windowExprs, spillStore);
+    const emitted = await runWindow(op, chunks);
+    return { rows: emitted.flatMap(c => c.toRows()), spilled: op.overflowed };
+  }
+
+  for (const [label, windowExprs] of Object.entries(SPECS)) {
+    it(`spills without changing the rows it emits: ${label}`, async () => {
+      const expected = (await windowRows(windowExprs, null)).rows;
+      expect(expected).toHaveLength(ROW_COUNT);
+
+      for (const residentRows of [4, 9, 17, 33, 65]) {
+        limitResidentRows(ROW_SCHEMA, residentRows);
+        const spilled = await windowRows(windowExprs, memSpill());
+        expect(spilled.spilled).toBe(true);
+        expect(spilled.rows).toEqual(expected);
+      }
+    });
+  }
+
+  it('releases every buffered input chunk once the budget is exceeded', async () => {
+    limitResidentRows(ROW_SCHEMA, 8);
+    const chunks = staffChunks();
+    const op = buildOperator(chunks, schema, SPECS['a partition-wide total'], memSpill());
+
+    for (const chunk of chunks) await op.consume(chunk);
+
+    expect(op.resident).toHaveLength(0);
+    expect(op.rowCount).toBe(ROW_COUNT);
+  });
+
+  it('keeps rows resident when there is nowhere to spill them', async () => {
+    limitResidentRows(ROW_SCHEMA, 8);
+    const chunks = staffChunks();
+    const op = buildOperator(chunks, schema, SPECS['a partition-wide total'], null);
+
+    for (const chunk of chunks) await op.consume(chunk);
+
+    expect(op.overflowed).toBe(false);
+    expect(op.resident).toHaveLength(chunks.length);
   });
 });

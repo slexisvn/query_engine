@@ -202,29 +202,26 @@ describe('collectCorrelatedColumns', () => {
     expect(refs[0]).toBe(corr);
   });
 
-  it('walks into CASE: operand, each WHEN condition, each WHEN result, ELSE', () => {
-    const cOp = outer('OP');
+  it('walks into CASE: each WHEN condition, each WHEN result, ELSE', () => {
     const cCond = outer('COND');
     const cRes = outer('RES');
     const cElse = outer('ELSE');
 
     const expr = BoundCase(
-      cOp,
       [{ condition: cCond, result: cRes }],
       cElse,
       DataType.INT32,
     );
     const refs = collectCorrelatedColumns(expr);
-    expect(refs).toHaveLength(4);
-    expect(refs).toContain(cOp);
+    expect(refs).toHaveLength(3);
     expect(refs).toContain(cCond);
     expect(refs).toContain(cRes);
     expect(refs).toContain(cElse);
   });
 
-  it('CASE with null operand and null elseExpr only walks WHEN clauses', () => {
+  it('CASE with null elseExpr only walks WHEN clauses', () => {
     const corr = outer('X');
-    const expr = BoundCase(null, [{ condition: corr, result: n() }], null, DataType.INT32);
+    const expr = BoundCase([{ condition: corr, result: n() }], null, DataType.INT32);
     const refs = collectCorrelatedColumns(expr);
     expect(refs).toHaveLength(1);
     expect(refs[0]).toBe(corr);

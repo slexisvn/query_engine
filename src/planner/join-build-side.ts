@@ -1,4 +1,4 @@
-import { JoinType } from '../planner/logical-plan.js';
+import { JoinType } from './logical-plan.js';
 import { isPureEquiJoin } from './sort-properties.js';
 import type { BoundExpr } from '../binder/expression-binder.js';
 

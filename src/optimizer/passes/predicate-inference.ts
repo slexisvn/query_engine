@@ -2,8 +2,9 @@ import { OptimizationPass } from '../pass.js';
 import { PlanNodeType, JoinType, LogicalFilter, getChildren, setChildren, type LogicalPlanNode, type LogicalFilterNode, type LogicalJoinNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { BoundExprKind, BoundBinary, BoundLiteral, BoundInList, walkExpr, getExprType, type BoundExpr, type LiteralValue } from '../../binder/expression-binder.js';
-import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
+import { splitConjuncts, combineConjuncts } from '../../binder/conjuncts.js';
 import { DataType } from '../../storage/data-type.js';
+import { exprKey } from '../../binder/expr-key.js';
 
 interface RangeBound { op: string; literal: BoundExpr; }
 
@@ -367,12 +368,6 @@ function predKey(pred: BoundExpr): string {
   return JSON.stringify(pred).slice(0, 80);
 }
 
-function exprKey(expr: BoundExpr | null): string {
-  if (!expr) return 'null';
-  if (expr.kind === BoundExprKind.COLUMN_REF) return colKey(expr);
-  if (expr.kind === BoundExprKind.LITERAL) return `LIT:${expr.value}`;
-  return JSON.stringify(expr).slice(0, 40);
-}
 
 function literalKey(expr: BoundExpr): string {
   if (expr.kind !== BoundExprKind.LITERAL) return `:${String(getExprType(expr) ?? '')}`;

@@ -8,7 +8,7 @@ import { isVectorizableExpr, evalVectorized } from '../wasm-expr-eval.js';
 import { Config } from '../../config.js';
 import { setBit, clearBit } from '../../utils/bitmap.js';
 import type { CompiledExpr, ColumnMapping } from '../execution-types.js';
-import { resolveColumnIndex } from '../column-resolve.js';
+import { optionalColumnIndex, resolveColumnIndex } from '../column-resolve.js';
 import { compileColumnarProjection, type ColumnarProjection } from '../columnar-projection.js';
 
 interface ParallelDispatchLike {
@@ -141,6 +141,6 @@ export class ProjectionOperator {
   }
 
   _resolveColIdx(expr: BoundColumnRefNode): number {
-    return resolveColumnIndex(expr, this.columnMapping, { clampNegative: true });
+    return optionalColumnIndex(expr, this.columnMapping);
   }
 }

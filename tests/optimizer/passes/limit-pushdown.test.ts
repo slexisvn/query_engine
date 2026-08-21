@@ -120,7 +120,7 @@ describe('LimitPushdown', () => {
       expect(sort.limit).toBe(10);
     });
 
-    it('annotates SORT with offset', () => {
+    it('asks SORT for count + offset rows and leaves the offset to the LIMIT above', () => {
       const plan = LogicalLimit(
         10, 5,
         LogicalSort([{ expr: colRef('t', 'id'), direction: 'ASC' }], scan('t'))
@@ -129,8 +129,9 @@ describe('LimitPushdown', () => {
       const result = pass.apply(plan);
 
       const sort = result.children[0];
-      expect(sort.limit).toBe(10);
-      expect(sort.offset).toBe(5);
+      expect(sort.limit).toBe(15);
+      expect(sort.offset).toBe(0);
+      expect(result.offset).toBe(5);
     });
   });
 

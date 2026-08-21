@@ -35,9 +35,11 @@ export class BinderScope {
   relations: Map<string, ScopeRelation>;
   aliasIndex: Map<string, string>;
   shadowCount: number;
+  queryBoundary: boolean;
 
-  constructor(parent: BinderScope | null = null) {
+  constructor(parent: BinderScope | null = null, queryBoundary: boolean = false) {
     this.parent = parent;
+    this.queryBoundary = queryBoundary;
     this.tables = new Map();
     this.columns = new Map();
     this.relations = new Map();
@@ -140,7 +142,7 @@ export class BinderScope {
     if (this.parent) {
       const parentResult = this.parent.resolveColumn(name);
       if (parentResult) {
-        return { ...parentResult, depth: parentResult.depth + 1 };
+        return { ...parentResult, depth: parentResult.depth + (this.queryBoundary ? 1 : 0) };
       }
     }
 
@@ -151,7 +153,7 @@ export class BinderScope {
     let depth = 0;
     for (let current: BinderScope | null = this; current; current = current.parent) {
       if (current === scope) return depth;
-      depth++;
+      if (current.queryBoundary) depth++;
     }
     return depth;
   }
@@ -189,6 +191,10 @@ export class BinderScope {
 
   child(): BinderScope {
     return new BinderScope(this);
+  }
+
+  subqueryChild(): BinderScope {
+    return new BinderScope(this, true);
   }
 }
 

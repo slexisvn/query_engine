@@ -9,7 +9,7 @@ import type {
   LogicalPartialAggregateNode,
   LogicalFinalAggregateNode,
 } from '../../planner/logical-plan.js';
-import { Fragment, FragmentPlan, ExchangeType, resetFragmentIdCounter } from './fragment.js';
+import { Fragment, FragmentPlan, ExchangeType } from './fragment.js';
 import { DistributionStrategy } from '../optimizer/distribution-aware-join.js';
 import { ExchangePlacement } from './exchange-placement.js';
 import { PartitionPruner } from '../partition/partition-pruner.js';
@@ -28,8 +28,11 @@ import type {
 } from '../distributed-types.js';
 import type { BoundExpr, BoundBinaryNode } from '../../binder/expression-binder.js';
 import type { ColumnInfo } from '../../binder/scope.js';
-import { splitAnd } from './expr-utils.js';
-import { chooseJoinBuildSide } from '../../optimizer/join-build-side.js';
+import { splitConjuncts } from '../../binder/conjuncts.js';
+import { capabilityOf, runsOnWorkers, preservesColocation, preservesPartitioning } from './operator-capability.js';
+import { descriptorOf } from '../../planner/plan-node-descriptor.js';
+import { projectedColumnName, projectedColumnAlias } from '../../planner/project-schema.js';
+import { chooseJoinBuildSide } from '../../planner/join-build-side.js';
 import type { DataType } from '../../storage/data-type.js';
 
 interface OutputPartitioningLocal {
@@ -80,6 +83,7 @@ interface PartitionTableInfoLike {
 interface PartitionMapLike {
   getTableInfo(tableName: string): PartitionTableInfoLike | null;
   getNodesForPartition(tableName: string, partitionId: PartitionId): NodeId[];
+  isReplicated(tableName: string): boolean;
 }
 
 interface ClusterManagerLike {
@@ -122,7 +126,6 @@ export class DistributedPlanner {
   }
 
   fragmentize(logicalPlan: LogicalPlanNode): FragmentPlan {
-    resetFragmentIdCounter();
     this._fragments = [];
 
     const coordinatorId = this._clusterManager.localNode.nodeId;
@@ -370,7 +373,7 @@ export class DistributedPlanner {
     if (!condition) return null;
     const leftIdx: number[] = [];
     const rightIdx: number[] = [];
-    const preds = splitAnd(condition);
+    const preds = splitConjuncts(condition);
     for (const pred of preds) {
       if ((pred as BoundBinaryNode).op !== '=') continue;
       const a = (pred as BoundBinaryNode).left, b = (pred as BoundBinaryNode).right;
@@ -405,7 +408,24 @@ export class DistributedPlanner {
     if ((node as DistributionAnnotatedJoin)._distributionStrategy !== DistributionStrategy.COLOCATED) return false;
     const jt = node.joinType;
     if (jt !== JoinType.INNER && jt !== JoinType.LEFT && jt !== JoinType.RIGHT && jt !== JoinType.FULL) return false;
-    return this._isScanFilterSubtree(node.children[0]) && this._isScanFilterSubtree(node.children[1]);
+    if (!this._isWorkerLocalSubtree(node.children[0]) || !this._isWorkerLocalSubtree(node.children[1])) return false;
+    return this._findPartitionedScan(node) !== null;
+  }
+
+  _isWorkerLocalSubtree(node: LogicalPlanNode): boolean {
+    const SAFE = new Set<PlanNodeType>([PlanNodeType.SCAN, PlanNodeType.INDEX_SCAN, PlanNodeType.FILTER]);
+    let scanCount = 0;
+    const stack: LogicalPlanNode[] = [node];
+    while (stack.length > 0) {
+      const n = stack.pop();
+      if (!n || !SAFE.has(n.type)) return false;
+      if (n.type === PlanNodeType.SCAN || n.type === PlanNodeType.INDEX_SCAN) {
+        scanCount++;
+        if (!this._partitionMap.getTableInfo(n.table) && !this._partitionMap.isReplicated(n.table)) return false;
+      }
+      for (const child of getChildren(n)) stack.push(child);
+    }
+    return scanCount > 0;
   }
 
   _isScanFilterSubtree(node: LogicalPlanNode): boolean {
@@ -435,18 +455,22 @@ export class DistributedPlanner {
   }
 
   _deriveSubtreeSchema(node: LogicalPlanNode): DistributedScanSchemaColumn[] {
-    if (node.type === PlanNodeType.FILTER) return this._deriveSubtreeSchema(node.children[0]);
+    if (descriptorOf(node.type).preservesSchema) return this._deriveSubtreeSchema(getChildren(node)[0]);
     if (node.type === PlanNodeType.PROJECT) {
-      return node.expressions.map((expr, i): DistributedScanSchemaColumn => ({
-        name: (expr as ProjectExprLike)?.outputName || (expr as ProjectExprLike)?.alias || (expr as ProjectExprLike)?.name || (expr as ProjectExprLike)?.columnName || `col${i}`,
-        dataType: (expr as ProjectExprLike)?.dataType || (expr as ProjectExprLike)?.resultType || 'VARCHAR',
-        tableAlias: '',
-      }));
+      return node.expressions.map((expr, i): DistributedScanSchemaColumn => {
+        const name = projectedColumnName(expr, i);
+        return {
+          name,
+          dataType: (expr as ProjectExprLike)?.dataType || (expr as ProjectExprLike)?.resultType || 'VARCHAR',
+          tableAlias: projectedColumnAlias(expr, name, node.outputAlias || ''),
+        };
+      });
     }
-    return this._scanOutputSchema(node as LogicalScanNode);
+    if (node.type === PlanNodeType.SCAN || node.type === PlanNodeType.INDEX_SCAN) return this._scanOutputSchema(node);
+    return [];
   }
 
-  _scanOutputSchema(node: LogicalScanNode): DistributedScanSchemaColumn[] {
+  _scanOutputSchema(node: LogicalScanNode | LogicalIndexScanNode): DistributedScanSchemaColumn[] {
     if (!this._catalog) return [];
     const storage = this._catalog.getTableStorage(node.table);
     if (!storage || typeof storage.getSchema !== 'function') return [];
@@ -503,6 +527,7 @@ export class DistributedPlanner {
       plan: node,
       exchangeInputs: [],
       workerNodes: targetNodes,
+      groupsColocated: false,
     };
   }
 
@@ -535,8 +560,16 @@ export class DistributedPlanner {
       ...node,
       children: [leftResult.plan, rightResult.plan],
     };
+    const colocated = this._isColocatedPushableJoin(node);
 
-    return { plan: newNode as LogicalPlanNode, exchangeInputs, workerNodes: [] };
+    return {
+      plan: newNode as LogicalPlanNode,
+      exchangeInputs,
+      workerNodes: colocated
+        ? (leftResult.workerNodes?.length ? leftResult.workerNodes : (rightResult.workerNodes ?? []))
+        : [],
+      groupsColocated: colocated,
+    };
   }
 
   _processPartialAggregate(node: LogicalPartialAggregateNode, context: FragmentizeContext): FragmentProcessResult {
@@ -562,7 +595,7 @@ export class DistributedPlanner {
   }
 
   _processExchange(node: LogicalExchangeNode, context: FragmentizeContext): FragmentProcessResult {
-    const childResult = this._processNode(node.children[0], this._contextForChild(node, node.children[0], context));
+    const childResult = this._processNode(node.children[0], this._combiningContext(node, context));
     const workerNodes = childResult.workerNodes || [];
 
     if (workerNodes.length === 0) {
@@ -593,13 +626,13 @@ export class DistributedPlanner {
       });
     }
 
-    const receiveNode = LogicalExchangeReceive(fragmentIds, []);
+    const receiveNode = LogicalExchangeReceive(fragmentIds, this._deriveSubtreeSchema(workerPlan) as ColumnInfo[]);
 
     return { plan: receiveNode, exchangeInputs, workerNodes: [] };
   }
 
   _processMergeExchange(node: LogicalMergeExchangeNode, context: FragmentizeContext): FragmentProcessResult {
-    const childResult = this._processNode(node.children[0], this._contextForChild(node, node.children[0], context));
+    const childResult = this._processNode(node.children[0], this._combiningContext(node, context));
 
     const exchangeInputs: ExchangeInput[] = childResult.exchangeInputs.map(input => ({
       ...input,
@@ -617,11 +650,16 @@ export class DistributedPlanner {
   }
 
   _contextForChild(parent: LogicalPlanNode, child: LogicalPlanNode, context: FragmentizeContext): FragmentizeContext {
+    const combinedAbove = context.combinedAbove === true && preservesPartitioning(capabilityOf(parent.type));
     const scansDirectly = child.type === PlanNodeType.SCAN || child.type === PlanNodeType.INDEX_SCAN;
     if (parent.type === PlanNodeType.FILTER && scansDirectly) {
-      return { ...context, scanFilter: parent.condition };
+      return { ...context, scanFilter: parent.condition, combinedAbove };
     }
-    return context.scanFilter === undefined ? context : { ...context, scanFilter: null };
+    return { ...context, scanFilter: context.scanFilter === undefined ? undefined : null, combinedAbove };
+  }
+
+  _combiningContext(node: LogicalPlanNode, context: FragmentizeContext): FragmentizeContext {
+    return { ...this._contextForChild(node, getChildren(node)[0], context), combinedAbove: true };
   }
 
   _processGeneric(node: LogicalPlanNode, context: FragmentizeContext): FragmentProcessResult {
@@ -634,17 +672,29 @@ export class DistributedPlanner {
     const allExchangeInputs: ExchangeInput[] = [];
     const newChildren: LogicalPlanNode[] = [];
     let mergedWorkerNodes: NodeId[] = [];
+    let childGroupsColocated = false;
 
     for (const result of childResults) {
       newChildren.push(result.plan);
       allExchangeInputs.push(...result.exchangeInputs);
       if (result.workerNodes && result.workerNodes.length > 0) {
         mergedWorkerNodes = result.workerNodes;
+        childGroupsColocated = result.groupsColocated === true;
       }
     }
 
-    const newNode = { ...node, children: newChildren };
-    return { plan: newNode as LogicalPlanNode, exchangeInputs: allExchangeInputs, workerNodes: mergedWorkerNodes };
+    const capability = capabilityOf(node.type);
+    const placeOnWorkers = runsOnWorkers(capability, {
+      combinedAbove: context.combinedAbove === true,
+      groupsColocated: childGroupsColocated,
+    });
+
+    return {
+      plan: { ...node, children: newChildren } as LogicalPlanNode,
+      exchangeInputs: allExchangeInputs,
+      workerNodes: placeOnWorkers ? mergedWorkerNodes : [],
+      groupsColocated: placeOnWorkers && preservesColocation(capability, childGroupsColocated),
+    };
   }
 
   _selectNodesForPartitions(tableName: string, partitionIds: Set<PartitionId>, workerNodes: NodeLike[]): NodeId[] {

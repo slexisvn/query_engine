@@ -306,6 +306,14 @@ export function LogicalCTEAnchor(cteName: string, cteId: number, producer: Logic
   return { type: PlanNodeType.CTE_ANCHOR, cteName, cteId, children: [producer, consumer] };
 }
 
+export const SCALAR_OUTPUT_NAME = '_scalar';
+
+let _scalarOutputCounter = 0;
+
+export function nextScalarOutputName(): string {
+  return `${SCALAR_OUTPUT_NAME}_${_scalarOutputCounter++}`;
+}
+
 export function LogicalDependentJoin(child: LogicalPlanNode, subquery: LogicalPlanNode, correlatedColumns: BoundColumnRefNode[], subqueryType: string, condition: BoundExpr | null, markColumn: string | null = null, compareOp: string = '='): LogicalDependentJoinNode {
   return {
     type: PlanNodeType.DEPENDENT_JOIN,

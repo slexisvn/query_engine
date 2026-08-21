@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DefaultCostModel } from '../../../src/optimizer/join-order/cost-model.js';
+import { DefaultCostModel } from '../../src/planner/cost-model.js';
 
 describe('DefaultCostModel', () => {
   const model = new DefaultCostModel();

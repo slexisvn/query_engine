@@ -1,6 +1,7 @@
 import { Config } from '../../config.js';
-import { FragmentState } from '../planner/fragment.js';
+import { FragmentState, fragmentOutputChannel } from '../planner/fragment.js';
 import { DistributedPlanner } from '../planner/distributed-planner.js';
+import { inlineCTEScans } from '../planner/cte-inline.js';
 import { FragmentExecutor } from './fragment-executor.js';
 import { ResultSink } from '../../execution/result-sink.js';
 import { QueryResult } from '../../execution/query-result.js';
@@ -24,6 +25,26 @@ import type {
 
 interface DistributedFlag {
   _distributed?: boolean;
+}
+
+const EMPTY_NODES: ReadonlySet<NodeId> = new Set();
+
+interface CompiledQueryParts {
+  plan: LogicalPlanNode;
+  outputColumns: { name: string }[];
+  cteMap: Map<string, LogicalPlanNode> | null;
+}
+
+interface CreateTableAsLike {
+  kind?: string;
+  name?: string;
+  as?: unknown;
+}
+
+function ctasQuery(ddl: unknown): { tableName: string; query: Parameters<QueryEngine['compileQueryStatement']>[0] } | null {
+  const stmt = ddl as CreateTableAsLike;
+  if (stmt?.kind !== 'CreateTableStmt' || !stmt.as || !stmt.name) return null;
+  return { tableName: stmt.name.toUpperCase(), query: stmt.as as Parameters<QueryEngine['compileQueryStatement']>[0] };
 }
 
 type DistributedPlannerArgs = ConstructorParameters<typeof DistributedPlanner>;
@@ -95,41 +116,51 @@ export class QueryCoordinator {
     try {
       const compiled = await this._engine.compile(sql);
       if (compiled.ddl) {
-        return this._engine.executeDDL(compiled.ddl);
+        const source = ctasQuery(compiled.ddl);
+        // CREATE TABLE ... AS SELECT has to read through the cluster: run on the coordinator
+        // alone and it would happily materialise an empty table from its own empty partitions.
+        if (!source) return this._engine.executeDDL(compiled.ddl);
+
+        const ctas = this._engine.compileQueryStatement(source.query);
+        const rows = await this._runDistributedQuery(ctas, queryId, startTime, timeout);
+        return this._engine.materializeTableFromResult(source.tableName, rows, ctas.outputColumns);
       }
 
-      const { plan, outputColumns, cteMap } = compiled;
-      (plan as DistributedFlag)._distributed = true;
-
-      const distributedPlan = this._reoptimize(plan);
-      const planner = new DistributedPlanner(
-        this._partitionMap,
-        this._clusterManager as DistributedPlannerArgs[1],
-        this._engine.precomputedStats as DistributedPlannerArgs[2],
-        this._engine.catalog as DistributedPlannerArgs[3]
-      );
-      const fragmentPlan = planner.fragmentize(distributedPlan);
-
-      this._activeQueries.set(queryId, {
-        fragmentPlan,
-        startTime,
-        status: 'running',
-      });
-
-      const rootFragment = fragmentPlan.getRootFragment()!;
-      const receivers = await this._fragmentExecutor._setupReceivers(rootFragment as BridgeFragment);
-
-      await this._executeFragmentPlan(fragmentPlan, queryId, timeout);
-
-      const localResult = await this._executeRootFragmentWithReceivers(rootFragment, receivers);
-
-      const columnNames = outputColumns.map(c => c.name);
-      const result = new QueryResult(columnNames, localResult.sink);
-
-      return { rows: await result.toArray(), columns: columnNames };
+      const result = await this._runDistributedQuery(compiled as CompiledQueryParts, queryId, startTime, timeout);
+      return { rows: await result.toArray(), columns: result.columns };
     } finally {
       this._activeQueries.delete(queryId);
     }
+  }
+
+  async _runDistributedQuery(compiled: CompiledQueryParts, queryId: number, startTime: number, timeout: number): Promise<QueryResult> {
+    const { plan, outputColumns, cteMap } = compiled;
+    const inlinedPlan = inlineCTEScans(plan, cteMap);
+    (inlinedPlan as DistributedFlag)._distributed = true;
+
+    const distributedPlan = this._reoptimize(inlinedPlan);
+    const planner = new DistributedPlanner(
+      this._partitionMap,
+      this._clusterManager as DistributedPlannerArgs[1],
+      this._engine.precomputedStats as DistributedPlannerArgs[2],
+      this._engine.catalog as DistributedPlannerArgs[3]
+    );
+    const fragmentPlan = planner.fragmentize(distributedPlan);
+
+    this._activeQueries.set(queryId, {
+      fragmentPlan,
+      startTime,
+      status: 'running',
+    });
+
+    const rootFragment = fragmentPlan.getRootFragment()!;
+    const receivers = await this._fragmentExecutor._setupReceivers(rootFragment as BridgeFragment);
+
+    await this._executeFragmentPlan(fragmentPlan, queryId, timeout);
+
+    const localResult = await this._executeRootFragmentWithReceivers(rootFragment, receivers);
+
+    return new QueryResult(outputColumns.map(c => c.name), localResult.sink);
   }
 
   async cancel(queryId: number): Promise<void> {
@@ -193,9 +224,10 @@ export class QueryCoordinator {
 
   async _dispatchFragment(fragment: Fragment, fragmentPlan: FragmentPlan): Promise<void> {
     const maxRetries = Config.fragmentRetryLimit;
+    const failedNodes = new Set<NodeId>();
 
     while (true) {
-      const targetNodeId = this._selectTargetNode(fragment);
+      const targetNodeId = this._selectTargetNode(fragment, failedNodes);
       fragment.markDispatched(targetNodeId);
 
       try {
@@ -211,16 +243,11 @@ export class QueryCoordinator {
           throw new Error(`Fragment ${fragment.fragmentId} failed after ${maxRetries} retries: ${(err as Error).message}`);
         }
 
-        const failedNode = targetNodeId;
-        const aliveNodes = this._clusterManager.getWorkerNodes()
-          .filter(n => n.nodeId !== failedNode);
-
-        if (aliveNodes.length === 0) {
-          throw new Error(`No available nodes to retry fragment ${fragment.fragmentId}`);
-        }
-
+        // A fragment reads the partitions held by its own target nodes, so it may only be
+        // retried within that set. Handing it to any other worker would silently scan that
+        // worker's partitions instead — a short or duplicated answer rather than a failure.
+        failedNodes.add(targetNodeId);
         fragment.state = FragmentState.PENDING;
-        fragment.targetNodes = aliveNodes.map(n => n.nodeId);
       }
     }
   }
@@ -297,18 +324,21 @@ export class QueryCoordinator {
     }
   }
 
-  _selectTargetNode(fragment: Fragment): NodeId {
-    if (fragment.targetNodes.length === 1) {
-      return fragment.targetNodes[0];
+  _selectTargetNode(fragment: Fragment, failedNodes: ReadonlySet<NodeId> = EMPTY_NODES): NodeId {
+    const untried = fragment.targetNodes.filter(nodeId => !failedNodes.has(nodeId));
+    const candidates = untried.length > 0 ? untried : fragment.targetNodes;
+
+    if (candidates.length === 1) {
+      return candidates[0];
     }
 
-    const aliveTargets = fragment.targetNodes.filter(nodeId => {
+    const aliveTargets = candidates.filter(nodeId => {
       const node = this._clusterManager.getNode(nodeId);
       return node && node.canExecuteFragments();
     });
 
     if (aliveTargets.length === 0) {
-      return this._clusterManager.localNode.nodeId;
+      throw new Error(`Fragment ${fragment.fragmentId} has no live node holding its data (candidates: ${candidates.join(', ')})`);
     }
 
     return aliveTargets[fragment.fragmentId % aliveTargets.length];
@@ -323,7 +353,7 @@ export class QueryCoordinator {
       exchangeType: op.exchangeType || 'gather' as ExchangeType,
       partitionCount: op.partitionCount,
       keyColumns: (op as { keyColumns?: number[] }).keyColumns,
-      channelId: `frag-${fragment.fragmentId}-output`,
+      channelId: fragmentOutputChannel(fragment.fragmentId),
     };
   }
 

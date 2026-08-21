@@ -2,6 +2,7 @@ import { BoundExprKind } from '../binder/expression-binder.js';
 import type { BoundExpr, BoundColumnRefNode } from '../binder/expression-binder.js';
 import type { ColumnMapping } from './execution-types.js';
 import { DataType } from '../storage/data-type.js';
+import { splitConjuncts } from '../binder/conjuncts.js';
 
 export interface JoinKeyPair {
   buildKey: BoundColumnRefNode;
@@ -12,14 +13,6 @@ export interface ExtractedJoinKeys {
   buildKeys: BoundExpr[];
   probeKeys: BoundExpr[];
   residualCondition: BoundExpr | null;
-}
-
-export function splitAnd(expr: BoundExpr | null): BoundExpr[] {
-  if (!expr) return [];
-  if (expr.kind === BoundExprKind.BINARY && expr.op === 'AND') {
-    return [...splitAnd(expr.left), ...splitAnd(expr.right)];
-  }
-  return [expr];
 }
 
 function hasQualifiedColumn(mapping: ColumnMapping, colRef: BoundColumnRefNode): boolean {
@@ -95,7 +88,7 @@ export function extractJoinKeys(condition: BoundExpr | null, leftMapping: Column
   const buildKeys: BoundExpr[] = [];
   const probeKeys: BoundExpr[] = [];
   const residualPreds: BoundExpr[] = [];
-  const preds = splitAnd(condition);
+  const preds = splitConjuncts(condition);
 
   for (const pred of preds) {
     const pair = pred.kind === BoundExprKind.BINARY && pred.op === '='

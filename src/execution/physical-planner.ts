@@ -10,91 +10,57 @@ import {
   physicalJoin,
   physicalOperator,
   type JoinBuildSide,
-  type PhysicalOperatorNode,
   type PhysicalPlanNode,
   type SortRequirement,
 } from './physical-plan.js';
-import { DefaultCostModel } from '../optimizer/join-order/cost-model.js';
+import { descriptorOf } from '../planner/plan-node-descriptor.js';
+import { DefaultCostModel } from '../planner/cost-model.js';
 import { Config } from '../config.js';
-import { chooseJoinBuildSide, isEquiJoinDedupable } from '../optimizer/join-build-side.js';
-import { extractEquiJoinKeys, columnKeyOf, isSortedBy, isSortedByPrefix } from '../optimizer/sort-properties.js';
-import { canUsePerfectHashAggregate, type AggregateStatsProvider } from '../optimizer/aggregate-strategy.js';
-import { PlanProperties } from '../optimizer/passes/plan-properties.js';
+import { chooseJoinBuildSide, isEquiJoinDedupable } from '../planner/join-build-side.js';
+import { extractEquiJoinKeys, columnKeyOf, isSortedBy, isSortedByPrefix } from '../planner/sort-properties.js';
+import { canUsePerfectHashAggregate, type AggregateStatsProvider } from '../planner/aggregate-strategy.js';
+import { PlanPropertyAnnotator } from '../planner/plan-properties.js';
 import type { BoundExpr } from '../binder/expression-binder.js';
 import type { TableStats } from '../catalog/statistics.js';
 
 const DEFAULT_CARDINALITY = 1000;
-
-const PASS_THROUGH_TYPES: Partial<Record<PlanNodeType, PhysicalOperatorNode['type']>> = {
-  [PlanNodeType.SCAN]: PhysicalNodeType.TABLE_SCAN,
-  [PlanNodeType.INDEX_SCAN]: PhysicalNodeType.INDEX_SCAN,
-  [PlanNodeType.SINGLE_ROW]: PhysicalNodeType.SINGLE_ROW,
-  [PlanNodeType.EMPTY]: PhysicalNodeType.EMPTY,
-  [PlanNodeType.FILTER]: PhysicalNodeType.FILTER,
-  [PlanNodeType.PROJECT]: PhysicalNodeType.PROJECT,
-  [PlanNodeType.SORT]: PhysicalNodeType.SORT,
-  [PlanNodeType.TOP_N]: PhysicalNodeType.TOP_N,
-  [PlanNodeType.LIMIT]: PhysicalNodeType.LIMIT,
-  [PlanNodeType.DISTINCT]: PhysicalNodeType.DISTINCT,
-  [PlanNodeType.SET_OP]: PhysicalNodeType.SET_OP,
-  [PlanNodeType.WINDOW]: PhysicalNodeType.WINDOW,
-  [PlanNodeType.MATERIALIZE]: PhysicalNodeType.MATERIALIZE,
-  [PlanNodeType.CTE_ANCHOR]: PhysicalNodeType.CTE_ANCHOR,
-  [PlanNodeType.CTE_SCAN]: PhysicalNodeType.CTE_SCAN,
-  [PlanNodeType.DEPENDENT_JOIN]: PhysicalNodeType.DEPENDENT_JOIN,
-  [PlanNodeType.EXCHANGE]: PhysicalNodeType.EXCHANGE,
-  [PlanNodeType.MERGE_EXCHANGE]: PhysicalNodeType.MERGE_EXCHANGE,
-  [PlanNodeType.EXCHANGE_RECEIVE]: PhysicalNodeType.EXCHANGE_RECEIVE,
-  [PlanNodeType.PARTIAL_AGGREGATE]: PhysicalNodeType.PARTIAL_AGGREGATE,
-  [PlanNodeType.FINAL_AGGREGATE]: PhysicalNodeType.FINAL_AGGREGATE,
-};
 
 const NO_SORT_REQUIRED: SortRequirement = { left: false, right: false };
 
 export class PhysicalPlanner {
   costModel: DefaultCostModel;
   statistics: AggregateStatsProvider;
-  planProperties: PlanProperties;
+  planProperties: PlanPropertyAnnotator;
 
   constructor(statistics: Map<string, TableStats> = new Map(), costModel: DefaultCostModel | null = null) {
     this.statistics = statistics;
     this.costModel = costModel ?? new DefaultCostModel();
-    this.planProperties = new PlanProperties(statistics);
+    this.planProperties = new PlanPropertyAnnotator(statistics);
   }
 
   plan(node: LogicalPlanNode): PhysicalPlanNode {
-    return this.planNode(this.planProperties.apply(node));
+    return this.planNode(this.planProperties.annotate(node));
   }
 
   planNode(node: LogicalPlanNode): PhysicalPlanNode {
     const children = (node.children ?? []).map((child) => this.planNode(child));
+    const physicalType = descriptorOf(node.type).physicalType;
 
-    if (node.type === PlanNodeType.JOIN) return this.planJoin(node, children);
-    if (node.type === PlanNodeType.AGGREGATE) return this.planAggregate(node, children);
-
-    const physicalType = PASS_THROUGH_TYPES[node.type];
-    if (!physicalType) throw new Error(`No physical operator for plan node: ${node.type}`);
+    if (physicalType === null) return this.planCostBased(node, children);
 
     return physicalOperator(physicalType, node, children, cardinalityOf(node), this.operatorCost(node, children));
   }
 
+  planCostBased(node: LogicalPlanNode, children: PhysicalPlanNode[]): PhysicalPlanNode {
+    if (node.type === PlanNodeType.JOIN) return this.planJoin(node, children);
+    if (node.type === PlanNodeType.AGGREGATE) return this.planAggregate(node, children);
+    throw new Error(`No physical operator for plan node: ${node.type}`);
+  }
+
   operatorCost(node: LogicalPlanNode, children: PhysicalPlanNode[]): number {
-    const inputCard = children[0]?.cardinality ?? cardinalityOf(node);
-    switch (node.type) {
-      case PlanNodeType.SCAN:
-      case PlanNodeType.INDEX_SCAN:
-        return this.costModel.scanCost(cardinalityOf(node));
-      case PlanNodeType.FILTER:
-        return this.costModel.filterCost(inputCard);
-      case PlanNodeType.SORT:
-        return this.costModel.sortCost(inputCard);
-      case PlanNodeType.TOP_N:
-        return this.costModel.topNSortCost(inputCard, node.count);
-      case PlanNodeType.DISTINCT:
-        return this.costModel.hashAggregateCost(inputCard);
-      default:
-        return this.costModel.scanCost(cardinalityOf(node));
-    }
+    const cardinality = cardinalityOf(node);
+    const inputCardinality = children[0]?.cardinality ?? cardinality;
+    return descriptorOf(node.type).cost(this.costModel, node, inputCardinality, cardinality);
   }
 
   planJoin(node: LogicalJoinNode, children: PhysicalPlanNode[]): PhysicalPlanNode {

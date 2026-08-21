@@ -1,7 +1,7 @@
 import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
 import { collectTableRefs } from '../expr-walk.js';
 import type { LogicalPlanNode } from '../../planner/logical-plan.js';
-import type { DefaultCardinalityEstimator } from './cardinality.js';
+import type { DefaultCardinalityEstimator } from '../../planner/cardinality.js';
 
 export const BITMASK_RELATION_CAPACITY = 30;
 

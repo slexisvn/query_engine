@@ -4,7 +4,7 @@ import { PartitionMap } from '../../../src/distributed/partition/partition-map.j
 import { HashPartitionStrategy } from '../../../src/distributed/partition/partition-strategy.js';
 import { ClusterManager } from '../../../src/distributed/cluster/cluster-manager.js';
 import { NodeDescriptor, NodeRole } from '../../../src/distributed/cluster/node-descriptor.js';
-import { PlanNodeType, LogicalScan, LogicalFilter, LogicalProject, LogicalJoin, LogicalAggregate, LogicalExchange, JoinType } from '../../../src/planner/logical-plan.js';
+import { PlanNodeType, LogicalScan, LogicalFilter, LogicalProject, LogicalJoin, LogicalAggregate, LogicalExchange, LogicalUnion, LogicalDistinct, JoinType } from '../../../src/planner/logical-plan.js';
 import { ExchangeType } from '../../../src/distributed/planner/fragment.js';
 import { BoundExprKind } from '../../../src/binder/expression-binder.js';
 import { resetFragmentIdCounter } from '../../../src/distributed/planner/fragment.js';
@@ -188,6 +188,93 @@ describe('DistributedPlanner', () => {
     expect(plan.fragments.length).toBeGreaterThanOrEqual(5);
   });
 
+  describe('worker placement follows the declared input requirement of each operator', () => {
+    function workerPlans(root) {
+      const types = (node, acc = []) => {
+        if (!node) return acc;
+        acc.push(node.type);
+        for (const child of node.children || []) types(child, acc);
+        return acc;
+      };
+      const plan = new DistributedPlanner(pm, cm).fragmentize(root);
+      return plan.fragments
+        .filter(f => (f.targetNodes || []).some(n => n !== 'coord'))
+        .flatMap(f => types(f.planRoot));
+    }
+    function partitionedScan() {
+      const s = LogicalScan('ORDERS', ['ID'], 'ORDERS');
+      s._cardinality = 10000;
+      return s;
+    }
+    function gathered(node) {
+      node._cardinality = 10000;
+      return LogicalExchange(ExchangeType.GATHER, [], 0, node);
+    }
+
+    it('leaves an operator it has no declaration for on the coordinator', () => {
+      const undeclared = { type: 'AnOperatorTheRegistryHasNeverSeen', children: [partitionedScan()] };
+      const plans = workerPlans(gathered(undeclared));
+
+      expect(plans.length).toBeGreaterThan(0);
+      expect(plans).not.toContain(undeclared.type);
+      expect(new Set(plans)).toEqual(new Set([PlanNodeType.SCAN]));
+    });
+
+    it('keeps a window function off the workers, since it reads every row', () => {
+      const window = { type: PlanNodeType.WINDOW, children: [partitionedScan()], windowExprs: [] };
+      expect(workerPlans(gathered(window))).not.toContain(PlanNodeType.WINDOW);
+    });
+
+    it('keeps a correlated join off the workers', () => {
+      const dependent = {
+        type: PlanNodeType.DEPENDENT_JOIN,
+        children: [partitionedScan(), partitionedScan()],
+        correlatedColumns: [],
+      };
+      expect(workerPlans(gathered(dependent))).not.toContain(PlanNodeType.DEPENDENT_JOIN);
+    });
+
+    it('pushes a local pre-pass down when an exchange above it will combine the partials', () => {
+      const local = LogicalDistinct(partitionedScan());
+      const plan = LogicalDistinct(LogicalExchange(ExchangeType.HASH_SHUFFLE, [], 0, local));
+
+      expect(workerPlans(plan)).toContain(PlanNodeType.DISTINCT);
+    });
+
+    it('stops pushing it down once an operator between it and the exchange discards the partitioning', () => {
+      const inner = LogicalDistinct(partitionedScan());
+      const plan = LogicalExchange(ExchangeType.HASH_SHUFFLE, [], 0, LogicalDistinct(inner));
+
+      expect(workerPlans(plan)).not.toContain(PlanNodeType.DISTINCT);
+    });
+
+    it('keeps pushing it down through an operator that preserves the partitioning', () => {
+      const inner = LogicalDistinct(partitionedScan());
+      const plan = LogicalExchange(ExchangeType.HASH_SHUFFLE, [], 0, LogicalProject([colRef('ORDERS', 'ID')], inner));
+
+      expect(workerPlans(plan)).toContain(PlanNodeType.DISTINCT);
+    });
+
+    it('lets an aggregate ride along when a colocated join has already grouped its rows', () => {
+      const join = LogicalJoin(
+        JoinType.INNER,
+        { kind: BoundExprKind.BINARY, op: '=', left: colRef('ORDERS', 'ID'), right: colRef('LINEITEM', 'ORDER_ID') },
+        LogicalScan('ORDERS', ['ID'], 'ORDERS'),
+        LogicalScan('LINEITEM', ['ORDER_ID'], 'LINEITEM'),
+      );
+      join._distributionStrategy = 'colocated';
+      const aggregate = LogicalAggregate([colRef('ORDERS', 'ID')], [{ func: 'COUNT', args: [] }], join);
+
+      expect(workerPlans(gathered(aggregate))).toContain(PlanNodeType.AGGREGATE);
+    });
+
+    it('keeps that same aggregate off the workers without the colocated join', () => {
+      const aggregate = LogicalAggregate([colRef('ORDERS', 'ID')], [{ func: 'COUNT', args: [] }], partitionedScan());
+
+      expect(workerPlans(gathered(aggregate))).not.toContain(PlanNodeType.AGGREGATE);
+    });
+  });
+
   it('handles non-partitioned table as single fragment', () => {
     const scan = LogicalScan('LOCAL_TABLE', ['X'], 'LOCAL_TABLE');
     const planner = new DistributedPlanner(pm, cm);
@@ -211,11 +298,115 @@ describe('DistributedPlanner', () => {
     }
   });
 
+  describe('schema carried across an exchange', () => {
+    function projectOf(names) {
+      return LogicalProject(
+        names.map(name => ({ ...colRef('ORDERS', name), outputName: name, dataType: 'INT32' })),
+        LogicalScan('ORDERS', names, 'ORDERS'),
+      );
+    }
+
+    function findReceive(node) {
+      if (!node) return null;
+      if (node.type === PlanNodeType.EXCHANGE_RECEIVE) return node;
+      for (const child of node.children || []) {
+        const found = findReceive(child);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    function receiveSchemaFor(child) {
+      const planner = new DistributedPlanner(pm, cm);
+      const plan = planner.fragmentize(LogicalExchange(ExchangeType.HASH_SHUFFLE, [], 0, child));
+      return findReceive(plan.getRootFragment().planRoot).schema.map(c => c.name);
+    }
+
+    it('takes a set operation output schema from its left input', () => {
+      expect(receiveSchemaFor(LogicalUnion(projectOf(['A', 'B']), projectOf(['C', 'D']), false))).toEqual(['A', 'B']);
+    });
+
+    it('passes the schema through schema-preserving operators', () => {
+      expect(receiveSchemaFor(LogicalDistinct(LogicalFilter(null, projectOf(['A']))))).toEqual(['A']);
+    });
+
+    it('reports no schema for a subtree it cannot derive', () => {
+      const planner = new DistributedPlanner(pm, cm);
+      const join = LogicalJoin(JoinType.INNER, null, projectOf(['A']), projectOf(['B']));
+      expect(planner._deriveSubtreeSchema(join)).toEqual([]);
+    });
+
+    it('gathers below an aggregate rather than sending the aggregate to the workers', () => {
+      expect(receiveSchemaFor(LogicalAggregate([], [], projectOf(['A'])))).toEqual(['A']);
+    });
+  });
+
+  it('gives every fragment a distinct id across separate plans', () => {
+    const planner = new DistributedPlanner(pm, cm);
+    const first = planner.fragmentize(LogicalScan('ORDERS', ['ID'], 'ORDERS'));
+    const second = planner.fragmentize(LogicalScan('ORDERS', ['ID'], 'ORDERS'));
+
+    const ids = [...first.fragments, ...second.fragments].map(f => f.fragmentId);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
   it('allCompleted is false initially', () => {
     const scan = LogicalScan('ORDERS', ['ID'], 'ORDERS');
     const planner = new DistributedPlanner(pm, cm);
     const plan = planner.fragmentize(scan);
 
     expect(plan.allCompleted()).toBe(false);
+  });
+  describe('joins against a replicated table', () => {
+    function colocatedJoin(joinType = JoinType.INNER) {
+      pm.registerReplicatedTable('DIM');
+      const join = LogicalJoin(
+        joinType,
+        { kind: BoundExprKind.BINARY, op: '=', left: colRef('ORDERS', 'CAT'), right: colRef('DIM', 'DCAT') },
+        LogicalScan('ORDERS', [], 'ORDERS'),
+        LogicalScan('DIM', [], 'DIM'),
+      );
+      join._distributionStrategy = 'colocated';
+      return join;
+    }
+
+    function fragmentShapes(plan) {
+      const root = plan.getRootFragment();
+      return plan.fragments.filter((f) => f !== root).map((f) => f.planRoot.type);
+    }
+
+    it('runs the join on the workers instead of gathering the partitioned side', () => {
+      const planner = new DistributedPlanner(pm, cm, new Map(), null);
+
+      const plan = planner.fragmentize(colocatedJoin());
+
+      expect(fragmentShapes(plan)).toEqual([PlanNodeType.JOIN, PlanNodeType.JOIN]);
+    });
+
+    it('keeps an aggregate above the join on the workers', () => {
+      const planner = new DistributedPlanner(pm, cm, new Map(), null);
+      const join = colocatedJoin();
+      const aggregate = LogicalAggregate([], [], join);
+      const exchange = LogicalExchange(ExchangeType.GATHER, null, null, aggregate);
+
+      const plan = planner.fragmentize(exchange);
+
+      expect(fragmentShapes(plan)).toEqual([PlanNodeType.AGGREGATE, PlanNodeType.AGGREGATE]);
+    });
+
+    it('does not push a join whose replicated side is not declared replicated', () => {
+      const planner = new DistributedPlanner(pm, cm, new Map(), null);
+      const join = LogicalJoin(
+        JoinType.INNER,
+        { kind: BoundExprKind.BINARY, op: '=', left: colRef('ORDERS', 'CAT'), right: colRef('UNKNOWN', 'DCAT') },
+        LogicalScan('ORDERS', [], 'ORDERS'),
+        LogicalScan('UNKNOWN', [], 'UNKNOWN'),
+      );
+      join._distributionStrategy = 'colocated';
+
+      const plan = planner.fragmentize(join);
+
+      expect(fragmentShapes(plan)).not.toEqual([PlanNodeType.JOIN, PlanNodeType.JOIN]);
+    });
   });
 });

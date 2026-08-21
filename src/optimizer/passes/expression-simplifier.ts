@@ -2,8 +2,10 @@ import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { PlanNodeType, setChildren, type LogicalPlanNode, type LogicalFilterNode, type LogicalProjectNode, type LogicalJoinNode, type LogicalEmptyNode, type ProjectedExpr } from '../../planner/logical-plan.js';
 import { BoundExprKind, BoundLiteral, getExprType, type BoundExpr, type BoundBinaryNode, type LiteralValue } from '../../binder/expression-binder.js';
-import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
-import { DataType } from '../../storage/data-type.js';
+import { splitConjuncts, combineConjuncts } from '../../binder/conjuncts.js';
+import { DataType, castToNumber } from '../../storage/data-type.js';
+import type { ColumnValue } from '../../storage/data-type.js';
+import { exprKey } from '../../binder/expr-key.js';
 
 export class ExpressionSimplifier extends OptimizationPass {
   override get name() { return 'ExpressionSimplifier'; }
@@ -253,8 +255,13 @@ function factorCommonConjuncts(left: BoundExpr, right: BoundExpr): BoundExpr | n
 function foldCast(value: LiteralValue, targetType: string | null): LiteralValue | undefined {
   const type = (targetType || '').toUpperCase();
   try {
-    if (type.includes('INT')) return Math.trunc(Number(value));
-    if (type.includes('FLOAT') || type.includes('DOUBLE') || type.includes('DECIMAL') || type.includes('NUMERIC')) return Number(value);
+    if (type.includes('INT')) {
+      const numeric = castToNumber(value as ColumnValue);
+      return numeric === null ? null : Math.trunc(numeric);
+    }
+    if (type.includes('FLOAT') || type.includes('DOUBLE') || type.includes('DECIMAL') || type.includes('NUMERIC')) {
+      return castToNumber(value as ColumnValue);
+    }
     if (type.includes('VARCHAR') || type.includes('TEXT') || type.includes('CHAR')) return String(value);
     if (type.includes('BOOL')) return Boolean(value);
   } catch (_) {}
@@ -272,22 +279,3 @@ function extractFromDate(date: Date, field: string): number | null {
   return null;
 }
 
-function exprKey(expr: BoundExpr | null): string {
-  if (!expr || typeof expr !== 'object') return String(expr);
-  switch (expr.kind) {
-    case BoundExprKind.COLUMN_REF:
-      return `COL:${expr.tableAlias || ''}.${expr.columnName}`;
-    case BoundExprKind.LITERAL:
-      return `LIT:${String(expr.value)}`;
-    case BoundExprKind.BINARY:
-      return `BIN:${expr.op}:${exprKey(expr.left)}:${exprKey(expr.right)}`;
-    case BoundExprKind.LIKE:
-      return `LIKE:${expr.negated}:${exprKey(expr.expr)}:${exprKey(expr.pattern)}`;
-    case BoundExprKind.IN_LIST:
-      return `IN:${expr.negated}:${exprKey(expr.expr)}:${Array.isArray(expr.list) ? expr.list.map(exprKey).join(',') : exprKey(expr.list)}`;
-    case BoundExprKind.BETWEEN:
-      return `BETWEEN:${expr.negated}:${exprKey(expr.expr)}:${exprKey(expr.low)}:${exprKey(expr.high)}`;
-    default:
-      return JSON.stringify(expr);
-  }
-}

@@ -1,7 +1,7 @@
 import { DataChunk } from '../../storage/chunk.js';
 import { Column } from '../../storage/column.js';
 import { Config } from '../../config.js';
-import { encodeCompositeKey } from '../composite-key.js';
+import { keyIdentityText } from '../hash-table.js';
 import { hashValue } from '../../utils/hash.js';
 import { RowMemoryBudget } from '../memory-budget.js';
 import { DataType, type ColumnValue } from '../../storage/data-type.js';
@@ -48,7 +48,7 @@ export class ChunkDeduplicator {
     for (let c = 0; c < chunk.columns.length; c++) {
       this.keyParts[c] = chunk.columns[c].get(rowIndex);
     }
-    return encodeCompositeKey(this.keyParts);
+    return keyIdentityText(this.keyParts, this.keyParts.length);
   }
 
   adoptSchema(chunk: DataChunk): void {

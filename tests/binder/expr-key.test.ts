@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { exprKey, aggregateKey } from '../../src/execution/expr-key.js';
+import { exprKey, aggregateKey } from '../../src/binder/expr-key.js';
 import { BoundExprKind } from '../../src/binder/expression-binder.js';
 import { DataType } from '../../src/storage/data-type.js';
 

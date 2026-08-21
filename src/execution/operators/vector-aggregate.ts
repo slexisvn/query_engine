@@ -6,6 +6,8 @@ import { BoundExprKind } from '../../binder/expression-binder.js';
 import type { BoundExpr, BoundColumnRefNode } from '../../binder/expression-binder.js';
 import { testBit } from '../../utils/bitmap.js';
 import { hashValue } from '../../utils/hash.js';
+import { hashKeyValues } from '../hash-table.js';
+import type { PartialGroup } from './aggregate-state-codec.js';
 import { Config } from '../../config.js';
 import { schemaMappingOf, resolveRef, StageKind } from '../fragment-spec.js';
 import type { ColumnMapping } from '../execution-types.js';
@@ -55,32 +57,30 @@ interface VectorSpecStage {
   kind: StageKind;
 }
 
-interface VectorSpec {
-  groupBy: BoundExpr[];
+interface VectorSpecSource {
   stages: VectorSpecStage[];
   baseSchema: VectorSpecSchemaColumn[];
-  aggregates: VectorSpecAggregate[];
 }
 
-interface PartialGroup {
-  key: number | string | null;
-  groupValues: (number | string | null)[];
-  states: SlotState[];
+interface VectorSpec {
+  groupBy: BoundExpr[];
+  source: VectorSpecSource;
+  aggregates: VectorSpecAggregate[];
 }
 
 export function createVectorAggregator(spec: VectorSpec): VectorGroupAggregator | null {
   if (spec.groupBy.length !== 1) return null;
-  for (const stage of spec.stages) {
+  for (const stage of spec.source.stages) {
     if (stage.kind !== StageKind.FILTER) return null;
   }
 
-  const mapping = schemaMappingOf(spec.baseSchema);
+  const mapping = schemaMappingOf(spec.source.baseSchema);
   const groupExpr = spec.groupBy[0];
   if (groupExpr?.kind !== BoundExprKind.COLUMN_REF) return null;
   const groupIdx = resolveRef(groupExpr, mapping);
   if (groupIdx === undefined) return null;
 
-  const groupType = spec.baseSchema[groupIdx].dataType;
+  const groupType = spec.source.baseSchema[groupIdx].dataType;
   const keyKind = groupType === DataType.VARCHAR
     ? KeyKind.DICT
     : INT_KEY_TYPES.has(groupType) ? KeyKind.INT : null;
@@ -97,7 +97,7 @@ export function createVectorAggregator(spec: VectorSpec): VectorGroupAggregator 
     if (!agg.args || agg.args.length !== 1 || agg.args[0]?.kind !== BoundExprKind.COLUMN_REF) return null;
     const colIdx = resolveRef(agg.args[0] as BoundColumnRefNode, mapping);
     if (colIdx === undefined) return null;
-    if (!NUMERIC_VALUE_TYPES.has(spec.baseSchema[colIdx].dataType)) return null;
+    if (!NUMERIC_VALUE_TYPES.has(spec.source.baseSchema[colIdx].dataType)) return null;
     aggs.push({ op, colIdx });
   }
 
@@ -321,11 +321,11 @@ export class VectorGroupAggregator {
   exportPartials(partitionCount: number): PartialGroup[][] {
     const mask = partitionCount - 1;
     const partitions: PartialGroup[][] = Array.from({ length: partitionCount }, () => []);
+    const keyParts: (number | string | null)[] = [null];
     for (let slot = 0; slot < this.used; slot++) {
-      const key = this.slotKeys[slot];
-      partitions[(key === null ? 0 : hashValue(key)) & mask].push({
-        key,
-        groupValues: [key],
+      keyParts[0] = this.slotKeys[slot];
+      partitions[hashKeyValues(keyParts, 1) & mask].push({
+        groupValues: [keyParts[0]],
         states: this.aggs.map((agg, a) => exportSlotState(agg.op, this.state[a], slot)),
       });
     }

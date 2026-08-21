@@ -11,8 +11,8 @@ import { WindowOperator } from '../operators/window.js';
 import { CancelToken } from '../pipeline.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 import type { BoundExpr, BoundWindowNode } from '../../binder/expression-binder.js';
-import { registerBufferedChild } from './builder-utils.js';
-import { exprKey } from '../expr-key.js';
+import { combinedMappingOf } from './builder-utils.js';
+import { exprKey } from '../../binder/expr-key.js';
 import type { DataChunk } from '../../storage/chunk.js';
 import type { DataType } from '../../storage/data-type.js';
 import type { PipelineGraph } from '../pipeline.js';
@@ -26,6 +26,7 @@ import type {
   SourceGenerator,
 } from '../execution-types.js';
 import { SetOpType } from '../../planner/logical-plan.js';
+import { projectedColumnName, projectedColumnAlias } from '../../planner/project-schema.js';
 import type {
   LogicalPlanNode,
   LogicalFilterNode,
@@ -124,11 +125,11 @@ export async function buildProject(executor: ExecutorLike, physical: PhysicalPla
   const outputAlias = node.outputAlias || '';
   const schema: ExecSchema = node.expressions.map((expr: ProjectedExpr, i: number) => {
     const meta = expr as ProjectExprMeta;
-    const name = meta.outputName || meta.alias || meta.name || meta.columnName || `col${i}`;
+    const name = projectedColumnName(expr, i);
     return {
       name,
       dataType: executor.normalizeExecType(meta.dataType || meta.resultType || 'VARCHAR'),
-      tableAlias: outputAlias || passThroughAlias(expr, name),
+      tableAlias: projectedColumnAlias(expr, name, outputAlias),
     };
   });
   const columnMapping = executor.buildSchemaMapping(schema, outputAlias);
@@ -386,24 +387,13 @@ export async function buildWindow(executor: ExecutorLike, physical: PhysicalPlan
   const child = await executor.buildPipeline(physical.children[0]);
   const windowExprs = node.windowExprs as BoundWindowNode[];
 
-  const windowSchema: ExecSchema = [
-    ...child.schema,
-    ...windowExprs.map((w: BoundWindowNode, i: number): ExecColumn => ({
-      name: `__window_${i}`,
-      dataType: executor.normalizeExecType(w.resultType || 'FLOAT64'),
-      tableAlias: '',
-    })),
-  ];
-  const windowMapping: ColumnMapping = new Map<string, number>();
-  let idx = 0;
-  for (const col of windowSchema) {
-    const key = col.tableAlias ? `${col.tableAlias}.${col.name}`.toUpperCase() : col.name.toUpperCase();
-    windowMapping.set(key, idx);
-    if (!windowMapping.has(col.name.toUpperCase())) {
-      windowMapping.set(col.name.toUpperCase(), idx);
-    }
-    idx++;
-  }
+  const windowColumns: ExecSchema = windowExprs.map((w: BoundWindowNode, i: number): ExecColumn => ({
+    name: `__window_${i}`,
+    dataType: executor.normalizeExecType(w.resultType || 'FLOAT64'),
+    tableAlias: '',
+  }));
+  const windowSchema: ExecSchema = [...child.schema, ...windowColumns];
+  const windowMapping: ColumnMapping = combinedMappingOf(child, { schema: windowColumns, columnMapping: new Map() });
   for (let w = 0; w < windowExprs.length; w++) {
     windowMapping.set(exprKey(windowExprs[w]), child.schema.length + w);
   }
@@ -412,12 +402,24 @@ export async function buildWindow(executor: ExecutorLike, physical: PhysicalPlan
     schema: windowSchema,
     columnMapping: windowMapping,
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
-      const childChunks = registerBufferedChild(graph, currentPipelineId, child);
+      const spillHandle = executor.tempManager.allocate('spill', 'window');
+      const windowOp = new WindowOperator(
+        windowExprs,
+        child.schema,
+        child.columnMapping,
+        compileExpression,
+        executor.storageBackend.createSpillManager(spillHandle),
+      );
+      const windowSink: Sink = {
+        async consume(chunk: DataChunk) { await windowOp.consume(chunk); },
+        async finalize() {}
+      };
+      const childPipelineId = graph.createPipeline(windowSink);
+      child.register(graph, childPipelineId, windowSink);
+      graph.addDependency(currentPipelineId, childPipelineId);
 
       const source: SourceGenerator = async function* () {
-        const windowOp = new WindowOperator(windowExprs, child.schema, child.columnMapping, compileExpression);
-        const resultChunks = await windowOp.execute(childChunks);
-        for (const chunk of resultChunks) {
+        for await (const chunk of windowOp.stream()) {
           await currentSink.consume(chunk);
           yield chunk;
         }
@@ -426,12 +428,6 @@ export async function buildWindow(executor: ExecutorLike, physical: PhysicalPlan
       graph.setSource(currentPipelineId, source);
     }
   };
-}
-
-function passThroughAlias(expr: ProjectedExpr, outputName: string): string {
-  if (expr.kind !== BoundExprKind.COLUMN_REF) return '';
-  if (expr.columnName.toUpperCase() !== outputName.toUpperCase()) return '';
-  return expr.tableAlias || '';
 }
 
 

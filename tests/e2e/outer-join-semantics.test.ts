@@ -106,6 +106,30 @@ describe('outer join semantics', () => {
         ]));
       });
 
+      it('keeps unmatched left rows when the WHERE predicate tolerates NULLs', async () => {
+        const viaCoalesce = await runOn(operator,
+          "SELECT L.LV AS LV FROM L LEFT JOIN R ON L.K = R.K WHERE COALESCE(R.RV, 'none') = 'none'");
+        const viaIsNull = await runOn(operator,
+          'SELECT L.LV AS LV FROM L LEFT JOIN R ON L.K = R.K WHERE R.RV IS NULL');
+
+        expect(viaCoalesce).toEqual(sorted([{ LV: 'l1' }, { LV: 'lnull' }]));
+        expect(viaCoalesce).toEqual(viaIsNull);
+      });
+
+      it('keeps unmatched left rows when a CASE expression maps NULL to a match', async () => {
+        const rows = await runOn(operator,
+          'SELECT L.LV AS LV FROM L LEFT JOIN R ON L.K = R.K WHERE CASE WHEN R.RV IS NULL THEN 1 ELSE 0 END = 1');
+
+        expect(rows).toEqual(sorted([{ LV: 'l1' }, { LV: 'lnull' }]));
+      });
+
+      it('still drops unmatched left rows when the WHERE predicate rejects NULLs', async () => {
+        const rows = await runOn(operator,
+          "SELECT L.LV AS LV FROM L LEFT JOIN R ON L.K = R.K WHERE R.RV = 'r2'");
+
+        expect(rows).toEqual(sorted([{ LV: 'l2' }, { LV: 'l2b' }]));
+      });
+
       it('INNER JOIN never matches NULL keys', async () => {
         const rows = await runOn(operator, 'SELECT L.LV AS LV, R.RV AS RV FROM L JOIN R ON L.K = R.K');
 

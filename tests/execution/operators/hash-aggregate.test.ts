@@ -10,7 +10,6 @@ import {
   DistinctAccumulator,
   AvgFinalAccumulator,
   getAccumulatorFactory,
-  hashGroupKey,
 } from '../../../src/execution/operators/hash-aggregate.js';
 import { Column } from '../../../src/storage/column.js';
 import { DataChunk } from '../../../src/storage/chunk.js';
@@ -516,21 +515,12 @@ describe('partial export/absorb (parallel combine contract)', () => {
       ]));
     }
     const partitionOf = (partitions, key) =>
-      partitions.findIndex(part => part.some(p => p.key === key));
+      partitions.findIndex(part => part.some(p => p.groupValues[0] === key));
     const [pa, pb] = ops.map(op => op.exportPartials(16));
     for (const key of ['x', 'y', 'z']) {
       expect(partitionOf(pa, key)).toBe(partitionOf(pb, key));
       expect(partitionOf(pa, key)).toBeGreaterThanOrEqual(0);
     }
-  });
-
-  it('hashGroupKey is type-aware and stable for numbers, strings, bigints and null', () => {
-    expect(hashGroupKey(null)).toBe(0);
-    expect(hashGroupKey(42)).toBe(hashGroupKey(42));
-    expect(hashGroupKey('42')).toBe(hashGroupKey('42'));
-    expect(hashGroupKey(42n)).toBe(hashGroupKey(42n));
-    expect(hashGroupKey(-0)).toBe(hashGroupKey(-0));
-    expect(typeof hashGroupKey('xin chào')).toBe('number');
   });
 
   it('single-key groups use raw values: null group does not collide with the string "null"', async () => {

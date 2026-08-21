@@ -8,7 +8,7 @@ import {
   isSortedByPrefix,
   sortDirectionOf,
   sortKeyMatches,
-} from '../../src/optimizer/sort-properties.js';
+} from '../../src/planner/sort-properties.js';
 import { PlanNodeType, LogicalScan, LogicalSort, LogicalFilter } from '../../src/planner/logical-plan.js';
 import { BoundExprKind } from '../../src/binder/expression-binder.js';
 

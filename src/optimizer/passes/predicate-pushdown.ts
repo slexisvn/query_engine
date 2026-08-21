@@ -4,7 +4,9 @@ import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { BoundExprKind, walkExpr, type BoundExpr, type BoundBinaryNode } from '../../binder/expression-binder.js';
 import { containsAggregate } from '../expr-walk.js';
 import { collectPlanRefs, refBelongsToPlan, type ExprRef } from './plan-refs.js';
+import { isNullRejecting } from './null-rejection.js';
 import { DataType } from '../../storage/data-type.js';
+import { splitConjuncts, combineConjuncts } from '../../binder/conjuncts.js';
 
 type MetadataValue = string | number | boolean | object | null | undefined;
 
@@ -179,7 +181,7 @@ function pushIntoJoin(predicates: BoundExpr[], joinNode: LogicalJoinNode): Logic
       else joinPreds.push(pred);
     } else if (joinNode.joinType === JoinType.LEFT) {
       if (leftOnly) leftPreds.push(pred);
-      else if (rightOnly && rejectsNulls(pred)) {
+      else if (rightOnly && isNullRejecting(pred, rightRefs)) {
         rightPreds.push(pred);
         joinNode = { ...joinNode, joinType: JoinType.INNER };
       } else {
@@ -222,35 +224,6 @@ function pushIntoJoin(predicates: BoundExpr[], joinNode: LogicalJoinNode): Logic
   return result;
 }
 
-function rejectsNulls(pred: BoundExpr): boolean {
-  if (pred.kind === BoundExprKind.BINARY) {
-    return ['=', '<>', '<', '>', '<=', '>='].includes(pred.op);
-  }
-  if (pred.kind === BoundExprKind.IS_NULL && !pred.negated) {
-    return false;
-  }
-  return true;
-}
-
-export function splitConjuncts(expr: BoundExpr | null): BoundExpr[] {
-  if (!expr) return [];
-  if (expr.kind === BoundExprKind.BINARY && expr.op?.toUpperCase() === 'AND') {
-    return [...splitConjuncts(expr.left), ...splitConjuncts(expr.right)];
-  }
-  return [expr];
-}
-
-export function combineConjuncts(preds: BoundExpr[]): BoundExpr | null {
-  if (preds.length === 0) return null;
-  if (preds.length === 1) return preds[0];
-  return preds.reduce((acc, p): BoundBinaryNode => ({
-    kind: BoundExprKind.BINARY,
-    op: 'AND',
-    left: acc,
-    right: p,
-    resultType: DataType.BOOLEAN,
-  }));
-}
 
 function collectColumnRefs(expr: BoundExpr): ExprRef[] {
   const keys = new Set<string>();

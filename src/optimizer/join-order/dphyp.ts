@@ -1,7 +1,7 @@
 import { subsetsByAscendingSize, descendingBitIndices, lowestBitIndex, maskBelowOrEqual, type HyperGraph } from './hypergraph.js';
 import { bestJoinOf, type JoinCardinalityEstimator, type JoinEnumerator, type JoinOrderEntry } from './join-plan.js';
 import { Config } from '../../config.js';
-import type { DefaultCostModel } from './cost-model.js';
+import type { DefaultCostModel } from '../../planner/cost-model.js';
 
 export class DPhypEnumerator implements JoinEnumerator {
   graph: HyperGraph;

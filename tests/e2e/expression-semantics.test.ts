@@ -159,4 +159,74 @@ describe('expression and window semantics', () => {
       expect(rows).toEqual([{ C: 1 }]);
     });
   });
+
+  describe('simple CASE', () => {
+    it('picks the branch whose value equals the operand, not the first branch', async () => {
+      const rows = await runQuery("SELECT CASE 2 WHEN 1 THEN 'a' WHEN 2 THEN 'b' ELSE 'c' END AS G FROM E0");
+      expect(rows).toEqual([{ G: 'b' }]);
+    });
+
+    it('compares the operand against every branch of a column CASE', async () => {
+      const rows = await runQuery("SELECT CASE DEPT WHEN 10 THEN 'sales' WHEN 20 THEN 'eng' ELSE 'other' END AS G FROM EMP");
+      expect(rows.map(row => row.G)).toEqual(['sales', 'sales', 'eng', 'eng', 'other']);
+    });
+
+    it('agrees with the equivalent searched CASE', async () => {
+      const simple = await runQuery("SELECT CASE DEPT WHEN 10 THEN 'sales' ELSE 'other' END AS G FROM EMP");
+      const searched = await runQuery("SELECT CASE WHEN DEPT = 10 THEN 'sales' ELSE 'other' END AS G FROM EMP");
+      expect(simple).toEqual(searched);
+    });
+
+    it('falls through to ELSE when the operand is NULL', async () => {
+      const rows = await runQuery("SELECT CASE DEPT WHEN 10 THEN 'ten' ELSE 'other' END AS G FROM EMP WHERE ID = 5");
+      expect(rows).toEqual([{ G: 'other' }]);
+    });
+
+    it('yields NULL when no branch matches and there is no ELSE', async () => {
+      const rows = await runQuery("SELECT CASE DEPT WHEN 99 THEN 'x' END AS G FROM EMP WHERE ID = 1");
+      expect(rows).toEqual([{ G: null }]);
+    });
+
+    it('matches string operands exactly', async () => {
+      const rows = await runQuery("SELECT CASE NAME WHEN 'bob' THEN 'B' ELSE '-' END AS G FROM EMP");
+      expect(rows.map(row => row.G)).toEqual(['-', 'B', '-', '-', '-']);
+    });
+  });
+
+  describe('LIKE is case-sensitive', () => {
+    it('does not match a pattern that differs only in case', async () => {
+      expect(await runQuery("SELECT ID FROM EMP WHERE NAME LIKE 'A%'")).toEqual([]);
+      expect(await runQuery("SELECT ID FROM EMP WHERE NAME LIKE 'ALICE'")).toEqual([]);
+    });
+
+    it('still matches the exact case', async () => {
+      expect(await runQuery("SELECT ID FROM EMP WHERE NAME LIKE 'a%'")).toEqual([{ ID: 1 }]);
+    });
+
+    it('treats regex metacharacters in the pattern as literals', async () => {
+      expect(await runQuery("SELECT ID FROM EMP WHERE NAME LIKE '.*'")).toEqual([]);
+    });
+  });
+
+  describe('function resolution', () => {
+    it('rejects an unregistered function instead of returning NULL', async () => {
+      await expect(runQuery('SELECT NOSUCHFN(1) AS R FROM E0')).rejects.toThrow(/Unknown function: NOSUCHFN/);
+    });
+
+    it('rejects a misspelled function rather than silently yielding NULL', async () => {
+      await expect(runQuery("SELECT CONCAT('a', 'b') AS R FROM E0")).rejects.toThrow(/Unknown function: CONCAT/);
+    });
+
+    it('rejects too many arguments', async () => {
+      await expect(runQuery("SELECT UPPER('a', 'b') AS R FROM E0")).rejects.toThrow(/UPPER expects 1 argument/);
+    });
+
+    it('rejects too few arguments', async () => {
+      await expect(runQuery('SELECT LENGTH() AS R FROM E0')).rejects.toThrow(/LENGTH expects 1 argument/);
+    });
+
+    it('accepts a variadic function at any arity', async () => {
+      expect(await runQuery('SELECT COALESCE(NULL, NULL, 7) AS R FROM E0')).toEqual([{ R: 7 }]);
+    });
+  });
 });

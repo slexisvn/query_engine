@@ -195,4 +195,68 @@ describe('DistributionAwareJoin', () => {
 
     expect(result._distributionStrategy).toBe(DistributionStrategy.BROADCAST_LEFT);
   });
+  describe('joins against a replicated table', () => {
+    function strategyFor(joinType, replicatedSide) {
+      const partitioned = replicatedSide === 'left' ? 'fact' : 'fact';
+      pm.registerTable(partitioned, new HashPartitionStrategy(), 3, new Map([[0, ['n1']], [1, ['n2']], [2, ['n3']]]));
+      pm.registerReplicatedTable('dim');
+
+      const join = replicatedSide === 'left'
+        ? makeJoin('dim', 'fact', 'dcat', 'cat', joinType)
+        : makeJoin('fact', 'dim', 'cat', 'dcat', joinType);
+
+      return new DistributionAwareJoin(pm).apply(join)._distributionStrategy;
+    }
+
+    it('colocates an inner join whose right side is replicated', () => {
+      expect(strategyFor(JoinType.INNER, 'right')).toBe(DistributionStrategy.COLOCATED);
+    });
+
+    it('colocates an inner join whose left side is replicated', () => {
+      expect(strategyFor(JoinType.INNER, 'left')).toBe(DistributionStrategy.COLOCATED);
+    });
+
+    it('colocates a left join when the replicated side is the non-preserved one', () => {
+      expect(strategyFor(JoinType.LEFT, 'right')).toBe(DistributionStrategy.COLOCATED);
+    });
+
+    it('refuses a left join when the preserved side is the replicated one', () => {
+      expect(strategyFor(JoinType.LEFT, 'left')).not.toBe(DistributionStrategy.COLOCATED);
+    });
+
+    it('colocates a right join when the replicated side is the non-preserved one', () => {
+      expect(strategyFor(JoinType.RIGHT, 'left')).toBe(DistributionStrategy.COLOCATED);
+    });
+
+    it('refuses a right join when the preserved side is the replicated one', () => {
+      expect(strategyFor(JoinType.RIGHT, 'right')).not.toBe(DistributionStrategy.COLOCATED);
+    });
+
+    it('refuses a full join because both sides are preserved', () => {
+      expect(strategyFor(JoinType.FULL, 'right')).not.toBe(DistributionStrategy.COLOCATED);
+    });
+
+    it('colocates a semi join whose right side is replicated', () => {
+      expect(strategyFor(JoinType.SEMI, 'right')).toBe(DistributionStrategy.COLOCATED);
+    });
+
+    it('colocates an anti join whose right side is replicated', () => {
+      expect(strategyFor(JoinType.ANTI, 'right')).toBe(DistributionStrategy.COLOCATED);
+    });
+
+    it('refuses when both sides are replicated because no side drives the placement', () => {
+      pm.registerReplicatedTable('dim');
+      pm.registerReplicatedTable('other');
+      const join = makeJoin('dim', 'other', 'dcat', 'ocat', JoinType.INNER);
+
+      expect(new DistributionAwareJoin(pm).apply(join)._distributionStrategy).not.toBe(DistributionStrategy.COLOCATED);
+    });
+
+    it('refuses when the other side is not partitioned either', () => {
+      pm.registerReplicatedTable('dim');
+      const join = makeJoin('fact', 'dim', 'cat', 'dcat', JoinType.INNER);
+
+      expect(new DistributionAwareJoin(pm).apply(join)._distributionStrategy).not.toBe(DistributionStrategy.COLOCATED);
+    });
+  });
 });

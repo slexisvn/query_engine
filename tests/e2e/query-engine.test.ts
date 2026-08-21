@@ -713,6 +713,8 @@ describe('QueryEngine', () => {
       'SELECT a.id, b.v AS bv FROM A a JOIN A b ON a.k = b.k',
       'SELECT DISTINCT k, v FROM A',
       'SELECT k FROM A UNION SELECT v FROM A',
+      'SELECT id, k, SUM(v) OVER (PARTITION BY k) AS s FROM A ORDER BY id ASC',
+      'SELECT id, ROW_NUMBER() OVER (PARTITION BY k ORDER BY v ASC) AS rn, SUM(v) OVER () AS t FROM A ORDER BY id ASC',
     ]) {
       it(`matches in-memory vs spilled: ${sql.slice(0, 32)}...`, async () => {
         restoreMemoryLimit(); Config.flushBatchSize = savedFlush;
@@ -923,11 +925,42 @@ describe('QueryEngine', () => {
       engine.close();
     });
 
-    it('ORDER BY DESC in a window keeps NULLs last (matching ORDER BY)', async () => {
-      const engine = engineWith([[0, 0, 5], [1, 0, null], [2, 0, 8]]);
-      const rows = await engine.run('SELECT id, ROW_NUMBER() OVER (ORDER BY v DESC, id ASC) AS w FROM T');
-      const byId = Object.fromEntries(rows.rows.map(r => [r.id, r.w]));
-      expect(byId).toEqual({ 2: 1, 0: 2, 1: 3 });
+    const rankedIds = (rows) => [...rows].sort((a, b) => a.w - b.w).map(r => r.id);
+
+    it('orders a window the same way a top-level ORDER BY orders the rows', async () => {
+      for (const direction of ['ASC', 'DESC']) {
+        const engine = engineWith([[0, 0, 5], [1, 0, null], [2, 0, 8]]);
+        const sorted = await engine.run(`SELECT id FROM T ORDER BY v ${direction}, id ASC`);
+        const windowed = await engine.run(`SELECT id, ROW_NUMBER() OVER (ORDER BY v ${direction}, id ASC) AS w FROM T`);
+        expect(rankedIds(windowed.rows)).toEqual(sorted.rows.map(r => r.id));
+        engine.close();
+      }
+    });
+
+    it('honours explicit NULLS FIRST and NULLS LAST in a window ORDER BY', async () => {
+      const nullRowId = 1;
+      for (const [nullOrder, rankOfNull] of [['NULLS FIRST', 1], ['NULLS LAST', 3]]) {
+        const engine = engineWith([[0, 0, 5], [nullRowId, 0, null], [2, 0, 8]]);
+        const rows = await engine.run(`SELECT id, ROW_NUMBER() OVER (ORDER BY v ASC ${nullOrder}, id ASC) AS w FROM T`);
+        expect(rows.rows.find(r => r.id === nullRowId).w).toBe(rankOfNull);
+        engine.close();
+      }
+    });
+
+    it('leaves aggregate columns untouched when a window function shares the SELECT list', async () => {
+      const engine = engineWith([[0, 0, 4], [1, 0, 6], [2, 1, 2]]);
+      const byGroup = (rows) => Object.fromEntries(rows.map(r => [r.g, [r.n, r.s]]));
+      const plain = await engine.run('SELECT g, COUNT(*) AS n, SUM(v) AS s FROM T GROUP BY g');
+      const windowed = await engine.run('SELECT g, COUNT(*) AS n, SUM(v) AS s, ROW_NUMBER() OVER () AS rn FROM T GROUP BY g');
+      expect(byGroup(windowed.rows)).toEqual(byGroup(plain.rows));
+      engine.close();
+    });
+
+    it('aggregates the result of a GROUP BY inside a window function', async () => {
+      const engine = engineWith([[0, 0, 4], [1, 0, 6], [2, 1, 2]]);
+      const rows = await engine.run('SELECT g, COUNT(*) AS n, SUM(COUNT(*)) OVER () AS total FROM T GROUP BY g');
+      expect(rows.rows.map(r => r.n).sort()).toEqual([1, 2]);
+      for (const row of rows.rows) expect(row.total).toBe(3);
       engine.close();
     });
   });

@@ -7,6 +7,8 @@ import { SabArena } from '../storage/sab-arena.js';
 import { DEFAULT_CHUNK_SIZE } from '../config.js';
 import type { DataChunk } from '../storage/chunk.js';
 import type { ColumnValue } from '../storage/data-type.js';
+import type { JoinKey } from '../execution/operators/join-core.js';
+import { createKeyedHashTable, NO_ENTRY } from '../execution/hash-table.js';
 import { instantiateFragment, instantiateAggregate, instantiateJoinSpec } from '../execution/fragment-spec.js';
 import { createVectorAggregator } from '../execution/operators/vector-aggregate.js';
 import type { FilterOperator } from '../execution/operators/filter.js';
@@ -15,9 +17,10 @@ import type { CompiledExpr } from '../execution/execution-types.js';
 import {
   joinKeyOf,
   joinKeyHash,
-  probeJoinRows,
+  joinKeyValues,
+  probeJoinInto,
   materializeRow,
-  buildJoinOutputChunk,
+  JoinOutputBuffer,
 } from '../execution/operators/join-core.js';
 import type { JoinType } from '../planner/logical-plan.js';
 import type {
@@ -36,7 +39,6 @@ import type {
 } from './worker-messages.js';
 
 type FragmentOperator = FilterOperator | ProjectionOperator;
-type JoinKey = ColumnValue;
 type JoinRow = ColumnValue[];
 
 interface BuildItemWithIndex {
@@ -135,6 +137,7 @@ interface PartitionRefsResult {
 async function partitionRefs(reader: StagedReader, extractors: CompiledExpr[], schedulerDescriptor: MorselSchedulerDescriptor, partitionCount: number, nullRows: JoinRow[] | null): Promise<PartitionRefsResult> {
   const scheduler = MorselScheduler.attach(schedulerDescriptor);
   const mask = partitionCount - 1;
+  const keyScratch: ColumnValue[] = [null];
   const partitions: number[][] = Array.from({ length: partitionCount }, () => []);
   let nullCount = 0;
 
@@ -150,7 +153,7 @@ async function partitionRefs(reader: StagedReader, extractors: CompiledExpr[], s
           if (nullRows) nullRows.push(materializeRow(chunk, physical));
           continue;
         }
-        partitions[joinKeyHash(key) & mask].push(ci, r);
+        partitions[joinKeyHash(key, keyScratch) & mask].push(ci, r);
       }
     }
   }
@@ -179,12 +182,16 @@ async function handleJoinPartition({ spec, buildChunks, probeChunks, buildSchedu
 }
 
 async function handleJoinProbe({ spec, buildChunks, probeChunks, buildRefs, probeRefs, hasNullKey, outputTypes }: FragmentJoinProbeRequest): Promise<FragmentJoinProbeResult> {
-  const { buildOperators, probeOperators, buildExtractors, probeExtractors, conditionEvaluator } = instantiateJoinSpec(spec);
+  const {
+    buildOperators, probeOperators, buildExtractors, probeExtractors, conditionEvaluator, buildColCount, probeColCount,
+  } = instantiateJoinSpec(spec);
   const buildCache = new StagedReader(new ChunkSetReader(buildChunks), buildOperators);
   const probeCache = new StagedReader(new ChunkSetReader(probeChunks), probeOperators);
 
   const refCount = buildRefs.length / 2;
-  const hashTable = new Map<JoinKey, BuildItemWithIndex[]>();
+  const keyScratch: ColumnValue[] = [null];
+  const hashTable = createKeyedHashTable(buildExtractors.length);
+  const buckets: BuildItemWithIndex[][] = [];
   const matched = new Uint8Array(refCount);
   const buildRows: JoinRow[] = new Array(refCount);
 
@@ -195,11 +202,13 @@ async function handleJoinProbe({ spec, buildChunks, probeChunks, buildRefs, prob
     const row = materializeRow(chunk, physical);
     buildRows[i] = row;
 
-    let bucket = hashTable.get(key);
+    if (key === null) continue;
+    const entry = hashTable.findOrInsert(joinKeyValues(key, keyScratch));
+    let bucket = buckets[entry];
     if (spec.uniqueKeys && bucket) continue;
     if (!bucket) {
       bucket = [];
-      hashTable.set(key, bucket);
+      buckets[entry] = bucket;
     }
     bucket.push({ row, idx: i });
   }
@@ -214,35 +223,36 @@ async function handleJoinProbe({ spec, buildChunks, probeChunks, buildRefs, prob
     };
   }
 
-  const rows = probeJoinRows(items, (key) => hashTable.get(key) || null, {
+  const lookup = (key: JoinKey) => {
+    const entry = hashTable.find(joinKeyValues(key, keyScratch));
+    return entry === NO_ENTRY ? null : (buckets[entry] || null);
+  };
+  const output = new JoinOutputBuffer({
     joinType: spec.joinType as JoinType,
-    buildColCount: spec.buildColCount,
-    probeColCount: spec.probeColCount,
-    conditionEvaluator: conditionEvaluator as Parameters<typeof probeJoinRows>[2]['conditionEvaluator'],
-    hasNullKey,
-    onMatched: (item) => { matched[(item as BuildItemWithIndex).idx] = 1; },
+    buildColCount,
+    probeColCount,
+    buildSchema: outputTypes.build,
+    probeSchema: outputTypes.probe,
   });
+  probeJoinInto(items, lookup, {
+    joinType: spec.joinType as JoinType,
+    buildColCount,
+    probeColCount,
+    conditionEvaluator: conditionEvaluator as Parameters<typeof probeJoinInto>[2]['conditionEvaluator'],
+    hasNullKey,
+    onMatched: (item: BuildItemWithIndex) => { matched[item.idx] = 1; },
+  }, output);
 
   if (spec.buildPreserved) {
     for (let i = 0; i < refCount; i++) {
-      if (!matched[i]) {
-        rows.push(buildRows[i].concat(new Array(spec.probeColCount).fill(null)));
-      }
+      if (!matched[i]) output.push(buildRows[i], null);
     }
   }
 
-  if (rows.length === 0) return { chunks: null };
+  if (output.length === 0) return { chunks: null };
 
   const arena = new SabArena();
-  const outChunks: DataChunk[] = [];
-  for (let offset = 0; offset < rows.length; offset += DEFAULT_CHUNK_SIZE) {
-    outChunks.push(buildJoinOutputChunk(rows.slice(offset, offset + DEFAULT_CHUNK_SIZE), {
-      joinType: spec.joinType as JoinType,
-      buildColCount: spec.buildColCount,
-      buildSchema: outputTypes.build,
-      probeSchema: outputTypes.probe,
-    }, arena));
-  }
+  const outChunks: DataChunk[] = [...output.chunks(DEFAULT_CHUNK_SIZE, arena)];
   const columnIndexes = outChunks[0].columns.map((_, i) => i);
   return { chunks: encodeChunkSet(outChunks, columnIndexes, arena) };
 }

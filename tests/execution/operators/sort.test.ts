@@ -42,6 +42,92 @@ async function sorted(op) {
 }
 
 describe('SortOperator', () => {
+  describe('wide integer sorts agree with a comparison sort', () => {
+    const ROWS = Config.radixSortMinRows * 2;
+
+    function keyed(colIdx, direction, nullsFirst) {
+      return { eval: (chunk, row) => chunk.columns[colIdx].get(row), direction, nullsFirst };
+    }
+
+    function reference(values, direction, nullsFirst) {
+      return values
+        .map((value, index) => ({ value, index }))
+        .sort((a, b) => {
+          const aNull = a.value === null;
+          const bNull = b.value === null;
+          if (aNull || bNull) {
+            if (aNull && bNull) return a.index - b.index;
+            return (aNull ? -1 : 1) * (nullsFirst ? 1 : -1);
+          }
+          if (a.value < b.value) return direction === 'DESC' ? 1 : -1;
+          if (a.value > b.value) return direction === 'DESC' ? -1 : 1;
+          return a.index - b.index;
+        })
+        .map(entry => entry.index);
+    }
+
+    async function runSort(values, type, direction, nullsFirst) {
+      const op = new SortOperator([keyed(0, direction, nullsFirst)], null, 0, memSpill());
+      await op.consume(makeChunk([
+        { type, values },
+        { type: 'INT32', values: values.map((_, i) => i) },
+      ]));
+      return (await sorted(op)).map(r => r[1]);
+    }
+
+    for (const direction of ['ASC', 'DESC']) {
+      for (const nullsFirst of [true, false]) {
+        it(`orders signed integers ${direction} with nulls ${nullsFirst ? 'first' : 'last'}`, async () => {
+          const values = [];
+          for (let i = 0; i < ROWS; i++) {
+            values.push(i % 11 === 0 ? null : ((i * 2654435761) % 2000001) - 1000000);
+          }
+          expect(await runSort(values, 'INT32', direction, nullsFirst))
+            .toEqual(reference(values, direction, nullsFirst));
+        });
+      }
+    }
+
+    it('keeps rows with equal keys in the order they arrived', async () => {
+      const values = new Array(ROWS).fill(0).map((_, i) => i % 4);
+      const order = await runSort(values, 'INT32', 'ASC', false);
+
+      const firstBucket = order.slice(0, ROWS / 4);
+      expect(firstBucket).toEqual([...firstBucket].sort((a, b) => a - b));
+    });
+
+    it('keeps ties in arrival order when sorting descending too', async () => {
+      const values = new Array(ROWS).fill(0).map((_, i) => i % 4);
+      const order = await runSort(values, 'INT32', 'DESC', false);
+
+      const firstBucket = order.slice(0, ROWS / 4);
+      expect(firstBucket).toEqual([...firstBucket].sort((a, b) => a - b));
+    });
+
+    it('orders integers that do not fit a 32-bit key', async () => {
+      const values = new Array(ROWS).fill(0).map((_, i) => (i % 2 === 0 ? i : -i) * 1e12);
+      expect(await runSort(values, 'FLOAT64', 'ASC', false))
+        .toEqual(reference(values, 'ASC', false));
+    });
+
+    it('orders fractional values', async () => {
+      const values = new Array(ROWS).fill(0).map((_, i) => ((i * 7919) % 1000) / 8);
+      expect(await runSort(values, 'FLOAT64', 'ASC', false))
+        .toEqual(reference(values, 'ASC', false));
+    });
+
+    it('orders strings', async () => {
+      const values = new Array(ROWS).fill(0).map((_, i) => `k${(i * 7919) % 1000}`);
+      expect(await runSort(values, 'VARCHAR', 'ASC', false))
+        .toEqual(reference(values, 'ASC', false));
+    });
+
+    it('orders a column that is entirely null', async () => {
+      const values = new Array(ROWS).fill(null);
+      expect(await runSort(values, 'INT32', 'ASC', true)).toHaveLength(ROWS);
+    });
+  });
+
   describe('in-memory sort', () => {
     it('sorts ascending by single key', async () => {
       const op = new SortOperator([ascKey(0)], null, 0, memSpill());

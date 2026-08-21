@@ -4,7 +4,8 @@ import { ChunkCodec } from '../transport/chunk-codec.js';
 import { DataChunk } from '../../storage/chunk.js';
 import { Column } from '../../storage/column.js';
 import { murmur3 } from '../partition/partition-strategy.js';
-import { encodeCompositeKey } from '../../execution/composite-key.js';
+import { hashKeyValues } from '../../execution/hash-table.js';
+import type { EvalValue } from '../../execution/execution-types.js';
 import type { Transport } from '../transport/transport.js';
 import type {
   NodeId,
@@ -104,11 +105,12 @@ export class ExchangeSender {
     const size = chunk.size;
     const partCount = this._partitionCount;
     const buckets = new Map<PartitionId, number[]>();
+    const keyParts: EvalValue[] = new Array(this._keyExtractors.length);
 
     for (let i = 0; i < size; i++) {
       const rowIdx = chunk.selectionVector ? chunk.selectionVector[i] : i;
-      const keyStr = encodeCompositeKey(this._keyExtractors.map(fn => fn(chunk, rowIdx)));
-      const pid = murmur3(keyStr, 0x9747b28c) % partCount;
+      for (let k = 0; k < this._keyExtractors.length; k++) keyParts[k] = this._keyExtractors[k](chunk, rowIdx);
+      const pid = hashKeyValues(keyParts, keyParts.length) % partCount;
 
       let rows = buckets.get(pid);
       if (!rows) {

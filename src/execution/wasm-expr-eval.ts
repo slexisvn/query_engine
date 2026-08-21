@@ -5,7 +5,7 @@ import { Config } from '../config.js';
 import type { DataChunk } from '../storage/chunk.js';
 import type { Column } from '../storage/column.js';
 import type { ColumnMapping } from './execution-types.js';
-import { resolveColumnIndex } from './column-resolve.js';
+import { optionalColumnIndex } from './column-resolve.js';
 
 const NUMERIC_TYPES = new Set(['INT32', 'FLOAT64', 'DATE', 'DECIMAL']);
 const WIDEN_TYPES = new Set(['INT32', 'DATE']);
@@ -138,5 +138,5 @@ export async function evalVectorized(expr: BoundExpr, chunk: DataChunk, columnMa
 }
 
 function resolveColIndex(expr: BoundColumnRefNode, columnMapping: ColumnMapping | null): number {
-  return resolveColumnIndex(expr, columnMapping, { clampNegative: true });
+  return optionalColumnIndex(expr, columnMapping);
 }

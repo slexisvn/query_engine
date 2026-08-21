@@ -1,5 +1,6 @@
 import { BoundExprKind, type BoundExpr } from '../binder/expression-binder.js';
-import { PlanNodeType, type LogicalPlanNode, type SortedByEntry } from '../planner/logical-plan.js';
+import { PlanNodeType, type LogicalPlanNode, type SortedByEntry } from './logical-plan.js';
+import { splitConjuncts } from '../binder/conjuncts.js';
 
 export interface EquiJoinKeys {
   leftKeys: string[];
@@ -12,19 +13,11 @@ export function columnKeyOf(expr: BoundExpr | null): string | null {
   return `${expr.tableAlias || ''}.${expr.columnName}`.toUpperCase();
 }
 
-export function splitAnd(expr: BoundExpr | null): BoundExpr[] {
-  if (!expr) return [];
-  if (expr.kind === BoundExprKind.BINARY && expr.op === 'AND') {
-    return [...splitAnd(expr.left), ...splitAnd(expr.right)];
-  }
-  return [expr];
-}
-
 export function extractEquiJoinKeys(condition: BoundExpr | null): EquiJoinKeys {
   const leftKeys: string[] = [];
   const rightKeys: string[] = [];
 
-  for (const pred of splitAnd(condition)) {
+  for (const pred of splitConjuncts(condition)) {
     if (pred.kind !== BoundExprKind.BINARY || pred.op !== '=') continue;
     const left = columnKeyOf(pred.left);
     const right = columnKeyOf(pred.right);
@@ -37,7 +30,7 @@ export function extractEquiJoinKeys(condition: BoundExpr | null): EquiJoinKeys {
 }
 
 export function isPureEquiJoin(condition: BoundExpr | null): boolean {
-  const preds = splitAnd(condition);
+  const preds = splitConjuncts(condition);
   return preds.length > 0 && preds.every(pred =>
     pred.kind === BoundExprKind.BINARY
       && pred.op === '='

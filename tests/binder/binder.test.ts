@@ -242,8 +242,18 @@ describe('Binder', () => {
       expect(bound.selectItems[0].expr.resultType).toBe(DataType.VARCHAR);
     });
 
-    it('infers arithmetic type INT32 + INT32 = INT32', () => {
+    it('widens INT32 + INT32 to INT64 so the sum cannot wrap', () => {
       const bound = bind('SELECT id + age FROM users');
+      expect(bound.selectItems[0].expr.resultType).toBe(DataType.INT64);
+    });
+
+    it('types integer division as FLOAT64 so the quotient keeps its fraction', () => {
+      const bound = bind('SELECT id / age FROM users');
+      expect(bound.selectItems[0].expr.resultType).toBe(DataType.FLOAT64);
+    });
+
+    it('keeps modulo on integers as an integer', () => {
+      const bound = bind('SELECT id % age FROM users');
       expect(bound.selectItems[0].expr.resultType).toBe(DataType.INT32);
     });
 
@@ -437,9 +447,14 @@ describe('Binder', () => {
       expect(bound.selectItems[0].expr.distinct).toBe(true);
     });
 
-    it('binds SUM inheriting arg type', () => {
+    it('widens SUM over an integer column to INT64', () => {
       const bound = bind('SELECT SUM(age) FROM users');
-      expect(bound.selectItems[0].expr.resultType).toBe(DataType.INT32);
+      expect(bound.selectItems[0].expr.resultType).toBe(DataType.INT64);
+    });
+
+    it('keeps SUM over a float column as FLOAT64', () => {
+      const bound = bind('SELECT SUM(price) FROM products');
+      expect(bound.selectItems[0].expr.resultType).toBe(DataType.FLOAT64);
     });
 
     it('binds AVG always as FLOAT64', () => {
@@ -559,10 +574,19 @@ describe('Binder', () => {
       const bound = bind("SELECT CASE WHEN age >= 18 THEN 'adult' ELSE 'minor' END FROM users");
       const expr = bound.selectItems[0].expr;
       expect(expr.kind).toBe(BoundExprKind.CASE);
-      expect(expr.operand).toBeNull();
       expect(expr.whenClauses).toHaveLength(1);
+      expect(expr.whenClauses[0].condition.op).toBe('>=');
       expect(expr.elseExpr).not.toBeNull();
       expect(expr.resultType).toBe(DataType.VARCHAR);
+    });
+
+    it('rewrites simple CASE into equality comparisons against the operand', () => {
+      const bound = bind("SELECT CASE age WHEN 18 THEN 'adult' ELSE 'minor' END FROM users");
+      const condition = bound.selectItems[0].expr.whenClauses[0].condition;
+      expect(condition.kind).toBe(BoundExprKind.BINARY);
+      expect(condition.op).toBe('=');
+      expect(condition.left.columnName).toBe('AGE');
+      expect(condition.right.value).toBe(18);
     });
 
     it('binds CASE without ELSE', () => {

@@ -112,4 +112,67 @@ describe('aggregate semantics', () => {
       ]));
     });
   });
+
+  describe('GROUP BY ordinals', () => {
+    it('groups by the select item at that position', async () => {
+      const byOrdinal = await runQuery('SELECT DEPT, COUNT(*) AS C FROM EMP GROUP BY 1');
+      const byName = await runQuery('SELECT DEPT, COUNT(*) AS C FROM EMP GROUP BY DEPT');
+      expect(sortedRows(byOrdinal)).toEqual(sortedRows(byName));
+    });
+
+    it('resolves a position other than the first', async () => {
+      const rows = await runQuery('SELECT COUNT(*) AS C, NAME FROM EMP GROUP BY 2');
+      expect(sortedRows(rows)).toEqual(sortedRows([
+        { C: 1, NAME: 'alice' }, { C: 1, NAME: 'bob' }, { C: 1, NAME: 'carol' },
+        { C: 1, NAME: 'dave' }, { C: 1, NAME: 'eve' },
+      ]));
+    });
+
+    it('groups by a select alias', async () => {
+      const rows = await runQuery('SELECT DEPT AS D, COUNT(*) AS C FROM EMP GROUP BY D');
+      expect(sortedRows(rows)).toEqual(sortedRows([
+        { D: 10, C: 2 }, { D: 20, C: 2 }, { D: null, C: 1 },
+      ]));
+    });
+
+    it('rejects an out-of-range position', async () => {
+      await expect(runQuery('SELECT DEPT FROM EMP GROUP BY 3')).rejects.toThrow(/GROUP BY position 3/);
+    });
+  });
+
+  describe('grouping coverage', () => {
+    it('rejects a projected column that is neither grouped nor aggregated', async () => {
+      await expect(runQuery('SELECT NAME, COUNT(*) AS C FROM EMP GROUP BY DEPT'))
+        .rejects.toThrow(/must appear in the GROUP BY clause/);
+    });
+
+    it('rejects a bare column alongside an aggregate with no GROUP BY', async () => {
+      await expect(runQuery('SELECT ID, SUM(SAL) AS S FROM EMP'))
+        .rejects.toThrow(/must appear in the GROUP BY clause/);
+    });
+
+    it('rejects an ungrouped sort key', async () => {
+      await expect(runQuery('SELECT DEPT FROM EMP GROUP BY DEPT ORDER BY NAME'))
+        .rejects.toThrow(/must appear in the GROUP BY clause/);
+    });
+
+    it('allows an expression built from the grouping key', async () => {
+      const rows = await runQuery('SELECT DEPT * 2 AS D2, COUNT(*) AS C FROM EMP GROUP BY DEPT');
+      expect(sortedRows(rows)).toEqual(sortedRows([
+        { D2: 20, C: 2 }, { D2: 40, C: 2 }, { D2: null, C: 1 },
+      ]));
+    });
+
+    it('allows repeating the grouping expression in the select list', async () => {
+      const rows = await runQuery('SELECT SAL/100 AS G, COUNT(*) AS C FROM EMP WHERE SAL IS NOT NULL GROUP BY SAL/100');
+      expect(sortedRows(rows)).toEqual(sortedRows([
+        { G: 1, C: 1 }, { G: 2, C: 1 }, { G: 3, C: 1 }, { G: 5, C: 1 },
+      ]));
+    });
+
+    it('allows any column inside an aggregate', async () => {
+      const rows = await runQuery('SELECT DEPT, MAX(NAME) AS MX FROM EMP GROUP BY DEPT');
+      expect(rows).toHaveLength(3);
+    });
+  });
 });

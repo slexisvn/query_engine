@@ -2,7 +2,7 @@ import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { PlanNodeType, type LogicalPlanNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
 import { type BoundExpr } from '../../binder/expression-binder.js';
-import { splitConjuncts, combineConjuncts } from './predicate-pushdown.js';
+import { splitConjuncts, combineConjuncts } from '../../binder/conjuncts.js';
 import { containsAggregate } from '../expr-walk.js';
 
 export class HavingPushdown extends OptimizationPass {

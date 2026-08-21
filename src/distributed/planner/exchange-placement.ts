@@ -1,7 +1,7 @@
 import { ExchangeType } from './fragment.js';
 import { DistributionStrategy } from '../optimizer/distribution-aware-join.js';
 import { Config } from '../../config.js';
-import { splitAnd } from './expr-utils.js';
+import { splitConjuncts } from '../../binder/conjuncts.js';
 import type {
   LogicalJoinNode,
   LogicalAggregateNode,
@@ -114,7 +114,7 @@ export class ExchangePlacement {
     const condition = joinNode.condition;
     if (!condition) return { leftKeys, rightKeys };
 
-    const preds = splitAnd(condition);
+    const preds = splitConjuncts(condition);
     for (const pred of preds) {
       if (pred.kind === BoundExprKind.BINARY && (pred as ShuffleOperand).op === '=' && (pred as ShuffleOperand).left?.kind === BoundExprKind.COLUMN_REF && (pred as ShuffleOperand).right?.kind === BoundExprKind.COLUMN_REF) {
         leftKeys.push((pred as ShuffleOperand).left as BoundExpr);

@@ -9,6 +9,8 @@ import { Table } from '../storage/table.js';
 import { isPagedTableStorage } from '../storage/table-storage.js';
 import { Optimizer } from '../optimizer/optimizer.js';
 import { createDefaultOptimizer } from '../optimizer/optimizer-pipeline.js';
+import { cteScanOrderRequirements } from '../optimizer/passes/sort-elimination.js';
+import type { OptimizationContext } from '../optimizer/pass.js';
 import { QueryExecutor } from '../execution/query-executor.js';
 import { PhysicalPlanner } from '../execution/physical-planner.js';
 import { QueryResult } from '../execution/query-result.js';
@@ -161,7 +163,10 @@ function serializeParams(params: readonly QueryParam[]): string {
 
 function coerceForStorage(value: ColumnValue, dataType: DataType): ColumnValue {
   if (value === null || value === undefined) return null;
-  const wantsBigInt = dataType === DataType.INT64 || dataType === DataType.DECIMAL || dataType === DataType.TIMESTAMP;
+  if (dataType === DataType.DECIMAL) {
+    return typeof value === 'bigint' ? Number(value) : value;
+  }
+  const wantsBigInt = dataType === DataType.INT64 || dataType === DataType.TIMESTAMP;
   if (wantsBigInt) {
     return typeof value === 'bigint' ? value : BigInt(Math.round(Number(value)));
   }
@@ -242,8 +247,8 @@ export class QueryEngine {
     return createLogicalPlan(boundQuery);
   }
 
-  optimize(logicalPlan: LogicalPlanNode): LogicalPlanNode {
-    return this.optimizer.optimize(logicalPlan);
+  optimize(logicalPlan: LogicalPlanNode, context: OptimizationContext = {}): LogicalPlanNode {
+    return this.optimizer.optimize(logicalPlan, context);
   }
 
   planCacheKey(sql: string, params: readonly QueryParam[]): string | null {
@@ -288,15 +293,18 @@ export class QueryEngine {
     await this._ensureStatistics(referencedTables(logicalPlan, cteMap));
 
     const optimized = this.optimize(logicalPlan);
-    cteMap = this.optimizeCTEMap(cteMap);
+    cteMap = this.optimizeCTEMap(cteMap, optimized);
     return { plan: optimized, outputColumns: bound.outputColumns, cteMap, isExplain, isAnalyze };
   }
 
-  optimizeCTEMap(cteMap: Map<string, LogicalPlanNode>): Map<string, LogicalPlanNode> {
+  optimizeCTEMap(cteMap: Map<string, LogicalPlanNode>, consumer: LogicalPlanNode): Map<string, LogicalPlanNode> {
     if (!cteMap || cteMap.size === 0) return cteMap;
+    const orderRequirements = cteScanOrderRequirements(consumer);
+    for (const plan of cteMap.values()) cteScanOrderRequirements(plan, orderRequirements);
+
     const optimized = new Map<string, LogicalPlanNode>();
     for (const [name, plan] of cteMap) {
-      optimized.set(name, this.optimize(plan));
+      optimized.set(name, this.optimize(plan, { rootOrderRequired: orderRequirements.get(name) ?? true }));
     }
     return optimized;
   }
@@ -388,7 +396,7 @@ ${physicalPlanToString(physical)}`;
   async _runPlan(plan: LogicalPlanNode, outputColumns: OutputColumn[], streaming: boolean = false, cteMap: Map<string, LogicalPlanNode> | null = null): Promise<QueryResult> {
     await this._ensureStatistics(referencedTables(plan, cteMap));
     const optimized = this.optimize(plan);
-    this.executor.cteDefinitions = this.optimizeCTEMap(cteMap || new Map<string, LogicalPlanNode>());
+    this.executor.cteDefinitions = this.optimizeCTEMap(cteMap || new Map<string, LogicalPlanNode>(), optimized);
     const { sink, columnNames } = await this.executor.execute(optimized, outputColumns as ExecutorColumns, streaming);
     return new QueryResult(columnNames, sink);
   }
@@ -486,11 +494,23 @@ ${physicalPlanToString(physical)}`;
     return { rows: [], columns: [], message: `Table ${tableName} created` };
   }
 
-  async createTableAsSelect(tableName: string, query: QueryStmt): Promise<DDLResult> {
+  compileQueryStatement(query: QueryStmt): { plan: LogicalPlanNode; outputColumns: OutputColumn[]; cteMap: Map<string, LogicalPlanNode> } {
     const bound = this.bind(query);
     const logicalPlan = this.plan(bound);
-    const cteMap = logicalPlan._cteMap || new Map<string, LogicalPlanNode>();
-    const result = await this._runPlan(logicalPlan, bound.outputColumns, false, cteMap);
+    return {
+      plan: logicalPlan,
+      outputColumns: bound.outputColumns,
+      cteMap: logicalPlan._cteMap || new Map<string, LogicalPlanNode>(),
+    };
+  }
+
+  async createTableAsSelect(tableName: string, query: QueryStmt): Promise<DDLResult> {
+    const { plan, outputColumns, cteMap } = this.compileQueryStatement(query);
+    const result = await this._runPlan(plan, outputColumns, false, cteMap);
+    return this.materializeTableFromResult(tableName, result, outputColumns);
+  }
+
+  async materializeTableFromResult(tableName: string, result: QueryResult, outputColumns: OutputColumn[]): Promise<DDLResult> {
     const columnNames = result.columns;
 
     const seen = new Set<string>();
@@ -505,7 +525,7 @@ ${physicalPlanToString(physical)}`;
     const fallbackTypes = (): ColumnSchema[] =>
       columnNames.map((name: string, i: number) => ({
         name: name.toUpperCase(),
-        dataType: (bound.outputColumns[i]?.dataType ?? DataType.VARCHAR) as DataType,
+        dataType: (outputColumns[i]?.dataType ?? DataType.VARCHAR) as DataType,
       }));
 
     const pageStore = this.storageBackend.createPageStore(this.tempManager.allocate('buffer', tableName));
@@ -669,6 +689,9 @@ ${physicalPlanToString(physical)}`;
     const { DistributionAwareJoin } = await import('../distributed/optimizer/distribution-aware-join.js');
     const { PartialAggregatePass } = await import('../distributed/optimizer/partial-aggregate.js');
     const { DistributedSortPass } = await import('../distributed/optimizer/distributed-sort.js');
+    const { DistributedDistinctPass } = await import('../distributed/optimizer/distributed-distinct.js');
+    const { DistributedSetOpPass } = await import('../distributed/optimizer/distributed-setop.js');
+    const { DistributedLimitPass } = await import('../distributed/optimizer/distributed-limit.js');
     const { QueryCoordinator } = await import('../distributed/execution/coordinator.js');
 
     const localNode = new NodeDescriptor({
@@ -687,6 +710,9 @@ ${physicalPlanToString(physical)}`;
       { method: 'insertPassAfter', args: [PLAN_PROPERTIES_PASS, new DistributionAwareJoin(partitionMap, statsMap)] },
       { method: 'registerPass', args: [new PartialAggregatePass()] },
       { method: 'registerPass', args: [new DistributedSortPass()] },
+      { method: 'registerPass', args: [new DistributedDistinctPass(partitionMap)] },
+      { method: 'registerPass', args: [new DistributedSetOpPass(partitionMap)] },
+      { method: 'registerPass', args: [new DistributedLimitPass(partitionMap)] },
     ];
 
     this._applyDistributedPasses(this.optimizer, makeDistributedPasses());

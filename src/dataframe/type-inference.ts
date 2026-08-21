@@ -15,6 +15,16 @@ const NUMERIC_RANK: Partial<Record<DataType, number>> = {
   [DataType.FLOAT64]: 4,
 };
 
+export function reconcileTypes(a: DataType | null, b: DataType | null): DataType | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  if (a === b) return a;
+  if (isNumeric(a) && isNumeric(b)) {
+    return (NUMERIC_RANK[a] as number) >= (NUMERIC_RANK[b] as number) ? a : b;
+  }
+  return DataType.VARCHAR;
+}
+
 export function inferValueType(value: InferableValue): DataType | null {
   if (value === null || value === undefined) return null;
   if (typeof value === 'boolean') return DataType.BOOLEAN;
@@ -23,16 +33,6 @@ export function inferValueType(value: InferableValue): DataType | null {
     return Number.isInteger(value) ? DataType.INT32 : DataType.FLOAT64;
   }
   if (value instanceof Date) return DataType.TIMESTAMP;
-  return DataType.VARCHAR;
-}
-
-export function reconcileTypes(a: DataType | null, b: DataType | null): DataType | null {
-  if (a === null) return b;
-  if (b === null) return a;
-  if (a === b) return a;
-  if (isNumeric(a) && isNumeric(b)) {
-    return (NUMERIC_RANK[a] as number) >= (NUMERIC_RANK[b] as number) ? a : b;
-  }
   return DataType.VARCHAR;
 }
 
@@ -56,7 +56,7 @@ export function coerceForColumn(value: InferableValue, dataType: DataType): Colu
     case DataType.INT64:
       return BigInt(value as Exclude<InferableValue, Date | null | undefined>);
     case DataType.DECIMAL:
-      return BigInt(Math.round(Number(value) * DECIMAL_SCALE_NUMBER));
+      return Number(value);
     case DataType.DATE:
       return value instanceof Date
         ? dateToEpochDays(value.getUTCFullYear(), value.getUTCMonth() + 1, value.getUTCDate())

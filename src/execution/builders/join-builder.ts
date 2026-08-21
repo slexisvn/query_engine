@@ -9,15 +9,15 @@ import { HashJoinBuild, HashJoinProbe } from '../operators/hash-join.js';
 import { MergeJoinOperator, mergeJoinSortKeys } from '../operators/merge-join.js';
 import { NestedLoopJoinOperator } from '../operators/nested-loop-join.js';
 import {
-  extractStageChain,
+  extractScanChain,
   buildJoinSpec,
-  stagedSchemaOf,
+  stageChainSchema,
   schemasEqual,
   plainSchemaOf,
 } from '../fragment-spec.js';
-import type { Stage, JoinSpec } from '../fragment-spec.js';
+import type { StageChain, JoinSpec } from '../fragment-spec.js';
 import { Config } from '../../config.js';
-import { isBuildSidePreserved } from '../../optimizer/join-build-side.js';
+import { isBuildSidePreserved } from '../../planner/join-build-side.js';
 import { RowMemoryBudget } from '../memory-budget.js';
 import { combinedMappingOf, registerBufferedChild, registerSortedChild } from './builder-utils.js';
 import { DataType } from '../../storage/data-type.js';
@@ -40,14 +40,8 @@ export type MakeProbeOp = (buildSide: HashJoinBuild) => HashJoinProbe;
 
 type LogicalMarkJoinNode = LogicalJoinNode & { markColumn?: string };
 
-interface JoinSideSpec {
-  schema: ExecSchema;
-  baseSchema: ExecSchema;
-  stages: Stage[];
-}
-
 export interface JoinSide {
-  spec: JoinSideSpec;
+  spec: StageChain;
   storage: TableStorage | null;
   columnIndexes: number[] | null;
 }
@@ -156,7 +150,7 @@ export async function buildJoin(executor: ExecutorLike, physical: PhysicalPlanNo
   }
 
   const combinedSchema = [...buildInput.schema, ...probeInput.schema];
-  const combinedMapping = combinedMappingOf(buildInput.schema, probeInput.schema);
+  const combinedMapping = combinedMappingOf(buildInput, probeInput);
 
   const { buildKeys, probeKeys, residualCondition } = extractJoinKeys(
     node.condition, buildInput.columnMapping, probeInput.columnMapping
@@ -239,9 +233,9 @@ export async function buildJoin(executor: ExecutorLike, physical: PhysicalPlanNo
         },
         async finalize() {
           if (buildPreserved) {
-            const unmatchedRows = buildSide.emitUnmatched(probeInput.schema.length);
+            const unmatchedRows = buildSide.emitUnmatched();
             if (unmatchedRows.length > 0) {
-              await currentSink.consume(probeOp.buildOutputChunk(unmatchedRows));
+              await currentSink.consume(probeOp.buildUnmatchedChunk(unmatchedRows));
             }
           }
           if (probeOp.finalize) {
@@ -308,10 +302,10 @@ export async function buildJoin(executor: ExecutorLike, physical: PhysicalPlanNo
         }
 
         const typesOf = (side: JoinSide, chunks: DataChunk[]): DataType[] => {
-          if (side.storage) return side.spec.schema.map((col: ExecColumn) => col.dataType);
+          const declared = (): DataType[] => stageChainSchema(side.spec).map((col: ExecColumn) => col.dataType);
+          if (side.storage) return declared();
           const first = chunks.find((c: DataChunk) => c.size > 0);
-          if (first) return first.columns.map((col) => col.dataType);
-          return side.spec.schema.map((col: ExecColumn) => col.dataType);
+          return first ? first.columns.map((col) => col.dataType) : declared();
         };
         const outputTypes: JoinOutputTypes = {
           build: typesOf(parallelJoin.buildSide, buildChunks),
@@ -356,14 +350,14 @@ function buildMergeJoin(executor: ExecutorLike, node: LogicalJoinNode, ctx: Join
     mergeBuildKeys = ctx.probeKeys;
     mergeProbeKeys = ctx.buildKeys;
     mergeSchema = [...left.schema, ...right.schema];
-    mergeMapping = combinedMappingOf(left.schema, right.schema);
+    mergeMapping = combinedMappingOf(left, right);
   } else if (node.joinType === JoinType.RIGHT && buildInput !== right) {
     mergeBuild = right;
     mergeProbe = left;
     mergeBuildKeys = ctx.probeKeys;
     mergeProbeKeys = ctx.buildKeys;
     mergeSchema = [...right.schema, ...left.schema];
-    mergeMapping = combinedMappingOf(right.schema, left.schema);
+    mergeMapping = combinedMappingOf(right, left);
   }
   return {
     schema: mergeSchema,
@@ -409,7 +403,7 @@ function buildNestedLoopJoin(node: LogicalJoinNode, ctx: JoinBuildCtx): Compiled
   const { left, right, buildInput, probeInput, isSemiAnti, isMark, markSchema } = ctx;
   const nlOuter = buildInput === left ? buildInput : probeInput;
   const nlInner = buildInput === left ? probeInput : buildInput;
-  const nlMapping = combinedMappingOf(nlOuter.schema, nlInner.schema);
+  const nlMapping = combinedMappingOf(nlOuter, nlInner);
   const nlCondition = node.condition
     ? compileExpression(node.condition, nlMapping)
     : null;
@@ -485,12 +479,12 @@ export function prepareParallelJoin(
 function prepareJoinSide(executor: ExecutorLike, planNode: LogicalPlanNode | null, input: CompiledPipeline): JoinSide {
   const sideSchema = plainSchemaOf(input.schema);
   const buffered: JoinSide = {
-    spec: { schema: sideSchema, baseSchema: sideSchema, stages: [] },
+    spec: { baseSchema: sideSchema, stages: [] },
     storage: null,
     columnIndexes: null,
   };
 
-  const fragment = planNode ? extractStageChain(planNode) : null;
+  const fragment = planNode ? extractScanChain(planNode) : null;
   if (!fragment) return buffered;
   const storage = executor.catalog.getTableStorage(fragment.table);
   if (!storage || typeof storage.scan !== 'function') return buffered;
@@ -503,10 +497,10 @@ function prepareJoinSide(executor: ExecutorLike, planNode: LogicalPlanNode | nul
     dataType: storageSchema[i].dataType,
     tableAlias: fragment.alias,
   }));
-  if (!schemasEqual(stagedSchemaOf(baseSchema, fragment.stages), sideSchema)) return buffered;
+  if (!schemasEqual(stageChainSchema({ baseSchema, stages: fragment.stages }), sideSchema)) return buffered;
 
   return {
-    spec: { schema: sideSchema, baseSchema, stages: fragment.stages },
+    spec: { baseSchema, stages: fragment.stages },
     storage,
     columnIndexes,
   };
@@ -531,8 +525,8 @@ export async function runBufferedSerialJoin(
     if (result && result.size > 0) out.push(result);
   }
   if (buildPreserved) {
-    const unmatchedRows = buildSide.emitUnmatched(probeColCount);
-    if (unmatchedRows.length > 0) out.push(probeOp.buildOutputChunk(unmatchedRows));
+    const unmatchedRows = buildSide.emitUnmatched();
+    if (unmatchedRows.length > 0) out.push(probeOp.buildUnmatchedChunk(unmatchedRows));
   }
   if (probeOp.finalize) {
     await probeOp.finalize({ consume: async (chunk: DataChunk) => { out.push(chunk); } });

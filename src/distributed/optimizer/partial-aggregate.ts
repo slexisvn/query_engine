@@ -12,6 +12,7 @@ interface DistributedFlag {
 interface AggDescriptor {
   func?: string;
   name?: string;
+  distinct?: boolean;
   isCountStar?: boolean;
   _originalIndex?: number;
   _emitColumns?: string[];
@@ -43,7 +44,7 @@ class PartialAggregateRewriter extends PlanRewriter {
   override rewriteAggregate(node: LogicalAggregateNode): LogicalPlanNode {
     const newNode = this.rewriteChildren(node);
 
-    if (!this._canDecompose(newNode.aggregates as AggDescriptor[])) return newNode;
+    if (!this._canDecompose(newNode.aggregates as AggDescriptor[], newNode.groupBy)) return newNode;
 
     const partialAggs = this._buildPartialAggregates(newNode.aggregates as AggDescriptor[]);
     const finalAggs = this._buildFinalAggregates(newNode.aggregates as AggDescriptor[]);
@@ -74,9 +75,10 @@ class PartialAggregateRewriter extends PlanRewriter {
     return finalNode;
   }
 
-  _canDecompose(aggregates: AggDescriptor[]): boolean {
-    if (!aggregates || aggregates.length === 0) return false;
+  _canDecompose(aggregates: AggDescriptor[], groupBy: readonly BoundExpr[] | null): boolean {
+    if (!aggregates || aggregates.length === 0) return (groupBy?.length ?? 0) > 0;
     return aggregates.every(agg => {
+      if (agg.distinct) return false;
       const funcName = this._normalizeFuncName(agg);
       return DECOMPOSABLE_FUNCTIONS.has(funcName);
     });

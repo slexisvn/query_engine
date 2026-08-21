@@ -274,7 +274,7 @@ describe('subquery extraction', () => {
     expect(find(plan, PlanNodeType.DEPENDENT_JOIN).correlatedColumns).toEqual([]);
   });
 
-  it('scalar subquery replaces expression with _scalar placeholder and sets SCALAR type', () => {
+  it('scalar subquery replaces expression with the placeholder the dependent join produces', () => {
     const plan = planSQL('SELECT * FROM users WHERE age > (SELECT AVG(age) FROM users)');
     const dj = find(plan, PlanNodeType.DEPENDENT_JOIN);
     expect(dj.subqueryType).toBe('SCALAR');
@@ -282,8 +282,24 @@ describe('subquery extraction', () => {
     const filter = find(plan, PlanNodeType.FILTER);
     expect(filter.condition.op).toBe('>');
     expect(filter.condition.left.columnName).toBe('AGE');
-    expect(filter.condition.right.columnName).toBe('_scalar');
     expect(filter.condition.right.kind).toBe(BoundExprKind.COLUMN_REF);
+    expect(filter.condition.right.columnName).toBe(dj.markColumn);
+  });
+
+  it('gives each scalar subquery in one statement its own placeholder column', () => {
+    const plan = planSQL('SELECT (SELECT MIN(age) FROM users) AS lo, (SELECT MAX(age) FROM users) AS hi FROM users');
+
+    const placeholders = [];
+    const walk = (node) => {
+      if (!node) return;
+      if (node.type === PlanNodeType.DEPENDENT_JOIN && node.subqueryType === 'SCALAR') placeholders.push(node.markColumn);
+      for (const child of node.children || []) walk(child);
+    };
+    walk(plan);
+
+    expect(placeholders.length).toBe(2);
+    expect(placeholders[0]).not.toBe(placeholders[1]);
+    expect(new Set(placeholders).size).toBe(placeholders.length);
   });
 
   it('multiple subqueries in one WHERE produce multiple DependentJoin nodes', () => {

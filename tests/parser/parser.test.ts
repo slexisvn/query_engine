@@ -1,5 +1,6 @@
 import { parse } from '../../src/parser/parser.js';
 import { NodeKind } from '../../src/parser/ast.js';
+import { DataType } from '../../src/storage/data-type.js';
 
 describe('Parser', () => {
   describe('simple SELECT', () => {
@@ -353,7 +354,7 @@ describe('Parser', () => {
 
     it('parses decimal literal', () => {
       const ast = parse('SELECT 3.14');
-      expect(ast.selectItems[0].expr).toEqual({ kind: NodeKind.LITERAL, value: 3.14, dataType: null });
+      expect(ast.selectItems[0].expr).toEqual({ kind: NodeKind.LITERAL, value: 3.14, dataType: DataType.FLOAT64 });
     });
 
     it('parses string literal', () => {

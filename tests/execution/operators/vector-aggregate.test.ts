@@ -22,7 +22,7 @@ const DICT_SCHEMA = [
 ];
 
 function specOf({ schema, stages = [], groupBy, aggregates }) {
-  return { baseSchema: schema, stages, groupBy, aggregates };
+  return { source: { baseSchema: schema, stages }, groupBy, aggregates };
 }
 
 function chunkFrom(schema, rows) {
@@ -167,7 +167,7 @@ describe('VectorGroupAggregator equivalence with HashAggregateOperator', () => {
     const vector = createVectorAggregator(spec);
     expect(vector.consume(chunk)).toBe(true);
     const partials = vector.exportPartials(1)[0];
-    expect(partials).toEqual([{ key: 1, groupValues: [1], states: [2] }]);
+    expect(partials).toEqual([{ groupValues: [1], states: [2] }]);
   });
 
   it('refuses a chunk atomically when the dense range would exceed the limit', () => {
@@ -208,6 +208,6 @@ describe('VectorGroupAggregator equivalence with HashAggregateOperator', () => {
     vector.clear();
     expect(vector.groupCount).toBe(0);
     expect(vector.consume(chunkFrom(INT_SCHEMA, [[1, 5]]))).toBe(true);
-    expect(vector.exportPartials(1)[0]).toEqual([{ key: 1, groupValues: [1], states: [5] }]);
+    expect(vector.exportPartials(1)[0]).toEqual([{ groupValues: [1], states: [5] }]);
   });
 });

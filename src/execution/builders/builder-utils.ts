@@ -1,21 +1,24 @@
 import type { DataChunk } from '../../storage/chunk.js';
 import type { PipelineGraph } from '../pipeline.js';
-import type { ColumnMapping, CompiledPipeline, ExecSchema, Sink } from '../execution-types.js';
+import type { ColumnMapping, CompiledPipeline, Sink } from '../execution-types.js';
 import { SortOperator, type SortKey } from '../operators/sort.js';
 import type { ChunkSpillStore } from '../../storage/spill-manager/spill-manager.js';
 
-export function combinedMappingOf(...schemas: ExecSchema[]): ColumnMapping {
+type MappedInput = Pick<CompiledPipeline, 'schema' | 'columnMapping'>;
+
+export function combinedMappingOf(...inputs: MappedInput[]): ColumnMapping {
   const mapping = new Map<string, number>();
-  let idx = 0;
-  for (const schema of schemas) {
-    for (const col of schema) {
-      const key = `${col.tableAlias}.${col.name}`.toUpperCase();
-      mapping.set(key, idx);
-      if (!mapping.has(col.name.toUpperCase())) {
-        mapping.set(col.name.toUpperCase(), idx);
-      }
-      idx++;
+  let base = 0;
+  for (const input of inputs) {
+    input.schema.forEach((col, i) => {
+      mapping.set(`${col.tableAlias}.${col.name}`.toUpperCase(), base + i);
+      const bare = col.name.toUpperCase();
+      if (!mapping.has(bare)) mapping.set(bare, base + i);
+    });
+    for (const [key, index] of input.columnMapping) {
+      if (!mapping.has(key)) mapping.set(key, base + index);
     }
+    base += input.schema.length;
   }
   return mapping;
 }

@@ -10,7 +10,7 @@ import type {
   LogicalFinalAggregateNode,
 } from '../../planner/logical-plan.js';
 import { compileExpression } from '../expression-eval.js';
-import { exprKey, aggregateKey } from '../expr-key.js';
+import { exprKey, aggregateKey } from '../../binder/expr-key.js';
 import { HashAggregateOperator, getAccumulatorFactory } from '../operators/hash-aggregate.js';
 import { StreamAggregateOperator } from '../operators/stream-aggregate.js';
 import { buildAggregateDefs, extractAggregateFragment, buildFragmentSpec } from '../fragment-spec.js';

@@ -8,7 +8,7 @@ import {
   LogicalJoin,
 } from '../../../src/planner/logical-plan.js';
 import { BoundExprKind } from '../../../src/binder/expression-binder.js';
-import { splitConjuncts } from '../../../src/optimizer/passes/predicate-pushdown.js';
+import { splitConjuncts } from '../../../src/binder/conjuncts.js';
 
 const pass = new PredicateDedup();
 

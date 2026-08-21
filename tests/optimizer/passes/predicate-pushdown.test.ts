@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { PredicatePushdown, splitConjuncts } from '../../../src/optimizer/passes/predicate-pushdown.js';
+import { PredicatePushdown } from '../../../src/optimizer/passes/predicate-pushdown.js';
+import { splitConjuncts } from '../../../src/binder/conjuncts.js';
 import {
   PlanNodeType,
   JoinType,

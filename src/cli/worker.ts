@@ -1,5 +1,6 @@
 import { Catalog, Config, FragmentExecutor, HttpTransport, QueryEngine } from '../index.js';
 import { loadDataFiles } from './cli-common.js';
+import { fragmentOutputChannel } from '../distributed/planner/fragment.js';
 import type {
   ControlMessage,
   ExchangeType,
@@ -130,7 +131,7 @@ async function main(): Promise<void> {
           exchangeType: op.exchangeType || 'gather' as ExchangeType,
           partitionCount: op.partitionCount,
           keyColumns: op.keyColumns,
-          channelId: `frag-${fragment.fragmentId}-output`,
+          channelId: fragmentOutputChannel(fragment.fragmentId),
         }
         : null;
 

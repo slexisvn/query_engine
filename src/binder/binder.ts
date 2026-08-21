@@ -1,12 +1,18 @@
 import { NodeKind } from '../parser/ast.js';
 import type * as AST from '../parser/ast.js';
-import { DataType, dateToEpochDays, timestampToEpochMs, normalizeTypeName, isTemporal } from '../storage/data-type.js';
+import { DataType, dateToEpochDays, timestampToEpochMs, normalizeTypeName, isNumeric } from '../storage/data-type.js';
 import { BinderScope, type ColumnInfo } from './scope.js';
 import * as BE from './expression-binder.js';
+import { exprKey } from './expr-key.js';
+import { inferArithmeticType, inferAggregateType } from './type-inference.js';
 
 export interface TableMeta { name: string; columns: ColumnInfo[]; }
 
 export interface CatalogLike { getTable(name: string): TableMeta | undefined; }
+
+export interface FunctionSignature { minArgs: number; maxArgs: number; }
+
+export interface FunctionRegistryLike { lookup(name: string): FunctionSignature | null; }
 
 export interface OutputColumn { name: string; expr: BE.BoundExpr; dataType: DataType | null; }
 
@@ -78,6 +84,8 @@ function selectOrdinal(expr: AST.Expr): number | null {
   return value;
 }
 
+const NUMERIC_ONLY_AGGREGATES: ReadonlySet<string> = new Set(['SUM', 'AVG']);
+
 function valueDataType(value: BE.LiteralValue): DataType | null {
   switch (typeof value) {
     case 'boolean': return DataType.BOOLEAN;
@@ -90,12 +98,12 @@ function valueDataType(value: BE.LiteralValue): DataType | null {
 
 export class Binder {
   catalog: CatalogLike;
-  functionRegistry: object;
+  functionRegistry: FunctionRegistryLike;
   cteScopes: Map<string, CteInfo>;
   aggregatesFound: BE.BoundExpr[];
   params: readonly BE.LiteralValue[];
 
-  constructor(catalog: CatalogLike, functionRegistry: object, params: readonly BE.LiteralValue[] = []) {
+  constructor(catalog: CatalogLike, functionRegistry: FunctionRegistryLike, params: readonly BE.LiteralValue[] = []) {
     this.catalog = catalog;
     this.functionRegistry = functionRegistry;
     this.cteScopes = new Map();
@@ -161,8 +169,6 @@ export class Binder {
       where = this.bindExpression(node.where, fromScope);
     }
 
-    const aggregates = [...this.aggregatesFound];
-
     const selectAliasMap = new Map<string, BE.BoundExpr>();
     for (const item of boundSelectItems) {
       const alias = item.alias || item.inferredName;
@@ -173,25 +179,28 @@ export class Binder {
 
     let groupBy: BE.BoundExpr[] | null = null;
     if (node.groupBy) {
-      groupBy = node.groupBy.map(expr => this.bindKeyWithAlias(expr, fromScope, selectAliasMap));
+      groupBy = node.groupBy.map(expr =>
+        this.bindPositionalKey('GROUP BY', expr, fromScope, selectAliasMap, boundSelectItems));
     }
 
     let having: BE.BoundExpr | null = null;
     if (node.having) {
       having = this.bindExpression(node.having, fromScope);
-      aggregates.push(...this.aggregatesFound.slice(aggregates.length));
     }
-
-    this.aggregatesFound = savedAggregates;
 
     let orderBy: BoundOrderKey[] | null = null;
     if (node.orderBy) {
       orderBy = node.orderBy.map(ok => ({
-        expr: this.bindOrderKey(ok.expr, fromScope, selectAliasMap, boundSelectItems),
+        expr: this.bindPositionalKey('ORDER BY', ok.expr, fromScope, selectAliasMap, boundSelectItems),
         direction: ok.direction,
         nullOrder: ok.nullOrder,
       }));
     }
+
+    const aggregates = [...this.aggregatesFound];
+    this.aggregatesFound = savedAggregates;
+
+    this.checkGroupingCoverage(groupBy, aggregates, boundSelectItems, orderBy);
 
     let limit: BE.BoundExpr | null = null;
     if (node.limit) {
@@ -225,11 +234,28 @@ export class Binder {
     };
   }
 
-  bindOrderKey(expr: AST.Expr, scope: BinderScope, selectAliasMap: Map<string, BE.BoundExpr>, selectItems: BoundSelectItem[]): BE.BoundExpr {
+  checkGroupingCoverage(groupBy: BE.BoundExpr[] | null, aggregates: BE.BoundExpr[], selectItems: BoundSelectItem[], orderBy: BoundOrderKey[] | null): void {
+    if (!groupBy && aggregates.length === 0) return;
+
+    const groupKeys = new Set((groupBy ?? []).map(exprKey));
+    const checked = [...selectItems.map(item => item.expr), ...(orderBy ?? []).map(key => key.expr)];
+
+    for (const expr of checked) {
+      BE.walkExpr(expr, node => {
+        if (groupKeys.has(exprKey(node))) return false;
+        if (node.kind === BE.BoundExprKind.AGGREGATE) return false;
+        if (node.kind !== BE.BoundExprKind.COLUMN_REF || node.isCorrelated) return;
+        const name = node.tableAlias ? `${node.tableAlias}.${node.columnName}` : node.columnName;
+        throw new Error(`Column ${name} must appear in the GROUP BY clause or be used in an aggregate function`);
+      });
+    }
+  }
+
+  bindPositionalKey(clause: string, expr: AST.Expr, scope: BinderScope, selectAliasMap: Map<string, BE.BoundExpr>, selectItems: BoundSelectItem[]): BE.BoundExpr {
     const ordinal = selectOrdinal(expr);
     if (ordinal !== null) {
       if (ordinal < 1 || ordinal > selectItems.length) {
-        throw new Error(`ORDER BY position ${ordinal} is not in select list`);
+        throw new Error(`${clause} position ${ordinal} is not in select list`);
       }
       return selectItems[ordinal - 1].expr;
     }
@@ -246,7 +272,7 @@ export class Binder {
 
   bindWithClause(withClause: AST.WithClauseNode, scope: BinderScope): void {
     for (const cte of withClause.ctes) {
-      const cteScope = scope.child();
+      const cteScope = scope.subqueryChild();
       const bound = this.bindQuery(cte.query, cteScope);
       const columns = bound.outputColumns.map((col, i) => ({
         name: cte.columnAliases ? cte.columnAliases[i] : col.name,
@@ -366,7 +392,7 @@ export class Binder {
   }
 
   bindSubqueryRef(node: AST.SubqueryRefNode, scope: BinderScope): BoundSubqueryRef {
-    const subScope = scope.child();
+    const subScope = scope.subqueryChild();
     const bound = this.bindQuery(node.query, subScope);
 
     const alias = node.alias || '_subquery';
@@ -556,6 +582,9 @@ export class Binder {
     if (node.dataType === 'VARCHAR') {
       return BE.BoundLiteral(node.value, DataType.VARCHAR);
     }
+    if (node.dataType === 'FLOAT64') {
+      return BE.BoundLiteral(node.value, DataType.FLOAT64);
+    }
     if (typeof node.value === 'number') {
       if (Number.isInteger(node.value)) {
         return BE.BoundLiteral(node.value, DataType.INT32);
@@ -597,7 +626,7 @@ export class Binder {
 
   bindQuantified(op: string, node: AST.QuantifiedSubqueryNode, expr: BE.BoundExpr, scope: BinderScope): BE.BoundQuantifiedNode {
     const quantifier: BE.Quantifier = node.quantifier.toUpperCase() === 'ALL' ? 'ALL' : 'ANY';
-    const subPlan = this.bindQuery(node.query, scope.child());
+    const subPlan = this.bindQuery(node.query, scope.subqueryChild());
     return BE.BoundQuantified(op, quantifier, expr, subPlan);
   }
 
@@ -611,28 +640,52 @@ export class Binder {
 
   bindAggregateCall(node: AST.AggregateCallNode, scope: BinderScope): BE.BoundAggregateNode {
     const args = node.args.map(a => this.bindExpression(a, scope));
+    this.checkAggregateArgument(node.name, args);
     const resultType = this.inferAggregateType(node.name, args);
     const bound = BE.BoundAggregate(node.name, args, node.distinct, resultType);
     this.aggregatesFound.push(bound);
     return bound;
   }
 
+  checkAggregateArgument(name: string, args: BE.BoundExpr[]): void {
+    if (!NUMERIC_ONLY_AGGREGATES.has(name.toUpperCase())) return;
+    const argType = args[0] ? BE.getExprType(args[0]) : null;
+    if (argType === null || isNumeric(argType)) return;
+    throw new Error(`${name.toUpperCase()} requires a numeric argument, got ${argType}`);
+  }
+
   bindFunctionCall(node: AST.FunctionCallNode, scope: BinderScope): BE.BoundFunctionNode {
     const args = node.args.map(a => this.bindExpression(a, scope));
-    const resultType = this.inferFunctionType(node.name, args);
-    return BE.BoundFunction(node.name.toUpperCase(), args, resultType);
+    const name = node.name.toUpperCase();
+
+    const definition = this.functionRegistry.lookup(name);
+    if (!definition) {
+      throw new Error(`Unknown function: ${name}`);
+    }
+    if (args.length < definition.minArgs || args.length > definition.maxArgs) {
+      const expected = definition.minArgs === definition.maxArgs
+        ? `${definition.minArgs}`
+        : `${definition.minArgs} to ${definition.maxArgs}`;
+      throw new Error(`Function ${name} expects ${expected} argument(s), got ${args.length}`);
+    }
+
+    const resultType = this.inferFunctionType(name, args);
+    return BE.BoundFunction(name, args, resultType);
   }
 
   bindCaseExpr(node: AST.CaseExprNode, scope: BinderScope): BE.BoundCaseNode {
     const operand = node.operand ? this.bindExpression(node.operand, scope) : null;
-    const whenClauses = node.whenClauses.map(wc => ({
-      condition: this.bindExpression(wc.condition, scope),
-      result: this.bindExpression(wc.result, scope),
-    }));
+    const whenClauses = node.whenClauses.map(wc => {
+      const bound = this.bindExpression(wc.condition, scope);
+      return {
+        condition: operand ? BE.BoundBinary('=', operand, bound, DataType.BOOLEAN) : bound,
+        result: this.bindExpression(wc.result, scope),
+      };
+    });
     const elseExpr = node.elseExpr ? this.bindExpression(node.elseExpr, scope) : null;
     const branches = [...whenClauses.map(wc => wc.result), ...(elseExpr ? [elseExpr] : [])];
     const resultType = branches.reduce<DataType | null>((found, branch) => found ?? BE.getExprType(branch), null);
-    return BE.BoundCase(operand, whenClauses, elseExpr, resultType || DataType.VARCHAR);
+    return BE.BoundCase(whenClauses, elseExpr, resultType || DataType.VARCHAR);
   }
 
   bindCastExpr(node: AST.CastExprNode, scope: BinderScope): BE.BoundCastNode {
@@ -645,7 +698,7 @@ export class Binder {
     const expr = this.bindExpression(node.expr, scope);
     const inList = node.list;
     if (!Array.isArray(inList) && inList.kind === NodeKind.SUBQUERY_EXPR) {
-      const subScope = scope.child();
+      const subScope = scope.subqueryChild();
       const subPlan = this.bindQuery(inList.query, subScope);
       return BE.BoundInList(expr, BE.BoundSubquery(subPlan, 'IN'), node.negated);
     }
@@ -654,13 +707,13 @@ export class Binder {
   }
 
   bindExistsExpr(node: AST.ExistsExprNode, scope: BinderScope): BE.BoundExistsNode {
-    const subScope = scope.child();
+    const subScope = scope.subqueryChild();
     const subPlan = this.bindQuery(node.query, subScope);
     return BE.BoundExists(subPlan, node.negated);
   }
 
   bindSubqueryExpr(node: AST.SubqueryExprNode, scope: BinderScope): BE.BoundSubqueryNode {
-    const subScope = scope.child();
+    const subScope = scope.subqueryChild();
     const subPlan = this.bindQuery(node.query, subScope);
     return BE.BoundSubquery(subPlan, 'SCALAR');
   }
@@ -673,32 +726,11 @@ export class Binder {
   }
 
   inferArithmeticType(left: DataType | null, right: DataType | null, op: string): DataType {
-    const leftTemporal = left !== null && isTemporal(left);
-    const rightTemporal = right !== null && isTemporal(right);
-    if (leftTemporal && rightTemporal) return op === '-' ? DataType.INT32 : left!;
-    if (leftTemporal) return left!;
-    if (rightTemporal) return right!;
-    if (left === DataType.FLOAT64 || right === DataType.FLOAT64) return DataType.FLOAT64;
-    if (left === DataType.DECIMAL || right === DataType.DECIMAL) return DataType.DECIMAL;
-    if (left === DataType.INT64 || right === DataType.INT64) return DataType.INT64;
-    return DataType.INT32;
+    return inferArithmeticType(left, right, op);
   }
 
   inferAggregateType(name: string, args: BE.BoundExpr[]): DataType {
-    switch (name.toUpperCase()) {
-      case 'COUNT':
-      case 'COUNT_STAR':
-        return DataType.INT64;
-      case 'SUM':
-        return args[0] ? (BE.getExprType(args[0]) || DataType.FLOAT64) : DataType.FLOAT64;
-      case 'AVG':
-        return DataType.FLOAT64;
-      case 'MIN':
-      case 'MAX':
-        return args[0] ? (BE.getExprType(args[0]) || DataType.FLOAT64) : DataType.FLOAT64;
-      default:
-        return DataType.FLOAT64;
-    }
+    return inferAggregateType(name, args[0] ? BE.getExprType(args[0]) : null);
   }
 
   inferFunctionType(name: string, args: BE.BoundExpr[]): DataType | null {
@@ -711,7 +743,9 @@ export class Binder {
         return DataType.INT32;
       case 'LENGTH':
         return DataType.INT32;
-      case 'ABS': case 'ROUND': case 'SQRT':
+      case 'SQRT':
+        return DataType.FLOAT64;
+      case 'ABS': case 'ROUND':
         return args[0] ? BE.getExprType(args[0]) : DataType.FLOAT64;
       case 'COALESCE': case 'NULLIF': {
         for (const arg of args) {

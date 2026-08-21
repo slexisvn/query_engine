@@ -5,7 +5,7 @@ import { ResultSink } from '../../execution/result-sink.js';
 import { CancelToken } from '../../execution/pipeline.js';
 import { ExchangeSender } from './exchange-operator.js';
 import { ExchangeReceiver } from './exchange-operator.js';
-import { FragmentState } from '../planner/fragment.js';
+import { FragmentState, fragmentOutputChannel } from '../planner/fragment.js';
 import type { Transport } from '../transport/transport.js';
 import type { CompiledPipeline } from '../../execution/execution-types.js';
 import type { DataChunk } from '../../storage/chunk.js';
@@ -146,7 +146,7 @@ export class FragmentExecutor {
   async _setupReceivers(fragment: FragmentLike): Promise<Map<FragmentId, ExchangeReceiver>> {
     const receivers = new Map<FragmentId, ExchangeReceiver>();
     for (const input of fragment.exchangeInputs) {
-      const channelId = `frag-${input.sourceFragmentId}-output`;
+      const channelId = fragmentOutputChannel(input.sourceFragmentId);
       const receiver = new ExchangeReceiver(this._transport, ['_source_'], {
         channelId,
       });
@@ -173,8 +173,7 @@ export class FragmentExecutor {
 
   _cleanupReceivers(fragment: FragmentLike): void {
     for (const input of fragment.exchangeInputs) {
-      const channelId = `frag-${input.sourceFragmentId}-to-${fragment.fragmentId}`;
-      this._transport.removeChunkListener(channelId);
+      this._transport.removeChunkListener(fragmentOutputChannel(input.sourceFragmentId));
     }
   }
 }

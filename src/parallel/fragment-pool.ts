@@ -5,9 +5,9 @@ import type { DataChunk } from '../storage/chunk.js';
 import { SabArena } from '../storage/sab-arena.js';
 import { MorselScheduler } from './morsel-scheduler.js';
 import { shareChunk, encodeChunkSet, transportBytes, ChunkSetReader } from './chunk-transport.js';
-import { instantiateAggregate } from '../execution/fragment-spec.js';
+import { instantiateAggregate, stageChainSchema } from '../execution/fragment-spec.js';
 import type { FragmentSpec, JoinSpec } from '../execution/fragment-spec.js';
-import { probeJoinRows, emitsOnUnmatchedProbe, buildJoinOutputChunk } from '../execution/operators/join-core.js';
+import { probeJoinInto, emitsOnUnmatchedProbe, JoinOutputBuffer } from '../execution/operators/join-core.js';
 import type { JoinType } from '../planner/logical-plan.js';
 import type { ColumnValue } from '../storage/data-type.js';
 import type {
@@ -346,37 +346,34 @@ export class FragmentPool {
     for (const reply of replies) {
       for (const row of reply.probeNullRows!) nullItems.push({ row, key: null });
     }
+    const buildColCount = stageChainSchema(spec.build).length;
+    const probeColCount = stageChainSchema(spec.probe).length;
+    const outputLayout = {
+      joinType: spec.joinType as JoinType,
+      buildColCount,
+      probeColCount,
+      buildSchema: outputTypes.build,
+      probeSchema: outputTypes.probe,
+    };
+
     if (nullItems.length > 0) {
-      const nullRows = probeJoinRows(nullItems, () => null, {
+      const nullOutput = new JoinOutputBuffer(outputLayout);
+      probeJoinInto(nullItems, () => null, {
         joinType: spec.joinType as JoinType,
-        buildColCount: spec.buildColCount,
-        probeColCount: spec.probeColCount,
+        buildColCount,
+        probeColCount,
         conditionEvaluator: null,
         hasNullKey,
-      } as Parameters<typeof probeJoinRows>[2]);
-      for (let offset = 0; offset < nullRows.length; offset += DEFAULT_CHUNK_SIZE) {
-        yield buildJoinOutputChunk(nullRows.slice(offset, offset + DEFAULT_CHUNK_SIZE), {
-          joinType: spec.joinType as JoinType,
-          buildColCount: spec.buildColCount,
-          buildSchema: outputTypes.build,
-          probeSchema: outputTypes.probe,
-        });
-      }
+      } as Parameters<typeof probeJoinInto>[2], nullOutput);
+      yield* nullOutput.chunks(DEFAULT_CHUNK_SIZE);
     }
 
     if (spec.buildPreserved) {
-      const buildNullRows: ColumnValue[][] = [];
+      const buildNullOutput = new JoinOutputBuffer(outputLayout);
       for (const reply of replies) {
-        for (const row of reply.buildNullRows || []) buildNullRows.push(row.concat(new Array(spec.probeColCount).fill(null)));
+        for (const row of reply.buildNullRows || []) buildNullOutput.push(row, null);
       }
-      for (let offset = 0; offset < buildNullRows.length; offset += DEFAULT_CHUNK_SIZE) {
-        yield buildJoinOutputChunk(buildNullRows.slice(offset, offset + DEFAULT_CHUNK_SIZE), {
-          joinType: spec.joinType as JoinType,
-          buildColCount: spec.buildColCount,
-          buildSchema: outputTypes.build,
-          probeSchema: outputTypes.probe,
-        });
-      }
+      yield* buildNullOutput.chunks(DEFAULT_CHUNK_SIZE);
     }
 
     const tasks: Promise<FragmentSuccessMessage>[] = [];

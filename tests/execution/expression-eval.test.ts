@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { compileExpression, buildColumnMapping } from '../../src/execution/expression-eval.js';
 import { BoundExprKind } from '../../src/binder/expression-binder.js';
+import { aggregateKey } from '../../src/binder/expr-key.js';
 import { Column } from '../../src/storage/column.js';
 import { DataChunk } from '../../src/storage/chunk.js';
 
@@ -21,6 +22,10 @@ function colRef(tableAlias, columnName, columnIndex, dataType = 'INT32') {
 
 function lit(value, dataType = 'INT32') {
   return { kind: BoundExprKind.LITERAL, value, dataType };
+}
+
+function aggregate(name, args, distinct = false) {
+  return { kind: BoundExprKind.AGGREGATE, name, args, distinct, resultType: 'FLOAT64' };
 }
 
 function bin(op, left, right) {
@@ -53,9 +58,52 @@ describe('compileExpression', () => {
       expect(results).toEqual(['alice', 'bob', 'charlie', 'dave', 'eve']);
     });
 
-    it('falls back to columnIndex when no mapping match', () => {
-      const fn = compileExpression(colRef('X', 'UNKNOWN', 2, 'FLOAT64'), new Map());
+    it('throws naming the column when the mapping has no entry for it', () => {
+      expect(() => compileExpression(colRef('X', 'UNKNOWN', 2, 'FLOAT64'), mapping))
+        .toThrow(/X\.UNKNOWN/);
+    });
+
+    it('does not silently read the binder-assigned index when the mapping misses', () => {
+      const stale = colRef('X', 'UNKNOWN', 2, 'FLOAT64');
+      let compiled = null;
+      try { compiled = compileExpression(stale, mapping); } catch { compiled = null; }
+      expect(compiled).toBeNull();
+    });
+
+    it('uses the binder index when there is no mapping to consult', () => {
+      const fn = compileExpression(colRef('X', 'UNKNOWN', 2, 'FLOAT64'), null);
       expect(fn(chunk, 0)).toBe(10.5);
+    });
+  });
+
+  describe('AGGREGATE and WINDOW resolution', () => {
+    it('reads the materialized column when the aggregate is in the mapping', () => {
+      const agg = aggregate('SUM', [colRef('T', 'VAL', 2, 'FLOAT64')]);
+      const aggMapping = new Map([[aggregateKey('SUM', false, agg.args), 2]]);
+      const fn = compileExpression(agg, aggMapping);
+      expect(fn(chunk, 0)).toBe(10.5);
+    });
+
+    it('throws naming the aggregate instead of evaluating its argument', () => {
+      const agg = aggregate('SUM', [colRef('T', 'ID', 0)]);
+      expect(() => compileExpression(agg, mapping)).toThrow(/SUM/);
+    });
+
+    it('throws for an unresolved aggregate that has no arguments', () => {
+      expect(() => compileExpression(aggregate('COUNT', []), mapping)).toThrow(/COUNT/);
+    });
+
+    it('throws naming the window function instead of yielding null', () => {
+      const win = {
+        kind: BoundExprKind.WINDOW,
+        name: 'ROW_NUMBER',
+        args: [],
+        partitionBy: [],
+        orderBy: [],
+        frame: null,
+        resultType: 'INT32',
+      };
+      expect(() => compileExpression(win, mapping)).toThrow(/ROW_NUMBER/);
     });
   });
 

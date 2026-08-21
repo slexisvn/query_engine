@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
-  extractStageChain,
+  extractScanChain,
   extractAggregateFragment,
   buildFragmentSpec,
   buildJoinSpec,
-  instantiateStages,
+  instantiateStageChain,
+  stageChainResolvable,
   instantiateFragment,
-  stagedSchemaOf,
+  instantiateJoinSpec,
+  stageChainSchema,
   schemasEqual,
   schemaMappingOf,
   projectionSchemaOf,
@@ -35,12 +37,12 @@ const STORAGE_SCHEMA = [
   { name: 'D', dataType: DataType.INT32 },
 ];
 
-describe('extractStageChain', () => {
+describe('extractScanChain', () => {
   it('collects filter and project stages bottom-up down to a scan', () => {
     const condition = gt(colRef('A', DataType.INT32), lit(1));
     const expressions = [colRef('B', DataType.FLOAT64)];
     const plan = projectNode(expressions, filterNode(condition, scanNode('T', ['cols'])));
-    const fragment = extractStageChain(plan);
+    const fragment = extractScanChain(plan);
     expect(fragment.table).toBe('T');
     expect(fragment.alias).toBe(ALIAS);
     expect(fragment.scanColumns).toEqual(['cols']);
@@ -52,7 +54,7 @@ describe('extractStageChain', () => {
 
   it('returns null when the chain hits a non scan/filter/project node', () => {
     const join = { type: PlanNodeType.JOIN, children: [scanNode(), scanNode()] };
-    expect(extractStageChain(filterNode(gt(colRef('A', DataType.INT32), lit(0)), join))).toBeNull();
+    expect(extractScanChain(filterNode(gt(colRef('A', DataType.INT32), lit(0)), join))).toBeNull();
   });
 
   it('extractAggregateFragment walks from the aggregate child', () => {
@@ -62,14 +64,40 @@ describe('extractStageChain', () => {
 });
 
 describe('schema helpers', () => {
-  it('stagedSchemaOf applies project stages and keeps filters transparent', () => {
+  it('stageChainSchema applies project stages and keeps filters transparent', () => {
     const base = [{ name: 'A', dataType: DataType.INT32, tableAlias: ALIAS }];
-    const projected = stagedSchemaOf(base, [
+    const projected = stageChainSchema({ baseSchema: base, stages: [
       { kind: StageKind.FILTER, condition: gt(colRef('A', DataType.INT32), lit(0)) },
       { kind: StageKind.PROJECT, expressions: [{ ...colRef('A', DataType.INT32), outputName: 'X' }] },
-    ]);
+    ] });
     expect(projected).toEqual([{ name: 'X', dataType: DataType.INT32, tableAlias: '' }]);
-    expect(stagedSchemaOf(base, [])).toBe(base);
+    expect(stageChainSchema({ baseSchema: base, stages: [] })).toBe(base);
+  });
+
+  it('reports the same schema that instantiating the chain actually produces', () => {
+    const base = [
+      { name: 'A', dataType: DataType.INT32, tableAlias: ALIAS },
+      { name: 'B', dataType: DataType.FLOAT64, tableAlias: ALIAS },
+    ];
+    const filter = { kind: StageKind.FILTER, condition: gt(colRef('A', DataType.INT32), lit(0)) };
+    const project = { kind: StageKind.PROJECT, expressions: [{ ...colRef('B', DataType.FLOAT64), outputName: 'X' }] };
+
+    for (const stages of [[], [filter], [project], [filter, project]]) {
+      const chain = { baseSchema: base, stages };
+      expect(stageChainResolvable(chain)).toBe(true);
+      expect(stageChainSchema(chain)).toEqual(instantiateStageChain(chain).schema);
+    }
+  });
+
+  it('rejects a chain whose later stage reads a column an earlier project dropped', () => {
+    const base = [
+      { name: 'A', dataType: DataType.INT32, tableAlias: ALIAS },
+      { name: 'B', dataType: DataType.FLOAT64, tableAlias: ALIAS },
+    ];
+    const project = { kind: StageKind.PROJECT, expressions: [{ ...colRef('B', DataType.FLOAT64), outputName: 'X' }] };
+    const filter = { kind: StageKind.FILTER, condition: gt(colRef('A', DataType.INT32), lit(0)) };
+
+    expect(stageChainResolvable({ baseSchema: base, stages: [project, filter] })).toBe(false);
   });
 
   it('schemasEqual compares name, type and alias case-insensitively', () => {
@@ -110,7 +138,7 @@ describe('buildFragmentSpec', () => {
       STORAGE_SCHEMA,
     );
     expect(built.columnIndexes).toEqual([1, 3]);
-    expect(built.spec.baseSchema.map(c => c.name)).toEqual(['B', 'D']);
+    expect(built.spec.source.baseSchema.map(c => c.name)).toEqual(['B', 'D']);
     expect(built.estimatedRowBytes).toBeGreaterThan(0);
   });
 
@@ -152,7 +180,7 @@ describe('buildFragmentSpec', () => {
   });
 });
 
-describe('instantiateStages / instantiateFragment', () => {
+describe('instantiateStageChain / instantiateFragment', () => {
   function chunkOf(values) {
     const a = new Column(DataType.INT32, values.length);
     values.forEach((v, i) => a.set(i, v));
@@ -162,9 +190,9 @@ describe('instantiateStages / instantiateFragment', () => {
 
   it('builds working filter operators against the staged mapping', async () => {
     const base = [{ name: 'A', dataType: DataType.INT32, tableAlias: ALIAS }];
-    const { operators, schema, mapping } = instantiateStages(base, [
+    const { operators, schema, mapping } = instantiateStageChain({ baseSchema: base, stages: [
       { kind: StageKind.FILTER, condition: gt(colRef('A', DataType.INT32), lit(2)) },
-    ]);
+    ] });
     expect(schema).toBe(base);
     expect(mapping.get('T.A')).toBe(0);
     const filtered = await operators[0].process(chunkOf([1, 5, 2, 9]));
@@ -175,8 +203,10 @@ describe('instantiateStages / instantiateFragment', () => {
 
   it('instantiateFragment runs filter then aggregate end-to-end', async () => {
     const spec = {
-      baseSchema: [{ name: 'A', dataType: DataType.INT32, tableAlias: ALIAS }],
-      stages: [{ kind: StageKind.FILTER, condition: gt(colRef('A', DataType.INT32), lit(0)) }],
+      source: {
+        baseSchema: [{ name: 'A', dataType: DataType.INT32, tableAlias: ALIAS }],
+        stages: [{ kind: StageKind.FILTER, condition: gt(colRef('A', DataType.INT32), lit(0)) }],
+      },
       groupBy: [],
       aggregates: [{ name: 'SUM', distinct: false, args: [colRef('A', DataType.INT32)] }],
     };
@@ -194,9 +224,9 @@ describe('buildJoinSpec validation', () => {
     { name: 'K', dataType: DataType.INT32, tableAlias: 'L' },
     { name: 'V', dataType: DataType.INT32, tableAlias: 'L' },
   ];
-  const side = { schema: sideSchema, baseSchema: sideSchema, stages: [] };
+  const side = { baseSchema: sideSchema, stages: [] };
   const otherSchema = [{ name: 'K', dataType: DataType.INT32, tableAlias: 'R' }];
-  const other = { schema: otherSchema, baseSchema: otherSchema, stages: [] };
+  const other = { baseSchema: otherSchema, stages: [] };
 
   function makeArgs(overrides = {}) {
     return {
@@ -217,8 +247,25 @@ describe('buildJoinSpec validation', () => {
   it('accepts a spec whose refs resolve identically on main and worker', () => {
     const spec = buildJoinSpec(makeArgs());
     expect(spec).not.toBeNull();
-    expect(spec.buildColCount).toBe(2);
-    expect(spec.probeColCount).toBe(1);
+    expect(stageChainSchema(spec.build)).toEqual(sideSchema);
+    expect(stageChainSchema(spec.probe)).toEqual(otherSchema);
+  });
+
+  it('survives the structured clone that ships it to a worker', () => {
+    const shipped = structuredClone(buildJoinSpec(makeArgs()));
+    const here = instantiateJoinSpec(buildJoinSpec(makeArgs()));
+    const there = instantiateJoinSpec(shipped);
+
+    expect(there.buildColCount).toBe(here.buildColCount);
+    expect(there.probeColCount).toBe(here.probeColCount);
+    expect(stageChainSchema(shipped.build)).toEqual(stageChainSchema(buildJoinSpec(makeArgs()).build));
+  });
+
+  it('derives the same column counts at instantiate time that the sides declare', () => {
+    const { buildColCount, probeColCount } = instantiateJoinSpec(buildJoinSpec(makeArgs()));
+
+    expect(buildColCount).toBe(sideSchema.length);
+    expect(probeColCount).toBe(otherSchema.length);
   });
 
   it('rejects when the main mapping resolves a key differently than the worker mapping', () => {
@@ -226,6 +273,16 @@ describe('buildJoinSpec validation', () => {
     skewed.set('L.K', 1);
     skewed.set('K', 1);
     expect(buildJoinSpec(makeArgs({ buildMapping: skewed }))).toBeNull();
+  });
+
+  it('rejects a side whose own stages cannot be resolved even when its keys can', () => {
+    const filtersMissingColumn = {
+      baseSchema: sideSchema,
+      stages: [{ kind: StageKind.FILTER, condition: gt(colRef('NOPE', DataType.INT32, 'L'), lit(0)) }],
+    };
+
+    expect(stageChainResolvable(filtersMissingColumn)).toBe(false);
+    expect(buildJoinSpec(makeArgs({ build: filtersMissingColumn }))).toBeNull();
   });
 
   it('rejects unresolvable residual conditions', () => {

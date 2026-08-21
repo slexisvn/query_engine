@@ -1,6 +1,8 @@
 import type { LogicalPlanNode } from '../planner/logical-plan.js';
 
-export type OptimizationContext = Record<string, never>;
+export interface OptimizationContext {
+  rootOrderRequired?: boolean;
+}
 
 export abstract class OptimizationPass {
   abstract get name(): string;

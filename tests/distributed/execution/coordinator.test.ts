@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { FragmentPlan, Fragment, FragmentState, resetFragmentIdCounter } from '../../../src/distributed/planner/fragment.js';
+import { QueryCoordinator } from '../../../src/distributed/execution/coordinator.js';
 
 describe('FragmentPlan', () => {
   beforeEach(() => {
@@ -156,5 +157,81 @@ describe('Fragment', () => {
     const json = f.toJSON();
     expect(json.fragmentId).toBeDefined();
     expect(json.targetNodes).toEqual(['w1']);
+  });
+});
+
+describe('QueryCoordinator fragment placement', () => {
+  function makeCoordinator({ workers = ['w1', 'w2', 'w3'], dead = [] } = {}) {
+    const clusterManager = {
+      localNode: { nodeId: 'coord' },
+      getWorkerNodes: () => workers.map(nodeId => ({ nodeId })),
+      getNode: (nodeId) => (workers.includes(nodeId)
+        ? { nodeId, canExecuteFragments: () => !dead.includes(nodeId) }
+        : null),
+    };
+    const transport = { onFragmentReceived() {}, onControlMessage() {}, onChunkReceived() {}, removeChunkListener() {}, async sendFragment() {}, async sendControl() {}, async sendChunk() {} };
+    const engine = { catalog: {}, tempManager: { allocate: () => ({}) }, storageBackend: {} };
+    return new QueryCoordinator(engine, clusterManager, { getTableInfo: () => null }, transport);
+  }
+
+  function pinnedFragment(targetNodes) {
+    return new Fragment({ planRoot: { type: 'Scan', table: 'T' }, targetNodes, exchangeInputs: [] });
+  }
+
+  it('sends a pinned fragment to the node that holds its data', () => {
+    const coordinator = makeCoordinator();
+    expect(coordinator._selectTargetNode(pinnedFragment(['w2']))).toBe('w2');
+  });
+
+  it('keeps a pinned fragment on its own node even after that node failed', () => {
+    const coordinator = makeCoordinator({ dead: ['w2'] });
+    const fragment = pinnedFragment(['w2']);
+
+    expect(coordinator._selectTargetNode(fragment, new Set(['w2']))).toBe('w2');
+  });
+
+  it('never picks a node outside the fragment target list', () => {
+    const coordinator = makeCoordinator();
+    const fragment = pinnedFragment(['w2']);
+
+    for (const failed of [new Set(), new Set(['w2']), new Set(['w1', 'w3'])]) {
+      expect(fragment.targetNodes).toContain(coordinator._selectTargetNode(fragment, failed));
+    }
+  });
+
+  it('moves to another replica once one has failed', () => {
+    const coordinator = makeCoordinator();
+    const fragment = pinnedFragment(['w1', 'w2']);
+    const first = coordinator._selectTargetNode(fragment);
+
+    const second = coordinator._selectTargetNode(fragment, new Set([first]));
+    expect(second).not.toBe(first);
+    expect(['w1', 'w2']).toContain(second);
+  });
+
+  it('skips a replica that cannot execute fragments', () => {
+    const coordinator = makeCoordinator({ dead: ['w1'] });
+    expect(coordinator._selectTargetNode(pinnedFragment(['w1', 'w2']))).toBe('w2');
+  });
+
+  it('refuses to run elsewhere when no replica is live', () => {
+    const coordinator = makeCoordinator({ dead: ['w1', 'w2'] });
+
+    expect(() => coordinator._selectTargetNode(pinnedFragment(['w1', 'w2'])))
+      .toThrow(/no live node holding its data/);
+  });
+
+  it('gives up on a failing pinned fragment instead of relocating it', async () => {
+    const coordinator = makeCoordinator();
+    const fragment = pinnedFragment(['w2']);
+    const tried = [];
+    coordinator._executeRemoteFragment = async (_f, nodeId) => {
+      tried.push(nodeId);
+      throw new Error('node unreachable');
+    };
+
+    await expect(coordinator._dispatchFragment(fragment, null)).rejects.toThrow(/failed after/);
+    expect(new Set(tried)).toEqual(new Set(['w2']));
+    expect(fragment.targetNodes).toEqual(['w2']);
   });
 });

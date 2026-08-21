@@ -1,6 +1,6 @@
 import { DataChunk } from '../../storage/chunk.js';
 import { SetOpType } from '../../planner/logical-plan.js';
-import { encodeCompositeKey } from '../composite-key.js';
+import { keyIdentityText } from '../hash-table.js';
 import type { ColumnValue } from '../../storage/data-type.js';
 
 type RowKey = string;
@@ -43,7 +43,7 @@ export class SetOperator {
     for (let c = 0; c < chunk.columns.length; c++) {
       this.keyParts[c] = chunk.columns[c].get(rowIndex);
     }
-    return encodeCompositeKey(this.keyParts);
+    return keyIdentityText(this.keyParts, this.keyParts.length);
   }
 
   consumeRight(chunk: DataChunk): void {

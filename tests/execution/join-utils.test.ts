@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractJoinKeys, splitAnd, findCommonEquiJoinKeys } from '../../src/execution/join-utils.js';
+import { extractJoinKeys, findCommonEquiJoinKeys } from '../../src/execution/join-utils.js';
 import { BoundExprKind } from '../../src/binder/expression-binder.js';
 
 function colRef(tableAlias, columnName) {
@@ -28,37 +28,6 @@ function or(left, right) {
 
 const leftMapping = new Map([['L.ID', 0], ['ID', 0], ['L.NAME', 1], ['NAME', 1]]);
 const rightMapping = new Map([['R.KEY', 0], ['KEY', 0], ['R.VAL', 1], ['VAL', 1]]);
-
-describe('splitAnd', () => {
-  it('returns empty for null', () => {
-    expect(splitAnd(null)).toEqual([]);
-  });
-
-  it('returns single predicate as-is', () => {
-    const pred = eq(colRef('L', 'ID'), lit(1));
-    expect(splitAnd(pred)).toEqual([pred]);
-  });
-
-  it('splits AND into flat list', () => {
-    const p1 = eq(colRef('L', 'ID'), lit(1));
-    const p2 = gt(colRef('L', 'NAME'), lit('a'));
-    const result = splitAnd(and(p1, p2));
-    expect(result).toEqual([p1, p2]);
-  });
-
-  it('recursively flattens nested ANDs', () => {
-    const p1 = eq(colRef('L', 'ID'), lit(1));
-    const p2 = eq(colRef('L', 'ID'), lit(2));
-    const p3 = eq(colRef('L', 'ID'), lit(3));
-    const result = splitAnd(and(and(p1, p2), p3));
-    expect(result).toEqual([p1, p2, p3]);
-  });
-
-  it('does not split OR', () => {
-    const expr = or(eq(colRef('L', 'ID'), lit(1)), eq(colRef('L', 'ID'), lit(2)));
-    expect(splitAnd(expr)).toEqual([expr]);
-  });
-});
 
 describe('extractJoinKeys', () => {
   it('extracts single equi-join key pair', () => {

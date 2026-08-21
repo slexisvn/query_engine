@@ -82,6 +82,8 @@ export class FunctionRegistry {
     this.register('SQRT', scalar('SQRT', 1, 1));
     this.register('LENGTH', scalar('LENGTH', 1, 1));
     this.register('REPLACE', scalar('REPLACE', 3, 3));
+    this.register('IS_TRUE', scalar('IS_TRUE', 1, 1));
+    this.register('IS_FALSE', scalar('IS_FALSE', 1, 1));
   }
 }
 

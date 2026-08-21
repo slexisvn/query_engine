@@ -98,6 +98,27 @@ describe('PartialAggregatePass', () => {
     expect(exchange.exchangeType).toBe('hash_shuffle');
   });
 
+  it('splits a GROUP BY that has no aggregate functions', () => {
+    const scan = LogicalScan('T', []);
+    const agg = LogicalAggregate([colRef('G')], [], scan);
+    agg._distributed = true;
+
+    const result = pass.apply(agg);
+    expect(result.type).toBe(PlanNodeType.FINAL_AGGREGATE);
+    const exchange = result.children[0];
+    expect(exchange.type).toBe(PlanNodeType.EXCHANGE);
+    expect(exchange.exchangeType).toBe('hash_shuffle');
+    expect(exchange.children[0].type).toBe(PlanNodeType.PARTIAL_AGGREGATE);
+  });
+
+  it('leaves an aggregate with neither group keys nor aggregates alone', () => {
+    const scan = LogicalScan('T', []);
+    const agg = LogicalAggregate([], [], scan);
+    agg._distributed = true;
+
+    expect(pass.apply(agg).type).toBe(PlanNodeType.AGGREGATE);
+  });
+
   it('DECOMPOSABLE_FUNCTIONS has correct mappings', () => {
     expect(DECOMPOSABLE_FUNCTIONS.get('SUM')).toEqual({ partial: 'SUM', final: 'SUM' });
     expect(DECOMPOSABLE_FUNCTIONS.get('COUNT')).toEqual({ partial: 'COUNT', final: 'SUM' });

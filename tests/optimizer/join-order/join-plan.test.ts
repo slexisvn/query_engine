@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { bestJoinOf, combinePredicates } from '../../../src/optimizer/join-order/join-plan.js';
-import { DefaultCostModel } from '../../../src/optimizer/join-order/cost-model.js';
+import { DefaultCostModel } from '../../../src/planner/cost-model.js';
 import { BoundExprKind } from '../../../src/binder/expression-binder.js';
 import { makeEqPred, proportionalEstimator } from '../../helpers/join-graphs.js';
 
