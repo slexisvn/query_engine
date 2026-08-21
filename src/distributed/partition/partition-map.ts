@@ -1,4 +1,4 @@
-import { StrategyType, murmur3 } from './partition-strategy.js';
+import { StrategyType } from './partition-strategy.js';
 import type {
   NodeId,
   PartitionId,

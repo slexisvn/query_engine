@@ -1,7 +1,7 @@
 import fs from 'fs';
 import csv from 'csv-parser';
 import path from 'path';
-import { DataType, DEFAULT_CHUNK_SIZE, Table } from '../../index.js';
+import { Config, DataType, DEFAULT_CHUNK_SIZE, Table } from '../../index.js';
 import { castToNumber } from '../../storage/data-type.js';
 import { reconcileTypes } from '../../dataframe/type-inference.js';
 import type { ColumnSchema, ColumnValue, QueryEngine } from '../../index.js';
@@ -15,7 +15,6 @@ interface CSVLoadOptions {
 
 type CSVRow = Record<string, string>;
 
-const SCHEMA_SAMPLE_ROWS = 1000;
 const INT32_MIN = -2147483648;
 const INT32_MAX = 2147483647;
 
@@ -102,7 +101,7 @@ export class CSVLoader extends DataLoader {
 
         if (!table) {
           sample.push(data);
-          if (sample.length < SCHEMA_SAMPLE_ROWS) return;
+          if (sample.length < Config.csvSchemaSampleRows) return;
           materializeTable();
         } else {
           batch.push(this.convertRow(data, schema as ColumnSchema[]));

@@ -13,6 +13,11 @@ export function getEnvFloat(key: string, fallback: number): number {
   return val !== undefined ? parseFloat(val) : fallback;
 }
 
+export function getEnvString(key: string, fallback: string): string {
+  const val: string | undefined = processEnv?.[key];
+  return val !== undefined ? val : fallback;
+}
+
 export function getEnvFlag(key: string, fallback: boolean): boolean {
   const val: string | undefined = processEnv?.[key];
   if (val === undefined) return fallback;

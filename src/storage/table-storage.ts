@@ -1,6 +1,7 @@
 import type { DataChunk } from './chunk.js';
 import type { ColumnSchema, ColumnValue } from './data-type.js';
 import type { BTreeIndex } from './btree.js';
+import type { ChunkPruner } from './zone-map.js';
 
 export interface TableIndex {
   columnIndex: number;
@@ -15,7 +16,7 @@ export interface TableStorage {
   getSchema(): ColumnSchema[];
   rowCount(): number;
   getColumnIndex(columnName: string): number;
-  scan(): AsyncGenerator<DataChunk>;
+  scan(pruner?: ChunkPruner | null): AsyncGenerator<DataChunk>;
   scanAll(): Promise<DataChunk[]>;
 }
 

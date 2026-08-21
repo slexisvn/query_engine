@@ -1,6 +1,6 @@
 import fs from 'fs';
 import v8 from 'v8';
-import type { PartialGroupRecord, AccumulatorState, SpillRef } from './worker-messages.js';
+import type { PartialGroupRecord } from './worker-messages.js';
 
 export function writePartialSpill(file: string, partitions: PartialGroupRecord[][]): void {
   const buffers: (Buffer | null)[] = partitions.map(partition => partition.length > 0 ? v8.serialize(partition) : null);

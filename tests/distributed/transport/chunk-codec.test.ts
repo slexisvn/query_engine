@@ -1,9 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { ChunkCodec } from '../../../src/distributed/transport/chunk-codec.js';
 import { DataChunk } from '../../../src/storage/chunk.js';
 import { Column } from '../../../src/storage/column.js';
 import { DictionaryColumn } from '../../../src/storage/dictionary-column.js';
 import { DataType } from '../../../src/storage/data-type.js';
+import { Config } from '../../../src/config.js';
+import { encodeChunkColumns } from '../../../src/storage/encoding/column-encoding.js';
+import { EncodingKind } from '../../../src/storage/encoding/encoding-types.js';
 
 function makeChunk(colDefs, rows) {
   const columns = colDefs.map(def => {
@@ -183,5 +186,62 @@ describe('ChunkCodec', () => {
       for (let i = 0; i < decoded.size; i++) out.push(decoded.columns[0].get(i));
       expect(out).toEqual(vals);
     }
+  });
+  describe('encoded columns', () => {
+    const savedForced = Config.forcedColumnEncoding;
+    afterEach(() => { Config.forcedColumnEncoding = savedForced; });
+
+    function encodedChunk(kind, dataType, values) {
+      Config.forcedColumnEncoding = kind;
+      const rows = values.map(value => [value]);
+      return encodeChunkColumns(makeChunk([{ type: dataType }], rows));
+    }
+
+    function valuesOf(chunk) {
+      const out = [];
+      for (let i = 0; i < chunk.size; i++) out.push(chunk.columns[0].get(i));
+      return out;
+    }
+
+    const CASES = [
+      [EncodingKind.RUN_LENGTH, DataType.INT32, [4, 4, 4, -7, -7, 0, 0, 0]],
+      [EncodingKind.BIT_PACKED, DataType.INT32, [0, 1, 9, 63, 8, 2, 63, 0]],
+      [EncodingKind.FRAME_OF_REFERENCE, DataType.INT32, [-90000, -89999, -89000, -90000]],
+      [EncodingKind.RUN_LENGTH, DataType.INT64, [9007199254740993n, 9007199254740993n, -5n]],
+      [EncodingKind.BIT_PACKED, DataType.INT64, [0n, 4294967295n, 7n]],
+      [EncodingKind.FRAME_OF_REFERENCE, DataType.INT64, [1700000000000n, 1700000000005n, 1700000000000n]],
+    ];
+
+    it('sends each encoding across the wire still encoded', () => {
+      for (const [kind, dataType, values] of CASES) {
+        const chunk = encodedChunk(kind, dataType, values);
+        expect(chunk.columns[0].encoded.kind).toBe(kind);
+
+        const decoded = codec.decode(codec.encode(chunk));
+
+        expect(decoded.columns[0].encoded.kind).toBe(kind);
+        expect(valuesOf(decoded)).toEqual(values);
+      }
+    });
+
+    it('carries nulls inside an encoded run across the wire', () => {
+      const values = [5, null, 5, 5, null, 5];
+      const chunk = encodedChunk(EncodingKind.RUN_LENGTH, DataType.INT32, values);
+      const decoded = codec.decode(codec.encode(chunk));
+
+      expect(decoded.columns[0].encoded.kind).toBe(EncodingKind.RUN_LENGTH);
+      expect(valuesOf(decoded)).toEqual(values);
+    });
+
+    it('flattens a selection vector over an encoded column', () => {
+      const values = [10, 10, 20, 20, 30, 30];
+      const chunk = encodedChunk(EncodingKind.RUN_LENGTH, DataType.INT32, values);
+      chunk.setSelectionVector(new Uint32Array([5, 0, 3]), 3);
+
+      const decoded = codec.decode(codec.encode(chunk));
+
+      expect(decoded.size).toBe(3);
+      expect(valuesOf(decoded)).toEqual([30, 10, 20]);
+    });
   });
 });

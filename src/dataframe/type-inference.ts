@@ -1,7 +1,6 @@
 import {
   DataType,
   isNumeric,
-  DECIMAL_SCALE_NUMBER,
   dateToEpochDays,
 } from '../storage/data-type.js';
 import type { ColumnValue } from '../storage/data-type.js';

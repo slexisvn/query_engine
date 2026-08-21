@@ -1,6 +1,7 @@
 import { DataChunk } from '../storage/chunk.js';
 import { DEFAULT_CHUNK_SIZE } from '../config.js';
 import { inferColumnType, coerceForColumn } from './type-inference.js';
+import { buildChunkZoneMap, type ChunkPruner, type ChunkZoneMap } from '../storage/zone-map.js';
 import type { ColumnSchema, ColumnValue, DataType } from '../storage/data-type.js';
 
 type RowInput = Record<string, ColumnValue> | ColumnValue[];
@@ -25,11 +26,20 @@ export class InMemoryRelation {
   schema: ColumnSchema[];
   chunks: DataChunk[];
   _rowCount: number;
+  _zoneMaps: ChunkZoneMap[] | null;
 
   constructor(schema: ColumnSchema[], chunks: DataChunk[]) {
     this.schema = schema;
     this.chunks = chunks;
     this._rowCount = chunks.reduce((sum, c) => sum + c.size, 0);
+    this._zoneMaps = null;
+  }
+
+  zoneMaps(): ChunkZoneMap[] {
+    if (this._zoneMaps === null) {
+      this._zoneMaps = this.chunks.map(buildChunkZoneMap);
+    }
+    return this._zoneMaps;
   }
 
   getSchema(): ColumnSchema[] {
@@ -45,9 +55,15 @@ export class InMemoryRelation {
     return this.schema.findIndex(c => c.name.toUpperCase() === upper);
   }
 
-  async *scan(): AsyncGenerator<DataChunk, void, void> {
-    for (const chunk of this.chunks) {
-      yield chunk;
+  async *scan(pruner: ChunkPruner | null = null): AsyncGenerator<DataChunk, void, void> {
+    if (!pruner) {
+      yield* this.chunks;
+      return;
+    }
+    const zoneMaps = this.zoneMaps();
+    for (let i = 0; i < this.chunks.length; i++) {
+      if (pruner.canSkip(zoneMaps[i])) continue;
+      yield this.chunks[i];
     }
   }
 

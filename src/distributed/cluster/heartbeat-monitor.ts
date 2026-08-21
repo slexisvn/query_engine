@@ -1,6 +1,6 @@
 import { Config } from '../../config.js';
-import { NodeStatus } from './node-descriptor.js';
-import type { NodeId, NodeStatus as NodeStatusType, NodeStatusChange } from '../distributed-types.js';
+import { NodeStatus } from '../distributed-types.js';
+import type { NodeId, NodeStatusChange } from '../distributed-types.js';
 
 export interface HeartbeatMonitorOptions {
   windowSize?: number;
@@ -65,11 +65,11 @@ export class HeartbeatMonitor {
     return window.phi(now);
   }
 
-  getStatus(nodeId: NodeId, now: number): NodeStatusType {
+  getStatus(nodeId: NodeId, now: number): NodeStatus {
     const phiValue = this.phi(nodeId, now);
-    if (phiValue >= this._threshold * 2) return NodeStatus.DEAD as NodeStatusType;
-    if (phiValue >= this._threshold) return NodeStatus.SUSPECT as NodeStatusType;
-    return NodeStatus.ALIVE as NodeStatusType;
+    if (phiValue >= this._threshold * 2) return NodeStatus.DEAD;
+    if (phiValue >= this._threshold) return NodeStatus.SUSPECT;
+    return NodeStatus.ALIVE;
   }
 
   removeNode(nodeId: NodeId): void {

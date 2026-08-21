@@ -5,12 +5,10 @@ import { DataChunk } from '../../storage/chunk.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
 import type { BoundExpr, BoundColumnRefNode } from '../../binder/expression-binder.js';
 import { testBit } from '../../utils/bitmap.js';
-import { hashValue } from '../../utils/hash.js';
 import { hashKeyValues } from '../hash-table.js';
 import type { PartialGroup } from './aggregate-state-codec.js';
 import { Config } from '../../config.js';
 import { schemaMappingOf, resolveRef, StageKind } from '../fragment-spec.js';
-import type { ColumnMapping } from '../execution-types.js';
 
 const OP: Record<string, number> = { SUM: 0, COUNT: 1, COUNT_STAR: 2, AVG: 3, MIN: 4, MAX: 5 };
 const INT_KEY_TYPES = new Set<DataType>([DataType.INT32, DataType.DATE]);
@@ -253,11 +251,13 @@ export class VectorGroupAggregator {
     }
 
     const valueCols: Column[] = new Array(this.aggs.length);
+    const valueData: Float64Array[] = new Array(this.aggs.length);
     for (let a = 0; a < this.aggs.length; a++) {
       if (this.aggs[a].colIdx < 0) continue;
       const col = chunk.columns[this.aggs[a].colIdx] as Column;
       if (!col || !col.data) return false;
       valueCols[a] = col;
+      valueData[a] = col.data as Float64Array;
     }
 
     if (this.keyKind === KeyKind.INT && !this._ensureDenseRange(chunk, groupColRaw as Column)) return false;
@@ -295,7 +295,7 @@ export class VectorGroupAggregator {
         }
         const col = valueCols[a];
         if (col.hasNulls && !testBit(col.nullBitmap, phys)) continue;
-        const v = (col.data as Float64Array)[phys];
+        const v = valueData[a][phys];
         if (agg.op === OP.SUM) {
           state.sums![slot] += v;
           state.has![slot] = 1;

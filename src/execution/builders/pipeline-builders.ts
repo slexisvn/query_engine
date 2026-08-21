@@ -9,8 +9,7 @@ import { UnionOperator } from '../operators/union.js';
 import { SetOperator } from '../operators/set-op.js';
 import { WindowOperator } from '../operators/window.js';
 import { CancelToken } from '../pipeline.js';
-import { BoundExprKind } from '../../binder/expression-binder.js';
-import type { BoundExpr, BoundWindowNode } from '../../binder/expression-binder.js';
+import type { BoundWindowNode } from '../../binder/expression-binder.js';
 import { combinedMappingOf } from './builder-utils.js';
 import { exprKey } from '../../binder/expr-key.js';
 import type { DataChunk } from '../../storage/chunk.js';
@@ -28,20 +27,17 @@ import type {
 import { SetOpType } from '../../planner/logical-plan.js';
 import { projectedColumnName, projectedColumnAlias } from '../../planner/project-schema.js';
 import type {
-  LogicalPlanNode,
   LogicalFilterNode,
   LogicalProjectNode,
   LogicalSortNode,
   LogicalTopNNode,
   LogicalLimitNode,
-  LogicalDistinctNode,
   LogicalSetOpNode,
   LogicalWindowNode,
   LogicalOrderKey,
   ProjectedExpr,
 } from '../../planner/logical-plan.js';
 
-type ParallelDispatchLike = ConstructorParameters<typeof FilterOperator>[3];
 import type { ChunkSpillStore } from '../../storage/spill-manager/spill-manager.js';
 
 interface TempManagerLike {
@@ -257,7 +253,6 @@ export async function buildLimit(executor: ExecutorLike, physical: PhysicalPlanN
 }
 
 export async function buildDistinct(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
-  const node = physical.logical as LogicalDistinctNode;
   const child = await executor.buildPipeline(physical.children[0]);
 
   return {
@@ -429,5 +424,4 @@ export async function buildWindow(executor: ExecutorLike, physical: PhysicalPlan
     }
   };
 }
-
 

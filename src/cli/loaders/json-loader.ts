@@ -1,6 +1,6 @@
 import { createReadStream } from 'fs';
 import path from 'path';
-import { DataType, DEFAULT_CHUNK_SIZE, Table } from '../../index.js';
+import { Config, DataType, DEFAULT_CHUNK_SIZE, Table } from '../../index.js';
 import type { ColumnSchema, ColumnValue, QueryEngine } from '../../index.js';
 import { DataLoader } from './data-loader.js';
 
@@ -62,7 +62,7 @@ export class JSONLoader extends DataLoader {
 }
 
 async function* streamJsonArray(filePath: string): AsyncGenerator<JsonObject> {
-  const stream = createReadStream(filePath, { encoding: 'utf8', highWaterMark: 64 * 1024 });
+  const stream = createReadStream(filePath, { encoding: 'utf8', highWaterMark: Config.jsonReadBufferBytes });
   let depth = 0;
   let inString = false;
   let escape = false;

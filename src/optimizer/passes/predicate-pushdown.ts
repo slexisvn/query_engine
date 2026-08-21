@@ -1,11 +1,10 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanNodeType, JoinType, LogicalFilter, LogicalJoin, setChildren, type LogicalPlanNode, type LogicalJoinNode, type LogicalProjectNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
+import { PlanNodeType, JoinType, LogicalFilter, LogicalJoin, type LogicalPlanNode, type LogicalJoinNode, type LogicalProjectNode, type LogicalFilterNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-rewriter.js';
-import { BoundExprKind, walkExpr, type BoundExpr, type BoundBinaryNode } from '../../binder/expression-binder.js';
+import { BoundExprKind, walkExpr, type BoundExpr } from '../../binder/expression-binder.js';
 import { containsAggregate } from '../expr-walk.js';
 import { collectPlanRefs, refBelongsToPlan, type ExprRef } from './plan-refs.js';
 import { isNullRejecting } from './null-rejection.js';
-import { DataType } from '../../storage/data-type.js';
 import { splitConjuncts, combineConjuncts } from '../../binder/conjuncts.js';
 
 type MetadataValue = string | number | boolean | object | null | undefined;
@@ -223,7 +222,6 @@ function pushIntoJoin(predicates: BoundExpr[], joinNode: LogicalJoinNode): Logic
 
   return result;
 }
-
 
 function collectColumnRefs(expr: BoundExpr): ExprRef[] {
   const keys = new Set<string>();

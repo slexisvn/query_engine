@@ -71,6 +71,12 @@ export class DataChunk {
     return chunk;
   }
 
+  scanView(): DataChunk {
+    const chunk = new DataChunk(this.columns.map(column => column.scanView()), this.size);
+    chunk.selectionVector = this.selectionVector;
+    return chunk;
+  }
+
   flatten(): DataChunk {
     if (!this.selectionVector) return this;
 

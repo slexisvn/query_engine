@@ -1,10 +1,11 @@
-import { getEnvInt, getEnvFloat, getEnvFlag, getCpuCount } from './runtime/platform.js';
+import { getEnvInt, getEnvFloat, getEnvFlag, getEnvString, getCpuCount } from './runtime/platform.js';
 
 export const DEFAULT_CHUNK_SIZE = 2048;
 
 const env = getEnvInt;
 const envFlag = getEnvFlag;
 const envFloat = getEnvFloat;
+const envString = getEnvString;
 
 const resolveWorkerCount = (): number => {
   const raw = env('QE_PARALLEL_WORKERS', 0);
@@ -49,21 +50,39 @@ export const Config = {
   morselSize: env('QE_MORSEL_SIZE', 262144),
 
   defaultCardinality: env('QE_DEFAULT_CARDINALITY', 1000),
+  defaultRowWidthBytes: env('QE_DEFAULT_ROW_WIDTH_BYTES', 64),
+  defaultExistsSelectivity: envFloat('QE_DEFAULT_EXISTS_SELECTIVITY', 0.5),
   nestedLoopMaxRows: env('QE_NESTED_LOOP_MAX_ROWS', 50000),
+  costModelSpillThreshold: env('QE_COST_MODEL_SPILL_THRESHOLD', 200000),
   statsSampleRows: env('QE_STATS_SAMPLE_ROWS', 30000),
   statsHistogramBuckets: env('QE_STATS_HISTOGRAM_BUCKETS', 64),
   statsMcvCount: env('QE_STATS_MCV_COUNT', 10),
   statsMcvOversample: env('QE_STATS_MCV_OVERSAMPLE', 20),
   statsHllPrecision: env('QE_STATS_HLL_PRECISION', 14),
   statsCorrelationThreshold: envFloat('QE_STATS_CORRELATION_THRESHOLD', 0.3),
+  zoneMapPruning: envFlag('QE_ZONE_MAP_PRUNING', true),
+  columnEncoding: envFlag('QE_COLUMN_ENCODING', true),
+  forcedColumnEncoding: envString('QE_FORCED_COLUMN_ENCODING', ''),
+  encodingMinRows: env('QE_ENCODING_MIN_ROWS', 64),
+  encodingMinCompressionRatio: envFloat('QE_ENCODING_MIN_COMPRESSION_RATIO', 0.75),
+  encodingRleMaxRunRatio: envFloat('QE_ENCODING_RLE_MAX_RUN_RATIO', 0.5),
+  encodingBitPackMaxWidthRatio: envFloat('QE_ENCODING_BITPACK_MAX_WIDTH_RATIO', 0.75),
+  encodingForMaxWidthRatio: envFloat('QE_ENCODING_FOR_MAX_WIDTH_RATIO', 0.5),
   joinOrderDpMaxRelations: env('QE_JOIN_ORDER_DP_MAX_RELATIONS', 14),
   joinOrderMaxPairs: env('QE_JOIN_ORDER_MAX_PAIRS', 120000),
   optimizerFixpointIterations: env('QE_OPTIMIZER_FIXPOINT_ITERATIONS', 8),
   planCacheEntries: env('QE_PLAN_CACHE_ENTRIES', 256),
   perfectHashAggregateCostFactor: envFloat('QE_PERFECT_HASH_AGG_COST_FACTOR', 0.5),
   pipelineConcurrency: env('QE_PIPELINE_CONCURRENCY', 4),
+  csvSchemaSampleRows: env('QE_CSV_SCHEMA_SAMPLE_ROWS', 1000),
+  jsonReadBufferBytes: env('QE_JSON_READ_BUFFER_BYTES', 64 * 1024),
 
   clusterPort: env('QE_CLUSTER_PORT', 9400),
+  workerPort: env('QE_WORKER_PORT', 9401),
+  workerStartupTimeoutMs: env('QE_WORKER_STARTUP_TIMEOUT', 30000),
+  exchangePollIntervalMs: env('QE_EXCHANGE_POLL_INTERVAL', 100),
+  defaultNodeCores: env('QE_NODE_CORES', 1),
+  defaultNodeMemoryMb: env('QE_NODE_MEMORY_MB', 512),
   coordinatorSchemaSampleRows: env('QE_COORD_SCHEMA_SAMPLE_ROWS', 1000),
   heartbeatIntervalMs: env('QE_HEARTBEAT_INTERVAL', 3000),
   heartbeatTimeoutMs: env('QE_HEARTBEAT_TIMEOUT', 10000),

@@ -8,16 +8,30 @@ import { SCALAR_OUTPUT_NAME } from '../../planner/logical-plan.js';
 
 type JoinRow = ColumnValue[];
 
+type SubqueryEmitter = (outerRow: JoinRow, subRows: JoinRow[]) => JoinRow | null;
+
+const EMITTERS: Record<string, SubqueryEmitter> = {
+  EXISTS: (outerRow, subRows) => (subRows.length > 0 ? outerRow : null),
+  NOT_EXISTS: (outerRow, subRows) => (subRows.length === 0 ? outerRow : null),
+  SCALAR: (outerRow, subRows) => [...outerRow, subRows.length > 0 ? subRows[0][0] : null],
+};
+
 export class DependentJoinOperator {
   subqueryType: string;
   outerSchema: ExecSchema;
   resultRows: JoinRow[];
   resultSchema: ExecSchema;
+  emit: SubqueryEmitter;
 
   constructor(subqueryType: string, outerSchema: ExecSchema, scalarColumn: string | null = null) {
+    const emit = EMITTERS[subqueryType];
+    if (!emit) {
+      throw new Error(`Dependent join cannot evaluate a ${subqueryType} subquery: it compares no outer expression`);
+    }
     this.subqueryType = subqueryType;
     this.outerSchema = outerSchema;
     this.resultRows = [];
+    this.emit = emit;
     this.resultSchema = this.subqueryType === 'SCALAR'
       ? [...outerSchema, { name: scalarColumn ?? SCALAR_OUTPUT_NAME, dataType: DataType.FLOAT64, tableAlias: '' } as ExecColumn]
       : outerSchema;
@@ -31,20 +45,8 @@ export class DependentJoinOperator {
       }
     }
 
-    if (this.subqueryType === 'EXISTS') {
-      if (subRows.length > 0) this.resultRows.push(outerRow);
-    } else if (this.subqueryType === 'NOT_EXISTS') {
-      if (subRows.length === 0) this.resultRows.push(outerRow);
-    } else if (this.subqueryType === 'SCALAR') {
-      const scalarVal = subRows.length > 0 ? subRows[0][0] : null;
-      this.resultRows.push([...outerRow, scalarVal]);
-    } else if (this.subqueryType === 'IN') {
-      if (subRows.length > 0) this.resultRows.push(outerRow);
-    } else if (this.subqueryType === 'NOT_IN') {
-      if (subRows.length === 0) this.resultRows.push(outerRow);
-    } else {
-      this.resultRows.push(outerRow);
-    }
+    const row = this.emit(outerRow, subRows);
+    if (row) this.resultRows.push(row);
   }
 
   async finalize(): Promise<DataChunk[]> {

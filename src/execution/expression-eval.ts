@@ -8,7 +8,6 @@ import type { ColumnValue } from '../storage/data-type.js';
 import type { DataChunk } from '../storage/chunk.js';
 import type {
   EvalValue,
-  IntervalValue,
   CompiledExpr,
   ColumnMapping,
   ExecColumn,

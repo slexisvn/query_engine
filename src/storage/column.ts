@@ -1,6 +1,7 @@
 import { DataType, getDecimalScaleNumber, isFixedWidth, typedArrayCtorFor, type AnyTypedArray, type ColumnValue } from './data-type.js';
 import { bitmapWordCount, setBit, clearBit, testBit } from '../utils/bitmap.js';
 import { heapAllocator, type Allocator } from './sab-arena.js';
+import type { EncodedVector } from './encoding/encoding-types.js';
 
 const DEFAULT_CAPACITY = 2048;
 const STRING_INITIAL_BYTES = 4096;
@@ -17,12 +18,22 @@ export interface ColumnParts {
   allocator?: Allocator;
 }
 
+export interface EncodedColumnParts {
+  dataType: DataType;
+  encoded: EncodedVector;
+  nullBitmap: Uint32Array;
+  length: number;
+  hasNulls: boolean;
+  allocator?: Allocator;
+}
+
 export class Column {
   dataType: DataType;
   capacity: number;
   length: number;
   allocator: Allocator;
-  data?: AnyTypedArray;
+  encoded: EncodedVector | null;
+  _data?: AnyTypedArray;
   offsets?: Uint32Array;
   stringBytes?: Uint8Array;
   stringBytesUsed?: number;
@@ -34,9 +45,10 @@ export class Column {
     this.capacity = capacity;
     this.length = 0;
     this.allocator = allocator;
+    this.encoded = null;
 
     if (isFixedWidth(dataType)) {
-      this.data = allocator.acquire(typedArrayCtorFor(dataType), capacity);
+      this._data = allocator.acquire(typedArrayCtorFor(dataType), capacity);
     } else if (dataType === DataType.VARCHAR) {
       this.offsets = allocator.acquire(Uint32Array, capacity + 1);
       this.stringBytes = allocator.acquire(Uint8Array, STRING_INITIAL_BYTES);
@@ -55,7 +67,8 @@ export class Column {
     col.capacity = length;
     col.length = length;
     col.allocator = allocator || heapAllocator;
-    if (data !== undefined) col.data = data;
+    col.encoded = null;
+    if (data !== undefined) col._data = data;
     if (offsets !== undefined) {
       col.offsets = offsets;
       col.stringBytes = stringBytes;
@@ -66,16 +79,61 @@ export class Column {
     return col;
   }
 
+  static fromEncoded({ dataType, encoded, nullBitmap, length, hasNulls, allocator }: EncodedColumnParts): Column {
+    const col = Object.create(Column.prototype) as Column;
+    col.dataType = dataType;
+    col.capacity = length;
+    col.length = length;
+    col.allocator = allocator || heapAllocator;
+    col.encoded = encoded;
+    col.nullBitmap = nullBitmap;
+    col.hasNulls = hasNulls;
+    return col;
+  }
+
+  get data(): AnyTypedArray | undefined {
+    if (this.encoded !== null) {
+      this._data = this.encoded.decode();
+      this.encoded = null;
+    }
+    return this._data;
+  }
+
+  set data(value: AnyTypedArray | undefined) {
+    this.encoded = null;
+    this._data = value;
+  }
+
+  scanView(): Column {
+    const view = Object.create(Column.prototype) as Column;
+    view.dataType = this.dataType;
+    view.capacity = this.capacity;
+    view.length = this.length;
+    view.allocator = this.allocator;
+    view.encoded = this.encoded;
+    view._data = this._data;
+    view.offsets = this.offsets;
+    view.stringBytes = this.stringBytes;
+    view.stringBytesUsed = this.stringBytesUsed;
+    view.nullBitmap = this.nullBitmap;
+    view.hasNulls = this.hasNulls;
+    return view;
+  }
+
   get(index: number): ColumnValue {
     if (this.hasNulls && !testBit(this.nullBitmap, index)) {
       return null;
+    }
+
+    if (this.encoded !== null) {
+      return this.encoded.valueAt(index);
     }
 
     if (this.dataType === DataType.VARCHAR) {
       return this._getString(index);
     }
 
-    const val = this.data![index];
+    const val = this._data![index];
     if (this.dataType === DataType.BOOLEAN) {
       return val !== 0;
     }
@@ -101,10 +159,13 @@ export class Column {
       (this.data! as BigInt64Array)[index] = typeof value === 'bigint'
         ? value
         : BigInt(Math.round(Number(value) * getDecimalScaleNumber()));
-    } else if (this.data instanceof BigInt64Array) {
-      this.data[index] = typeof value === 'bigint' ? value : BigInt(Math.trunc(Number(value)));
     } else {
-      (this.data! as Float64Array)[index] = typeof value === 'bigint' ? Number(value) : (value as number);
+      const target = this.data!;
+      if (target instanceof BigInt64Array) {
+        target[index] = typeof value === 'bigint' ? value : BigInt(Math.trunc(Number(value)));
+      } else {
+        (target as Float64Array)[index] = typeof value === 'bigint' ? Number(value) : (value as number);
+      }
     }
 
     if (index >= this.length) {
@@ -133,13 +194,13 @@ export class Column {
     const len = end - start;
     const col = new Column(this.dataType, len, this.allocator);
 
-    if (this.dataType === DataType.VARCHAR) {
+    if (this.dataType === DataType.VARCHAR || this.encoded !== null) {
       for (let i = 0; i < len; i++) {
         col.set(i, this.get(start + i));
       }
     } else {
-      if (this.data) {
-        const srcSlice = this.data.subarray(start, end);
+      if (this._data) {
+        const srcSlice = this._data.subarray(start, end);
         (col.data! as Float64Array).set(srcSlice as Float64Array);
       }
       for (let i = 0; i < len; i++) {

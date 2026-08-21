@@ -1,42 +1,20 @@
-import { OptimizationPass } from '../../optimizer/pass.js';
-import { LogicalExchange, setChildren, type LogicalPlanNode, type LogicalLimitNode, type LogicalTopNNode } from '../../planner/logical-plan.js';
-import { PlanRewriter } from '../../planner/plan-rewriter.js';
-import { ExchangeType } from '../planner/fragment.js';
-import { localPartitionedScanTables, shuffleKeysOf, type PartitionMapLike } from './repartition.js';
-
-interface DistributedFlag {
-  _distributed?: boolean;
-}
+import { setChildren, type LogicalPlanNode, type LogicalLimitNode, type LogicalTopNNode } from '../../planner/logical-plan.js';
+import { PartitionAwareRewritePass, PartitionAwareRewriter } from './distributed-pass.js';
+import { localPartitionedScanTables, hashShuffleExchange } from './repartition.js';
 
 type RowLimitNode = LogicalLimitNode | LogicalTopNNode;
 
-export class DistributedLimitPass extends OptimizationPass {
-  _partitionMap: PartitionMapLike | null;
-
-  constructor(partitionMap: PartitionMapLike | null) {
-    super();
-    this._partitionMap = partitionMap;
-  }
-
+export class DistributedLimitPass extends PartitionAwareRewritePass {
   override get name(): string {
     return 'DistributedLimit';
   }
 
-  override apply(plan: LogicalPlanNode): LogicalPlanNode {
-    if (!(plan as LogicalPlanNode & DistributedFlag)._distributed) return plan;
-    const rewriter = new DistributedLimitRewriter(this._partitionMap);
-    return rewriter.rewrite(plan);
+  override _createRewriter(): DistributedLimitRewriter {
+    return new DistributedLimitRewriter(this._partitionMap);
   }
 }
 
-class DistributedLimitRewriter extends PlanRewriter {
-  _partitionMap: PartitionMapLike | null;
-
-  constructor(partitionMap: PartitionMapLike | null) {
-    super();
-    this._partitionMap = partitionMap;
-  }
-
+class DistributedLimitRewriter extends PartitionAwareRewriter {
   override rewriteLimit(node: LogicalLimitNode): LogicalPlanNode {
     return this._globalise(this.rewriteChildren(node));
   }
@@ -54,9 +32,6 @@ class DistributedLimitRewriter extends PlanRewriter {
     const localNode = { ...node, count: node.count + offset, offset: 0 } as RowLimitNode;
     localNode._cardinality = node._cardinality;
 
-    const exchangeNode = LogicalExchange(ExchangeType.HASH_SHUFFLE, shuffleKeysOf(input), 0, localNode);
-    exchangeNode._cardinality = node._cardinality;
-
-    return setChildren(node, [exchangeNode]);
+    return setChildren(node, [hashShuffleExchange(input, localNode, node._cardinality)]);
   }
 }

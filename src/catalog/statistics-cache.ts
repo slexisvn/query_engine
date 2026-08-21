@@ -1,7 +1,6 @@
 import type { TableStorage } from '../storage/table-storage.js';
 import { StatisticsCollector } from './statistics.js';
 import type { TableStatistics } from './statistics.js';
-import type { ColumnSchema, ColumnValue } from '../storage/data-type.js';
 
 interface CatalogLike {
   getTableStorage(name: string): TableStorage | null;

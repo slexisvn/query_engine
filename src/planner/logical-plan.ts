@@ -75,6 +75,7 @@ export interface LogicalScanNode extends PlanNodeBase {
   table: string;
   columns: ColumnInfo[];
   alias: string;
+  pruningFilter?: BoundExpr;
 }
 
 export interface LogicalFilterNode extends PlanNodeBase {

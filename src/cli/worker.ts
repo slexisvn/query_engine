@@ -46,7 +46,7 @@ interface LoadOptions {
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  let port = 9401;
+  let port = Config.workerPort;
   let coordinatorAddr: string | null = null;
   let partitionIndex: number | null = null;
   let partitionCount: number | null = null;
@@ -62,7 +62,7 @@ async function main(): Promise<void> {
     } else if (args[i] === '--partition-count' && args[i + 1]) {
       partitionCount = parseInt(args[++i], 10);
     } else if (args[i] === '--help' || args[i] === '-h') {
-      console.log('Usage: node src/cli/worker.js --coordinator <host:port> [--port 9401] [--partition-index I --partition-count N] <file1> [file2...]');
+      console.log(`Usage: node src/cli/worker.js --coordinator <host:port> [--port ${Config.workerPort}] [--partition-index I --partition-count N] <file1> [file2...]`);
       console.log('');
       console.log('Starts a worker node that connects to a coordinator.');
       console.log('The worker loads data locally and executes query fragments.');

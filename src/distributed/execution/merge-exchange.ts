@@ -260,7 +260,7 @@ export class MergeExchangeOperator {
       }
       await new Promise<void>(resolve => {
         this._resolveWaiter = resolve;
-        setTimeout(resolve, 100);
+        setTimeout(resolve, Config.exchangePollIntervalMs);
       });
     }
   }

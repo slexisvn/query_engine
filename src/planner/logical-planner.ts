@@ -1,5 +1,5 @@
 import * as LP from './logical-plan.js';
-import { BoundExprKind, BoundColumnRef, collectCorrelatedColumns, getExprType, type BoundExpr, type BoundColumnRefNode, type BoundLiteralNode } from '../binder/expression-binder.js';
+import { BoundExprKind, BoundColumnRef, getExprType, type BoundExpr, type BoundColumnRefNode, type BoundLiteralNode } from '../binder/expression-binder.js';
 import type { BoundQuery, BoundSelect, BoundSetOp, BoundFrom, OutputColumn } from '../binder/binder.js';
 import { DataType } from '../storage/data-type.js';
 import { exprKey } from '../binder/expr-key.js';

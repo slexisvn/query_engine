@@ -1,4 +1,4 @@
-import { NodeKind } from '../parser/ast.js';
+
 import { DataType } from '../storage/data-type.js';
 import type { BoundQuery } from './binder.js';
 

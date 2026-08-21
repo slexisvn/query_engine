@@ -213,6 +213,24 @@ describe('SortOperator', () => {
 
       expect(result.length).toBe(0);
     });
+
+    it('emits nothing for a zero limit', async () => {
+      const op = new SortOperator([ascKey(0)], 0, 0, memSpill());
+      await op.consume(makeChunk([{ type: 'INT32', values: [50, 40, 30, 20, 10] }]));
+
+      const result = await sorted(op);
+
+      expect(result).toEqual([]);
+    });
+
+    it('does not truncate when no limit is set', async () => {
+      const op = new SortOperator([ascKey(0)], null, 0, memSpill());
+      await op.consume(makeChunk([{ type: 'INT32', values: [50, 40, 30, 20, 10] }]));
+
+      const result = await sorted(op);
+
+      expect(result.map(r => r[0])).toEqual([10, 20, 30, 40, 50]);
+    });
   });
 
   describe('multi-chunk consume', () => {
@@ -264,6 +282,21 @@ describe('SortOperator', () => {
 
       expect(result.length).toBe(3);
       expect(result.map(r => r[0])).toEqual([1, 2, 3]);
+    });
+
+    it('discards rows on arrival for a zero limit instead of buffering them', async () => {
+      limitResidentRows(INT_SCHEMA, 5);
+
+      const op = new SortOperator([ascKey(0)], 0, 0, memSpill());
+      for (let i = 15; i >= 1; i--) {
+        await op.consume(makeChunk([{ type: 'INT32', values: [i] }]));
+      }
+
+      expect(op.rowCount).toBe(0);
+
+      const result = await sorted(op);
+
+      expect(result).toEqual([]);
     });
 
     it('spill sort with offset skips rows correctly', async () => {

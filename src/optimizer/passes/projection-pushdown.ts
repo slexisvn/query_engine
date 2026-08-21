@@ -1,8 +1,7 @@
 import { OptimizationPass } from '../pass.js';
-import { getChildren, setChildren, type LogicalPlanNode, type ProjectedExpr, type LogicalScanNode, type LogicalProjectNode, type LogicalFilterNode, type LogicalJoinNode, type LogicalAggregateNode, type LogicalSortNode, type LogicalTopNNode, type LogicalDependentJoinNode, type LogicalSetOpNode, type LogicalCTEAnchorNode, type LogicalDistinctNode } from '../../planner/logical-plan.js';
+import { getChildren, setChildren, type LogicalPlanNode, type LogicalScanNode, type LogicalProjectNode, type LogicalFilterNode, type LogicalJoinNode, type LogicalAggregateNode, type LogicalSortNode, type LogicalTopNNode, type LogicalDependentJoinNode, type LogicalSetOpNode, type LogicalCTEAnchorNode, type LogicalDistinctNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
-import type { ColumnInfo } from '../../binder/scope.js';
 import { collectPlanRefs as collectPlanRefsShared, refBelongsToPlan as refBelongsToPlanShared, outputName, type NamedExpr, type PlanRefs } from './plan-refs.js';
 
 function collectPlanRefs(node: LogicalPlanNode): PlanRefs {

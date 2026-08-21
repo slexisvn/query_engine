@@ -2,9 +2,7 @@ import { parse } from '../parser/parser.js';
 import { Binder } from '../binder/binder.js';
 import { createLogicalPlan } from '../planner/logical-planner.js';
 import { defaultFunctionRegistry } from '../catalog/function-registry.js';
-import { NodeKind } from '../parser/ast.js';
 import { DataType } from '../storage/data-type.js';
-import { Column } from '../storage/column.js';
 import { Table } from '../storage/table.js';
 import { isPagedTableStorage } from '../storage/table-storage.js';
 import { Optimizer } from '../optimizer/optimizer.js';
@@ -14,7 +12,6 @@ import type { OptimizationContext } from '../optimizer/pass.js';
 import { QueryExecutor } from '../execution/query-executor.js';
 import { PhysicalPlanner } from '../execution/physical-planner.js';
 import { QueryResult } from '../execution/query-result.js';
-import { StatisticsCollector } from '../catalog/statistics.js';
 import { BTreeIndex } from '../storage/btree.js';
 import { StatisticsCache } from '../catalog/statistics-cache.js';
 import { LRUCache } from '../utils/lru-cache.js';
@@ -30,15 +27,14 @@ import type { BoundQuery, OutputColumn } from '../binder/binder.js';
 import type { LiteralValue } from '../binder/expression-binder.js';
 import type { Catalog, CatalogTable } from '../catalog/catalog.js';
 import type { ColumnSchema, ColumnValue } from '../storage/data-type.js';
-import type { DataChunk } from '../storage/chunk.js';
 import type { TableStatistics } from '../catalog/statistics.js';
 import type { OptimizationPass } from '../optimizer/pass.js';
 import type { Transport } from '../distributed/transport/transport.js';
-import type { NodeDescriptor, NodeRoleValue } from '../distributed/cluster/node-descriptor.js';
+import type { NodeDescriptor } from '../distributed/cluster/node-descriptor.js';
 import type { ClusterManager } from '../distributed/cluster/cluster-manager.js';
 import type { PartitionMap } from '../distributed/partition/partition-map.js';
 import type { QueryCoordinator } from '../distributed/execution/coordinator.js';
-import type { NodeCapacity, NodeId } from '../distributed/distributed-types.js';
+import type { NodeCapacity, NodeId, NodeRole as NodeRoleType } from '../distributed/distributed-types.js';
 
 export type QueryParam = LiteralValue;
 
@@ -89,7 +85,7 @@ interface DistributedClusterConfig {
   nodeId?: NodeId;
   host?: string;
   port?: number;
-  role?: NodeRoleValue;
+  role?: NodeRoleType;
   capacity?: NodeCapacity;
   transport?: Transport;
 }
@@ -646,7 +642,7 @@ ${physicalPlanToString(physical)}`;
     try {
       const { getGlobalLoader } = await import('../wasm/loader.js');
       const loader = await getGlobalLoader({ shared: true });
-      const instance = await loader.loadModule('core');
+      await loader.loadModule('core');
 
       const regionAllocator = loader.initRegions(Config.regionSize);
 
@@ -697,7 +693,7 @@ ${physicalPlanToString(physical)}`;
     const localNode = new NodeDescriptor({
       nodeId: clusterConfig.nodeId || `node-${Date.now()}`,
       host: clusterConfig.host || '127.0.0.1',
-      port: clusterConfig.port || 9400,
+      port: clusterConfig.port || Config.clusterPort,
       role: clusterConfig.role || NodeRole.HYBRID,
       capacity: clusterConfig.capacity,
     });

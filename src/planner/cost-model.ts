@@ -1,3 +1,5 @@
+import { Config } from '../config.js';
+
 export interface CostModelOptions {
   hashBuildCost?: number;
   hashProbeCost?: number;
@@ -33,7 +35,7 @@ export class DefaultCostModel {
 
     this.C_MEMORY = options.memoryCost ?? 0.05;
     this.C_IO = options.ioCost ?? 5.0;
-    this.SPILL_THRESHOLD = options.spillThreshold ?? 200000;
+    this.SPILL_THRESHOLD = options.spillThreshold ?? Config.costModelSpillThreshold;
 
     this.C_CROSS = options.crossJoinPenalty ?? 1000;
   }

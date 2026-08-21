@@ -1,6 +1,7 @@
 import type {
   LogicalPlanNode,
 } from '../../planner/logical-plan.js';
+import { ExchangeType, FragmentState } from '../distributed-types.js';
 import type {
   NodeId,
   ChannelId,
@@ -8,25 +9,9 @@ import type {
   ExchangeInput,
   OutputPartitioning,
   FragmentDispatchJSON,
-  ExchangeType as ExchangeTypeEnum,
-  FragmentState as FragmentStateEnum,
 } from '../distributed-types.js';
 
-export const ExchangeType: Record<string, ExchangeTypeEnum> = {
-  HASH_SHUFFLE: 'hash_shuffle' as ExchangeTypeEnum,
-  BROADCAST: 'broadcast' as ExchangeTypeEnum,
-  GATHER: 'gather' as ExchangeTypeEnum,
-  PASSTHROUGH: 'passthrough' as ExchangeTypeEnum,
-};
-
-export const FragmentState: Record<string, FragmentStateEnum> = {
-  PENDING: 'pending' as FragmentStateEnum,
-  DISPATCHED: 'dispatched' as FragmentStateEnum,
-  RUNNING: 'running' as FragmentStateEnum,
-  COMPLETED: 'completed' as FragmentStateEnum,
-  FAILED: 'failed' as FragmentStateEnum,
-  CANCELLED: 'cancelled' as FragmentStateEnum,
-};
+export { ExchangeType, FragmentState };
 
 export function fragmentOutputChannel(fragmentId: FragmentId): ChannelId {
   return `frag-${fragmentId}-output`;
@@ -53,7 +38,7 @@ export class Fragment {
   exchangeInputs: ExchangeInput[];
   outputPartitioning: OutputPartitioning | null;
   estimatedCardinality: number;
-  state: FragmentStateEnum;
+  state: FragmentState;
   retryCount: number;
   error: string | null;
   assignedNode: NodeId | null;

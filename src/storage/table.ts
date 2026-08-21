@@ -4,6 +4,8 @@ import { PageCache, type PageStore } from './page-cache.js';
 import { Config } from '../config.js';
 import type { ColumnSchema, ColumnValue } from './data-type.js';
 import type { BTreeIndex } from './btree.js';
+import { buildChunkZoneMap, type ChunkPruner, type ChunkZoneMap } from './zone-map.js';
+import { encodeChunkColumns } from './encoding/column-encoding.js';
 
 interface TableIndex {
   columnIndex: number;
@@ -14,6 +16,7 @@ export class Table {
   name: string;
   schema: ColumnSchema[];
   pageIds: string[];
+  zoneMaps: ChunkZoneMap[];
   _rowCount: number;
   pageCache: PageCache;
   activeChunk: DataChunk | null;
@@ -23,6 +26,7 @@ export class Table {
     this.name = name;
     this.schema = schema;
     this.pageIds = [];
+    this.zoneMaps = [];
     this._rowCount = 0;
     this.pageCache = new PageCache(Config.pageCachePages, pageStore);
     this.activeChunk = null;
@@ -51,14 +55,16 @@ export class Table {
   }
 
   async addChunk(chunk: DataChunk): Promise<void> {
+    const stored = encodeChunkColumns(chunk);
     const pageId = `${this.name}_page_${this.pageIds.length}`;
     this.pageIds.push(pageId);
-    this._rowCount += chunk.size;
-    await this.pageCache.writePage(pageId, chunk);
+    this.zoneMaps.push(buildChunkZoneMap(stored));
+    this._rowCount += stored.size;
+    await this.pageCache.writePage(pageId, stored);
 
     for (const idx of this.indexes) {
-      for (let r = 0; r < chunk.size; r++) {
-        const key = chunk.columns[idx.columnIndex].get(r);
+      for (let r = 0; r < stored.size; r++) {
+        const key = stored.columns[idx.columnIndex].get(r);
         if (key !== null && key !== undefined) {
           idx.btree.insert(key, { pageId, rowIndex: r });
         }
@@ -87,11 +93,12 @@ export class Table {
     }
   }
 
-  async *scan(): AsyncGenerator<DataChunk> {
+  async *scan(pruner: ChunkPruner | null = null): AsyncGenerator<DataChunk> {
     await this.flush();
-    for (const pageId of this.pageIds) {
-      const chunk = await this.pageCache.fetchPage(pageId, true);
-      yield chunk as DataChunk;
+    for (let i = 0; i < this.pageIds.length; i++) {
+      if (pruner && pruner.canSkip(this.zoneMaps[i])) continue;
+      const chunk = await this.pageCache.fetchPage(this.pageIds[i], true);
+      yield (chunk as DataChunk).scanView();
     }
   }
 
@@ -99,7 +106,7 @@ export class Table {
     await this.flush();
     const chunks: DataChunk[] = [];
     for (const pageId of this.pageIds) {
-      chunks.push(await this.pageCache.fetchPage(pageId, false) as DataChunk);
+      chunks.push((await this.pageCache.fetchPage(pageId, false) as DataChunk).scanView());
     }
     return chunks;
   }

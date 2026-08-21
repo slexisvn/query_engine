@@ -1,4 +1,4 @@
-import { PlanNodeType, type LogicalPlanNode, type LogicalJoinNode } from '../planner/logical-plan.js';
+import { PlanNodeType, type LogicalPlanNode } from '../planner/logical-plan.js';
 import { PhysicalNodeType, type PhysicalJoinNode, type PhysicalPlanNode } from './physical-plan.js';
 import type { ExecutionCatalog } from './execution-catalog.js';
 import type { MaterializedCTE } from './builders/cte-builders.js';
@@ -28,7 +28,7 @@ import { buildExchange, buildMergeExchange, buildExchangeReceive } from './build
 import type { ChunkSpillStore } from '../storage/spill-manager/spill-manager.js';
 import type { TableStorage } from '../storage/table-storage.js';
 import type { DataChunk } from '../storage/chunk.js';
-import type { DataType, ColumnValue } from '../storage/data-type.js';
+import type { DataType } from '../storage/data-type.js';
 import type { BoundAggregateNode, BoundExpr } from '../binder/expression-binder.js';
 import type {
   CompiledPipeline,
@@ -55,8 +55,6 @@ type WorkerPoolLike = WorkerPoolHandle;
 type ParallelDispatchLike = ParallelExpressionDispatch;
 
 type FragmentPoolLike = JoinFragmentPoolLike & AggFragmentPoolLike;
-
-
 
 interface ExecuteResult {
   sink: ResultSink;

@@ -13,16 +13,13 @@ import type {
   SourceGenerator,
 } from '../execution-types.js';
 import type {
-  LogicalPlanNode,
   LogicalScanNode,
   LogicalIndexScanNode,
-  LogicalSingleRowNode,
-  LogicalEmptyNode,
 } from '../../planner/logical-plan.js';
 import type { ColumnInfo } from '../../binder/scope.js';
-import { isPagedTableStorage, type TableStorage } from '../../storage/table-storage.js';
-
-
+import { isPagedTableStorage } from '../../storage/table-storage.js';
+import { compileChunkPruner, schemaColumnResolver } from '../zone-map-pruner.js';
+import { Config } from '../../config.js';
 
 interface ExecutorLike {
   catalog: ExecutionCatalog;
@@ -41,14 +38,18 @@ export async function buildScan(executor: ExecutorLike, physical: PhysicalPlanNo
   const outputSchema = projectedColumns
     ? projectedColumns.map((i: number) => schema[i])
     : schema;
-  const finalSchema = outputSchema.map((c: ExecColumn) => ({ ...c, tableAlias: node.alias || node.table }));
-  const columnMapping = executor.buildSchemaMapping(finalSchema, node.alias || node.table);
+  const alias = node.alias || node.table;
+  const finalSchema = outputSchema.map((c: ExecColumn) => ({ ...c, tableAlias: alias }));
+  const columnMapping = executor.buildSchemaMapping(finalSchema, alias);
+  const pruner = Config.zoneMapPruning
+    ? compileChunkPruner(node.pruningFilter ?? null, schemaColumnResolver(schema, alias))
+    : null;
 
   return {
     schema: finalSchema,
     columnMapping,
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
-      const scanOp = new ScanOperator(storage, projectedColumns);
+      const scanOp = new ScanOperator(storage, projectedColumns, pruner);
 
       const source: SourceGenerator = async function* () {
         for await (const chunk of scanOp.scan()) {
@@ -101,7 +102,6 @@ export async function buildIndexScan(executor: ExecutorLike, physical: PhysicalP
 }
 
 export async function buildSingleRow(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
-  const node = physical.logical as LogicalSingleRowNode;
   return {
     schema: [],
     columnMapping: new Map(),
@@ -118,7 +118,6 @@ export async function buildSingleRow(executor: ExecutorLike, physical: PhysicalP
 }
 
 export async function buildEmpty(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
-  const node = physical.logical as LogicalEmptyNode;
   const child = await executor.buildPipeline(physical.children[0]);
   return {
     schema: child.schema,

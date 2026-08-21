@@ -1,40 +1,18 @@
-import { OptimizationPass } from '../../optimizer/pass.js';
-import { SetOpType, LogicalDistinct, LogicalExchange, setChildren, type LogicalPlanNode, type LogicalSetOpNode } from '../../planner/logical-plan.js';
-import { PlanRewriter } from '../../planner/plan-rewriter.js';
-import { ExchangeType } from '../planner/fragment.js';
-import { partitionedScanTables, localPartitionedScanTables, shuffleKeysOf, type PartitionMapLike } from './repartition.js';
+import { SetOpType, LogicalDistinct, setChildren, type LogicalPlanNode, type LogicalSetOpNode } from '../../planner/logical-plan.js';
+import { PartitionAwareRewritePass, PartitionAwareRewriter } from './distributed-pass.js';
+import { partitionedScanTables, localPartitionedScanTables, hashShuffleExchange } from './repartition.js';
 
-interface DistributedFlag {
-  _distributed?: boolean;
-}
-
-export class DistributedSetOpPass extends OptimizationPass {
-  _partitionMap: PartitionMapLike | null;
-
-  constructor(partitionMap: PartitionMapLike | null) {
-    super();
-    this._partitionMap = partitionMap;
-  }
-
+export class DistributedSetOpPass extends PartitionAwareRewritePass {
   override get name(): string {
     return 'DistributedSetOp';
   }
 
-  override apply(plan: LogicalPlanNode): LogicalPlanNode {
-    if (!(plan as LogicalPlanNode & DistributedFlag)._distributed) return plan;
-    const rewriter = new DistributedSetOpRewriter(this._partitionMap);
-    return rewriter.rewrite(plan);
+  override _createRewriter(): DistributedSetOpRewriter {
+    return new DistributedSetOpRewriter(this._partitionMap);
   }
 }
 
-class DistributedSetOpRewriter extends PlanRewriter {
-  _partitionMap: PartitionMapLike | null;
-
-  constructor(partitionMap: PartitionMapLike | null) {
-    super();
-    this._partitionMap = partitionMap;
-  }
-
+class DistributedSetOpRewriter extends PartitionAwareRewriter {
   override rewriteSetOp(node: LogicalSetOpNode): LogicalPlanNode {
     const newNode = this.rewriteChildren(node);
     const perInput = newNode.children.map(child => partitionedScanTables(child, this._partitionMap));
@@ -45,28 +23,13 @@ class DistributedSetOpRewriter extends PlanRewriter {
     }
 
     return setChildren(newNode, newNode.children.map((child, index) =>
-      perInput[index].size === 0 ? child : this._repartition(child)));
+      perInput[index].size === 0 ? child : hashShuffleExchange(child, child, child._cardinality)));
   }
 
   _globalDedup(node: LogicalSetOpNode): LogicalPlanNode {
-    const exchangeNode = LogicalExchange(
-      ExchangeType.HASH_SHUFFLE,
-      shuffleKeysOf(node.children[0]),
-      0,
-      node
-    );
-    exchangeNode._cardinality = node._cardinality;
-
-    const finalDistinct = LogicalDistinct(exchangeNode);
+    const finalDistinct = LogicalDistinct(hashShuffleExchange(node.children[0], node, node._cardinality));
     finalDistinct._cardinality = node._cardinality;
-
     return finalDistinct;
-  }
-
-  _repartition(child: LogicalPlanNode): LogicalPlanNode {
-    const exchangeNode = LogicalExchange(ExchangeType.HASH_SHUFFLE, shuffleKeysOf(child), 0, child);
-    exchangeNode._cardinality = child._cardinality;
-    return exchangeNode;
   }
 
   _isPartitionWise(node: LogicalSetOpNode): boolean {

@@ -5,6 +5,7 @@ import { inlineCTEScans } from '../planner/cte-inline.js';
 import { FragmentExecutor } from './fragment-executor.js';
 import { ResultSink } from '../../execution/result-sink.js';
 import { QueryResult } from '../../execution/query-result.js';
+import { markDistributed } from '../distributed-types.js';
 import type { Fragment, FragmentPlan } from '../planner/fragment.js';
 import type { QueryEngine } from '../../engine/query-engine.js';
 import type { ClusterManager } from '../cluster/cluster-manager.js';
@@ -22,10 +23,6 @@ import type {
   DistributedQueryResult,
   ExchangeType,
 } from '../distributed-types.js';
-
-interface DistributedFlag {
-  _distributed?: boolean;
-}
 
 const EMPTY_NODES: ReadonlySet<NodeId> = new Set();
 
@@ -66,8 +63,6 @@ interface ExchangeReceiverHost {
 type LocalExecutorHost = FragmentExecutor['_localExecutor'] & ExchangeReceiverHost;
 
 type FragmentExecuteResult = Awaited<ReturnType<FragmentExecutor['execute']>>;
-
-type ExecutorFragment = Parameters<FragmentExecutor['execute']>[0];
 
 type BridgeFragment = Omit<Fragment, 'markFailed'> & FragmentMarkFailedLike;
 
@@ -117,8 +112,6 @@ export class QueryCoordinator {
       const compiled = await this._engine.compile(sql);
       if (compiled.ddl) {
         const source = ctasQuery(compiled.ddl);
-        // CREATE TABLE ... AS SELECT has to read through the cluster: run on the coordinator
-        // alone and it would happily materialise an empty table from its own empty partitions.
         if (!source) return this._engine.executeDDL(compiled.ddl);
 
         const ctas = this._engine.compileQueryStatement(source.query);
@@ -136,7 +129,7 @@ export class QueryCoordinator {
   async _runDistributedQuery(compiled: CompiledQueryParts, queryId: number, startTime: number, timeout: number): Promise<QueryResult> {
     const { plan, outputColumns, cteMap } = compiled;
     const inlinedPlan = inlineCTEScans(plan, cteMap);
-    (inlinedPlan as DistributedFlag)._distributed = true;
+    markDistributed(inlinedPlan);
 
     const distributedPlan = this._reoptimize(inlinedPlan);
     const planner = new DistributedPlanner(
@@ -243,9 +236,6 @@ export class QueryCoordinator {
           throw new Error(`Fragment ${fragment.fragmentId} failed after ${maxRetries} retries: ${(err as Error).message}`);
         }
 
-        // A fragment reads the partitions held by its own target nodes, so it may only be
-        // retried within that set. Handing it to any other worker would silently scan that
-        // worker's partitions instead — a short or duplicated answer rather than a failure.
         failedNodes.add(targetNodeId);
         fragment.state = FragmentState.PENDING;
       }
@@ -270,8 +260,6 @@ export class QueryCoordinator {
   }
 
   async _executeRootFragmentWithReceivers(rootFragment: Fragment, receivers: FragmentReceivers): Promise<RootFragmentResult> {
-    const fragmentId = rootFragment.fragmentId;
-    const cancelToken = { cancelled: false };
     rootFragment.markRunning();
 
     const sink = new ResultSink(false);

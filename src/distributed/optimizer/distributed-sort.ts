@@ -1,20 +1,14 @@
-import { OptimizationPass } from '../../optimizer/pass.js';
-import { PlanNodeType, LogicalMergeExchange, LogicalSort, getChildren, setChildren, type LogicalPlanNode, type LogicalSortNode, type LogicalTopNNode, type LogicalLimitNode } from '../../planner/logical-plan.js';
+import { PlanNodeType, LogicalMergeExchange, LogicalSort, type LogicalPlanNode, type LogicalSortNode, type LogicalTopNNode, type LogicalLimitNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-rewriter.js';
+import { DistributedRewritePass } from './distributed-pass.js';
 
-interface DistributedFlag {
-  _distributed?: boolean;
-}
-
-export class DistributedSortPass extends OptimizationPass {
+export class DistributedSortPass extends DistributedRewritePass {
   override get name(): string {
     return 'DistributedSort';
   }
 
-  override apply(plan: LogicalPlanNode): LogicalPlanNode {
-    if (!(plan as LogicalPlanNode & DistributedFlag)._distributed) return plan;
-    const rewriter = new DistributedSortRewriter();
-    return rewriter.rewrite(plan);
+  override _createRewriter(): DistributedSortRewriter {
+    return new DistributedSortRewriter();
   }
 }
 

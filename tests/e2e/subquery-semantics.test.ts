@@ -262,6 +262,51 @@ describe('subquery and derived table semantics', () => {
     });
   });
 
+  describe('row-limited correlated subqueries', () => {
+    it('applies LIMIT within each correlation group, not across the whole subquery', async () => {
+      const rows = await runQuery('SELECT ID FROM EMP E WHERE E.DEPT IN (SELECT F.DEPT FROM EMP F WHERE F.ID = E.ID LIMIT 1)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 1 }, { ID: 2 }, { ID: 3 }, { ID: 4 }]));
+    });
+
+    it('orders within the group before applying LIMIT', async () => {
+      const rows = await runQuery(
+        'SELECT ID FROM EMP E WHERE E.SAL = (SELECT F.SAL FROM EMP F WHERE F.DEPT = E.DEPT ORDER BY F.SAL ASC LIMIT 1)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 1 }, { ID: 3 }]));
+    });
+
+    it('applies OFFSET within each correlation group', async () => {
+      const rows = await runQuery(
+        'SELECT ID FROM EMP E WHERE E.SAL = (SELECT F.SAL FROM EMP F WHERE F.DEPT = E.DEPT ORDER BY F.SAL ASC LIMIT 1 OFFSET 1)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 2 }]));
+    });
+
+    it('yields no group rows for LIMIT 0', async () => {
+      const rows = await runQuery('SELECT ID FROM EMP E WHERE E.DEPT IN (SELECT F.DEPT FROM EMP F WHERE F.ID = E.ID LIMIT 0)');
+      expect(rows).toEqual([]);
+    });
+
+    it('keeps NOT IN consistent with the per-group LIMIT', async () => {
+      const rows = await runQuery('SELECT ID FROM EMP E WHERE E.DEPT NOT IN (SELECT F.DEPT FROM EMP F WHERE F.ID = E.ID LIMIT 1)');
+      expect(rows).toEqual([]);
+    });
+
+    it('resolves a correlated scalar subquery that carries a LIMIT', async () => {
+      const rows = await runQuery('SELECT ID FROM EMP E WHERE E.SAL >= (SELECT F.SAL FROM EMP F WHERE F.ID = E.ID LIMIT 1)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 1 }, { ID: 2 }, { ID: 3 }, { ID: 5 }]));
+    });
+
+    it('leaves an uncorrelated LIMIT applying to the whole subquery', async () => {
+      const rows = await runQuery('SELECT ID FROM EMP E WHERE E.SAL >= (SELECT F.SAL FROM EMP F WHERE F.SAL IS NOT NULL ORDER BY F.SAL DESC LIMIT 1)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 5 }]));
+    });
+
+    it('rejects a row limit correlated by a non-equality predicate', async () => {
+      await expect(runQuery(
+        'SELECT ID FROM EMP E WHERE E.DEPT IN (SELECT F.DEPT FROM EMP F WHERE F.SAL > E.SAL ORDER BY F.ID LIMIT 2)'))
+        .rejects.toThrow(/cannot be decorrelated/);
+    });
+  });
+
   describe('depth of correlation', () => {
     it('correlates a subquery nested inside another subquery to its own parent', async () => {
       const rows = await runQuery(

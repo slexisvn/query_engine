@@ -166,7 +166,7 @@ async function spawnWorkers(engine: QueryEngine, coordPort: number, count: numbe
         try { c.kill(); } catch (_) {}
       }
       reject(new Error(`Timed out waiting for ${count} workers (${registered} registered)`));
-    }, 30000);
+    }, Config.workerStartupTimeoutMs);
 
     transport.onRegister((reg: NodeRegistration) => {
       const workerDesc = new NodeDescriptor({

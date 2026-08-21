@@ -9,7 +9,6 @@ import type { ChunkSpillStore } from '../../storage/spill-manager/spill-manager.
 import { DataChunk } from '../../storage/chunk.js';
 import { DataType, type ColumnValue } from '../../storage/data-type.js';
 import { globalDispatch } from '../../wasm/dispatch.js';
-import { hashValue } from '../../utils/hash.js';
 import { resolveWasmAggKernel, type ScalarReduceKernel, type BitmapCountKernel } from './agg-wasm.js';
 import type { BoundExpr } from '../../binder/expression-binder.js';
 import type { CompiledExpr, ColumnMapping, EvalValue } from '../execution-types.js';

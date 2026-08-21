@@ -1,8 +1,6 @@
 import { Column } from '../../storage/column.js';
 import { DataChunk } from '../../storage/chunk.js';
-import { DataType } from '../../storage/data-type.js';
 import type { ColumnValue } from '../../storage/data-type.js';
-import { Config } from '../../config.js';
 import { keyIdentityText } from '../../execution/hash-table.js';
 
 const NULL_PARTITION = 0;

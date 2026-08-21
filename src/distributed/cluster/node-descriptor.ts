@@ -1,32 +1,20 @@
+import { Config } from '../../config.js';
+import { NodeRole, NodeStatus } from '../distributed-types.js';
 import type {
   NodeId,
   NodeCapacity,
   NodeDescriptorJSON,
 } from '../distributed-types.js';
 
-export const NodeRole = {
-  COORDINATOR: 'coordinator',
-  WORKER: 'worker',
-  HYBRID: 'hybrid',
-} as const;
-
-export type NodeRoleValue = (typeof NodeRole)[keyof typeof NodeRole];
-
-export const NodeStatus = {
-  ALIVE: 'alive',
-  SUSPECT: 'suspect',
-  DEAD: 'dead',
-} as const;
-
-export type NodeStatusValue = (typeof NodeStatus)[keyof typeof NodeStatus];
+export { NodeRole, NodeStatus };
 
 export interface NodeDescriptorParams {
   nodeId: NodeId;
   host: string;
   port: number;
-  role?: NodeRoleValue;
+  role?: NodeRole;
   capacity?: NodeCapacity;
-  status?: NodeStatusValue;
+  status?: NodeStatus;
   partitions?: string[];
 }
 
@@ -34,9 +22,9 @@ export class NodeDescriptor {
   nodeId: NodeId;
   host: string;
   port: number;
-  role: NodeRoleValue;
+  role: NodeRole;
   capacity: NodeCapacity;
-  status: NodeStatusValue;
+  status: NodeStatus;
   partitions: Set<string>;
 
   constructor({ nodeId, host, port, role, capacity, status }: NodeDescriptorParams) {
@@ -44,7 +32,7 @@ export class NodeDescriptor {
     this.host = host;
     this.port = port;
     this.role = role || NodeRole.WORKER;
-    this.capacity = capacity || { cores: 1, memoryMb: 512 };
+    this.capacity = capacity || { cores: Config.defaultNodeCores, memoryMb: Config.defaultNodeMemoryMb };
     this.status = status || NodeStatus.ALIVE;
     this.partitions = new Set();
   }
@@ -83,15 +71,15 @@ export class NodeDescriptor {
       nodeId: this.nodeId,
       host: this.host,
       port: this.port,
-      role: this.role as NodeDescriptorJSON['role'],
+      role: this.role,
       capacity: this.capacity,
-      status: this.status as NodeDescriptorJSON['status'],
+      status: this.status,
       partitions: [...this.partitions],
     };
   }
 
   static fromJSON(json: NodeDescriptorJSON): NodeDescriptor {
-    const desc = new NodeDescriptor(json as NodeDescriptorParams);
+    const desc = new NodeDescriptor(json);
     if (json.partitions) {
       for (const p of json.partitions) {
         desc.partitions.add(p);

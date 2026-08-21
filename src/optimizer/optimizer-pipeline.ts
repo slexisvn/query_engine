@@ -21,6 +21,7 @@ import { JoinResidualSplit } from './passes/join-residual-split.js';
 import { PlanProperties } from './passes/plan-properties.js';
 import { SortElimination } from './passes/sort-elimination.js';
 import { TopNFusion } from './passes/topn-fusion.js';
+import { ScanPruning } from './passes/scan-pruning.js';
 import type { StatsProvider, TableStats } from '../catalog/statistics.js';
 
 export const PREDICATE_FIXPOINT_STAGE = 'PredicateOptimization';
@@ -64,5 +65,6 @@ export function createDefaultOptimizer({ catalog, statistics }: OptimizerPipelin
     .registerPass(new JoinResidualSplit())
     .registerPass(new PlanProperties(statsMap))
     .registerPass(new SortElimination())
-    .registerPass(new TopNFusion());
+    .registerPass(new TopNFusion())
+    .registerPass(new ScanPruning());
 }

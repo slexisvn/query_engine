@@ -81,7 +81,7 @@ export class SortOperator {
     this.appendChunk(chunk);
     this.memoryBudget.admit(chunk.size);
 
-    if (this.topN && this.runCount === 0 && this.rowCount > this.topN * 4) {
+    if (this.topN !== null && this.runCount === 0 && this.rowCount > this.topN * 4) {
       this.retain(this.sortedIndices().subarray(0, this.topN));
       this.memoryBudget.reset();
       this.memoryBudget.admit(this.rowCount);
@@ -146,7 +146,7 @@ export class SortOperator {
   async spillCurrentRun(): Promise<void> {
     if (this.rowCount === 0) return;
     let indices = this.sortedIndices();
-    if (this.topN && indices.length > this.topN) indices = indices.subarray(0, this.topN);
+    if (this.topN !== null && indices.length > this.topN) indices = indices.subarray(0, this.topN);
 
     await this.spillManager.appendChunk(`run_${this.runCount}`, this.gatherChunk(indices, 0, indices.length));
     this.runCount++;
@@ -157,7 +157,7 @@ export class SortOperator {
   async *stream(): AsyncGenerator<DataChunk> {
     if (this.runCount === 0) {
       let indices = this.sortedIndices();
-      if (this.topN && indices.length > this.topN) indices = indices.subarray(0, this.topN);
+      if (this.topN !== null && indices.length > this.topN) indices = indices.subarray(0, this.topN);
       if (this.offset > 0) indices = indices.subarray(Math.min(this.offset, indices.length));
 
       await this.spillManager.clearAll();
@@ -199,7 +199,7 @@ export class SortOperator {
     let skipped = 0;
 
     while (!pq.isEmpty()) {
-      if (this.topN && count >= this.topN) break;
+      if (this.topN !== null && count >= this.topN) break;
 
       const cursor = pq.pop() as MergeCursor;
       count++;

@@ -122,57 +122,13 @@ describe('DependentJoinOperator', () => {
     });
   });
 
-  describe('IN', () => {
-    it('keeps outer row when subquery returns results (same as EXISTS)', async () => {
-      const op = new DependentJoinOperator('IN', schema);
-      const subChunk = makeChunk([{ type: 'INT32', values: [1] }]);
-      await op.processOuterRow([1, 100], [subChunk]);
-
-      const result = await op.finalize();
-
-      expect(result[0].size).toBe(1);
-    });
-
-    it('discards outer row when subquery returns empty', async () => {
-      const op = new DependentJoinOperator('IN', schema);
-      await op.processOuterRow([1, 100], []);
-
-      const result = await op.finalize();
-
-      expect(result.length).toBe(0);
-    });
-  });
-
-  describe('NOT_IN', () => {
-    it('keeps outer row when subquery returns empty (same as NOT_EXISTS)', async () => {
-      const op = new DependentJoinOperator('NOT_IN', schema);
-      await op.processOuterRow([1, 100], []);
-
-      const result = await op.finalize();
-
-      expect(result[0].size).toBe(1);
-    });
-
-    it('discards outer row when subquery returns results', async () => {
-      const op = new DependentJoinOperator('NOT_IN', schema);
-      const subChunk = makeChunk([{ type: 'INT32', values: [1] }]);
-      await op.processOuterRow([1, 100], [subChunk]);
-
-      const result = await op.finalize();
-
-      expect(result.length).toBe(0);
-    });
-  });
-
-  describe('unknown subquery type', () => {
-    it('always keeps outer row', async () => {
-      const op = new DependentJoinOperator('UNKNOWN', schema);
-      await op.processOuterRow([1, 100], []);
-
-      const result = await op.finalize();
-
-      expect(result[0].size).toBe(1);
-    });
+  describe('unsupported subquery types', () => {
+    for (const subqueryType of ['IN', 'NOT_IN', 'MARK', 'UNKNOWN']) {
+      it(`refuses ${subqueryType}, which needs an outer expression it never receives`, () => {
+        expect(() => new DependentJoinOperator(subqueryType, schema))
+          .toThrow(/compares no outer expression/);
+      });
+    }
   });
 
   describe('finalize output format', () => {

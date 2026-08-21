@@ -1,7 +1,7 @@
 import { Column } from '../storage/column.js';
 import { DictionaryColumn } from '../storage/dictionary-column.js';
 import { DataChunk, type AnyColumn } from '../storage/chunk.js';
-import { DataType, isFixedWidth, typedArrayCtorFor, type AnyTypedArray } from '../storage/data-type.js';
+import { DataType, isFixedWidth, typedArrayCtorFor } from '../storage/data-type.js';
 import { isSharedView, type Allocator } from '../storage/sab-arena.js';
 import { bitmapWordCount } from '../utils/bitmap.js';
 import type { EncodedChunkSet } from './worker-messages.js';

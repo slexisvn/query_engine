@@ -114,27 +114,6 @@ export interface StatusResponse {
   nodeId: NodeId | null;
 }
 
-export const CHUNK_HEADER_MAGIC = 0x51454348;
-
-export interface EncodedChunkColumnHeader {
-  typeId: number;
-  isDictionary: boolean;
-  payloadSize: number;
-}
-
-export interface EncodedChunkEnvelope {
-  magic: typeof CHUNK_HEADER_MAGIC;
-  columnCount: number;
-  rowCount: number;
-  columns: EncodedChunkColumnHeader[];
-}
-
-export interface DecodedColumnMeta {
-  dataType: DataType;
-  isDictionary: boolean;
-  payloadSize: number;
-}
-
 export interface ExchangeChunkMessage {
   channelId: ChannelId;
   sourceNodeId: NodeId;
@@ -427,6 +406,17 @@ export type DistributedPlanNodeType =
   | PlanNodeType.FINAL_AGGREGATE
   | PlanNodeType.MERGE_EXCHANGE
   | PlanNodeType.EXCHANGE_RECEIVE;
+
+export type DistributedPlanNode = LogicalPlanNode & { _distributed?: boolean };
+
+export function markDistributed<T extends LogicalPlanNode>(plan: T): T {
+  (plan as DistributedPlanNode)._distributed = true;
+  return plan;
+}
+
+export function isDistributed(plan: LogicalPlanNode): boolean {
+  return (plan as DistributedPlanNode)._distributed === true;
+}
 
 export interface WorkerFragmentSpec {
   fragmentId: FragmentId;

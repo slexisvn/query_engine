@@ -1,11 +1,11 @@
-import { PlanNodeType } from '../../planner/logical-plan.js';
+
 import type { LogicalPlanNode } from '../../planner/logical-plan.js';
 import { QueryExecutor } from '../../execution/query-executor.js';
 import { ResultSink } from '../../execution/result-sink.js';
 import { CancelToken } from '../../execution/pipeline.js';
 import { ExchangeSender } from './exchange-operator.js';
 import { ExchangeReceiver } from './exchange-operator.js';
-import { FragmentState, fragmentOutputChannel } from '../planner/fragment.js';
+import { fragmentOutputChannel } from '../planner/fragment.js';
 import type { Transport } from '../transport/transport.js';
 import type { CompiledPipeline } from '../../execution/execution-types.js';
 import type { DataChunk } from '../../storage/chunk.js';

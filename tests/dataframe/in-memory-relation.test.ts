@@ -48,4 +48,46 @@ describe('InMemoryRelation', () => {
     expect(collected.length).toBe(total);
     expect(collected[total - 1].x).toBe(total - 1);
   });
+
+  describe('zone maps', () => {
+    function multiChunkRelation() {
+      const total = 3 * DEFAULT_CHUNK_SIZE;
+      const rows = Array.from({ length: total }, (_, i) => ({ x: i }));
+      return InMemoryRelation.fromRows(rows);
+    }
+
+    it('derives one summary per chunk', () => {
+      const rel = multiChunkRelation();
+
+      const zoneMaps = rel.zoneMaps();
+
+      expect(zoneMaps).toHaveLength(rel.chunks.length);
+      expect(zoneMaps[0].columns[0].range).toEqual({ min: 0, max: DEFAULT_CHUNK_SIZE - 1 });
+      expect(zoneMaps[2].columns[0].range).toEqual({ min: 2 * DEFAULT_CHUNK_SIZE, max: 3 * DEFAULT_CHUNK_SIZE - 1 });
+    });
+
+    it('derives the summaries once and reuses them', () => {
+      const rel = multiChunkRelation();
+
+      expect(rel.zoneMaps()).toBe(rel.zoneMaps());
+    });
+
+    it('does not derive summaries for an unpruned scan', async () => {
+      const rel = multiChunkRelation();
+
+      for await (const chunk of rel.scan()) expect(chunk.size).toBeGreaterThan(0);
+
+      expect(rel._zoneMaps).toBeNull();
+    });
+
+    it('yields only the chunks the pruner keeps', async () => {
+      const rel = multiChunkRelation();
+      const firstChunkOnly = { canSkip: (zoneMap) => zoneMap.columns[0].range.min > 0 };
+
+      const seen = [];
+      for await (const chunk of rel.scan(firstChunkOnly)) seen.push(chunk.columns[0].get(0));
+
+      expect(seen).toEqual([0]);
+    });
+  });
 });

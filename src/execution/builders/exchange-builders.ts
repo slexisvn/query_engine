@@ -4,7 +4,6 @@ import type { DataChunk } from '../../storage/chunk.js';
 import type { PipelineGraph } from '../pipeline.js';
 import type { BoundExpr } from '../../binder/expression-binder.js';
 import type {
-  LogicalPlanNode,
   LogicalExchangeNode,
   LogicalMergeExchangeNode,
   LogicalExchangeReceiveNode,

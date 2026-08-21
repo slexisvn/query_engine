@@ -7,6 +7,7 @@ import {
   LogicalFilter,
   LogicalProject,
   LogicalAggregate,
+  LogicalLimit,
   setChildren,
 } from '../../../src/planner/logical-plan.js';
 import { BoundExprKind } from '../../../src/binder/expression-binder.js';
@@ -297,6 +298,92 @@ describe('SubqueryUnnesting', () => {
         return cond.op === '>' || (cond.left && cond.left.columnName === 'val');
       });
       expect(hasLocalFilter).toBe(true);
+    });
+  });
+
+  describe('row-limited correlated subqueries', () => {
+    function findNode(node, type) {
+      if (!node) return null;
+      if (node.type === type) return node;
+      for (const child of node.children || []) {
+        const found = findNode(child, type);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    function correlatedLimitPlan(count, offset = 0) {
+      const subquery = LogicalLimit(count, offset, LogicalProject(
+        [colRef('b', 'val')],
+        LogicalFilter(bin(corrRef('a', 'id'), '=', colRef('b', 'id')), scan('b'))
+      ));
+      return depJoin('IN', scan('a'), subquery, [corrRef('a', 'id')], colRef('a', 'val'));
+    }
+
+    it('replaces the limit with a row number partitioned by the correlation key', () => {
+      const result = pass.apply(correlatedLimitPlan(1));
+
+      expect(findNode(result, PlanNodeType.LIMIT)).toBeNull();
+      const window = findNode(result, PlanNodeType.WINDOW);
+      expect(window).not.toBeNull();
+      expect(window.windowExprs).toHaveLength(1);
+      expect(window.windowExprs[0].name).toBe('ROW_NUMBER');
+      expect(window.windowExprs[0].partitionBy).toEqual([
+        expect.objectContaining({ tableAlias: 'b', columnName: 'id' }),
+      ]);
+    });
+
+    it('gates the row number by the requested count', () => {
+      const result = pass.apply(correlatedLimitPlan(3));
+
+      const window = findNode(result, PlanNodeType.WINDOW);
+      const gate = findNode(result, PlanNodeType.FILTER);
+      expect(gate.children[0]).toBe(window);
+      expect(gate.condition.op).toBe('<=');
+      expect(gate.condition.left).toBe(window.windowExprs[0]);
+      expect(gate.condition.right.value).toBe(3);
+    });
+
+    it('gates both ends of the range when an offset is present', () => {
+      const result = pass.apply(correlatedLimitPlan(2, 5));
+
+      const gate = findNode(result, PlanNodeType.FILTER);
+      expect(gate.condition.op).toBe('AND');
+      expect(gate.condition.left.op).toBe('>');
+      expect(gate.condition.left.right.value).toBe(5);
+      expect(gate.condition.right.op).toBe('<=');
+      expect(gate.condition.right.right.value).toBe(7);
+    });
+
+    it('ranks below the projection so the correlation column stays in scope', () => {
+      const result = pass.apply(correlatedLimitPlan(1));
+
+      const window = findNode(result, PlanNodeType.WINDOW);
+      expect(window.windowExprs[0].partitionBy[0].columnName).toBe('id');
+      expect(window.children[0].type).toBe(PlanNodeType.SCAN);
+    });
+
+    it('leaves an uncorrelated limit applying globally', () => {
+      const subquery = LogicalLimit(1, 0, LogicalProject(
+        [colRef('b', 'val')],
+        LogicalFilter(bin(colRef('b', 'val'), '>', lit(5)), scan('b'))
+      ));
+      const plan = depJoin('IN', scan('a'), subquery, [], colRef('a', 'val'));
+
+      const result = pass.apply(plan);
+
+      expect(findNode(result, PlanNodeType.LIMIT)).not.toBeNull();
+      expect(findNode(result, PlanNodeType.WINDOW)).toBeNull();
+    });
+
+    it('rejects a row limit correlated by a non-equality predicate', () => {
+      const subquery = LogicalLimit(1, 0, LogicalProject(
+        [colRef('b', 'val')],
+        LogicalFilter(bin(corrRef('a', 'val'), '>', colRef('b', 'val')), scan('b'))
+      ));
+      const plan = depJoin('IN', scan('a'), subquery, [corrRef('a', 'val')], colRef('a', 'val'));
+
+      expect(() => pass.apply(plan)).toThrow(/cannot be decorrelated/);
     });
   });
 

@@ -49,7 +49,7 @@ export class PipelineGraph {
 
   getReadyPipelines(): Pipeline[] {
     const ready: Pipeline[] = [];
-    for (const [id, pipeline] of this.pipelines.entries()) {
+    for (const pipeline of this.pipelines.values()) {
       if (pipeline.state === 'PENDING' && pipeline.dependencies.size === 0) {
         ready.push(pipeline);
       }

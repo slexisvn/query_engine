@@ -70,8 +70,6 @@ function reset(): void {
   bumpOffset = 0;
 }
 
-const BYTE_WIDTH: Record<WasmDataType, number> = { INT32: 4, FLOAT64: 8, DATE: 4 };
-
 const FILTER_EXPORT_MAP: Record<string, string> = {
   'filterEq:INT32': 'filterEqI32',
   'filterLt:INT32': 'filterLtI32',

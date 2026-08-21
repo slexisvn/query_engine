@@ -1,5 +1,7 @@
-import { BoundExprKind, type BoundExpr, type BoundColumnRefNode, type BoundLiteralNode, type BoundBinaryNode, type BoundBetweenNode, type BoundLikeNode, type BoundInListNode, type BoundIsNullNode, type LiteralValue } from '../binder/expression-binder.js';
+import { BoundExprKind, type BoundExpr, type BoundColumnRefNode, type BoundLiteralNode, type BoundBinaryNode, type BoundBetweenNode, type BoundLikeNode, type BoundInListNode, type BoundIsNullNode, type BoundExistsNode } from '../binder/expression-binder.js';
+import type { BoundQuery } from '../binder/binder.js';
 import { PlanNodeType, JoinType, type LogicalPlanNode } from './logical-plan.js';
+import { createLogicalPlan } from './logical-planner.js';
 import { toNumericValue } from '../storage/data-type.js';
 import { Config } from '../config.js';
 import type { ColumnStats, HistogramLike, Mcv, StatsProvider, TableStats } from '../catalog/statistics.js';
@@ -16,9 +18,11 @@ export interface EquiPred {
 
 export class DefaultCardinalityEstimator {
   stats: StatsProvider;
+  subqueryCardinalities: WeakMap<BoundQuery, number>;
 
   constructor(statisticsProvider: StatsProvider) {
     this.stats = statisticsProvider;
+    this.subqueryCardinalities = new WeakMap();
   }
 
   estimateScan(tableName: string): number {
@@ -62,12 +66,10 @@ export class DefaultCardinalityEstimator {
     }
   }
 
-
   estimateFilter(inputCard: number, predicate: BoundExpr | null): number {
     const sel = this.estimateSelectivity(predicate);
     return Math.max(1, Math.round(inputCard * sel));
   }
-
 
   estimateJoin(leftCard: number, rightCard: number, condition: BoundExpr | null): number {
     if (!condition) return leftCard * rightCard;
@@ -105,23 +107,25 @@ export class DefaultCardinalityEstimator {
       const freqB = new Map<string | number, number>();
       for (let i = 0; i < mcvB.values.length; i++) freqB.set(mcvB.values[i], mcvB.frequencies[i]);
       for (let i = 0; i < mcvA.values.length; i++) {
-        sumMcvA += mcvA.frequencies[i];
         const fb = freqB.get(mcvA.values[i]);
         if (fb !== undefined) matched += mcvA.frequencies[i] * fb;
       }
-      for (let i = 0; i < mcvB.frequencies.length; i++) sumMcvB += mcvB.frequencies[i];
+      sumMcvA = mcvA.totalFrequency;
+      sumMcvB = mcvB.totalFrequency;
       mcvLenA = mcvA.values.length;
       mcvLenB = mcvB.values.length;
     }
 
-    const otherA = Math.max(0, (1 - (sA?.nullFraction || 0)) - sumMcvA);
-    const otherB = Math.max(0, (1 - (sB?.nullFraction || 0)) - sumMcvB);
+    const nonNullA = 1 - (sA?.nullFraction || 0);
+    const nonNullB = 1 - (sB?.nullFraction || 0);
+    const otherA = Math.max(0, nonNullA * (1 - sumMcvA));
+    const otherB = Math.max(0, nonNullB * (1 - sumMcvB));
     const ndOtherA = Math.max(1, ndA - mcvLenA);
     const ndOtherB = Math.max(1, ndB - mcvLenB);
     const rate = tailRate !== null ? tailRate : 1 / Math.max(ndOtherA, ndOtherB);
     const tail = otherA * otherB * rate;
 
-    return Math.max(MIN_SELECTIVITY, Math.min(1, matched + tail));
+    return Math.max(MIN_SELECTIVITY, Math.min(1, nonNullA * nonNullB * matched + tail));
   }
 
   _histogramJoinCollision(sA: ColumnStats | null, sB: ColumnStats | null): number | null {
@@ -161,24 +165,23 @@ export class DefaultCardinalityEstimator {
     }
 
     const setB = new Set(mcvB.values);
-    let matchfreq = 0, sumMcvA = 0;
+    let matchfreq = 0;
     for (let i = 0; i < mcvA.values.length; i++) {
-      sumMcvA += mcvA.frequencies[i];
       if (setB.has(mcvA.values[i])) matchfreq += mcvA.frequencies[i];
     }
 
-    const otherA = Math.max(0, (1 - (sA?.nullFraction || 0)) - sumMcvA);
+    const nonNullA = 1 - (sA?.nullFraction || 0);
+    const otherA = Math.max(0, nonNullA * (1 - mcvA.totalFrequency));
     const ndOtherA = Math.max(1, ndvA - mcvA.values.length);
     const ndOtherB = Math.max(1, ndvB - mcvB.values.length);
     const tailMatch = otherA * Math.min(1, ndOtherB / ndOtherA);
-    return Math.max(MIN_SELECTIVITY, Math.min(1, matchfreq + tailMatch));
+    return Math.max(MIN_SELECTIVITY, Math.min(1, nonNullA * matchfreq + tailMatch));
   }
 
   estimateAntiJoin(leftCard: number, rightCard: number, condition: BoundExpr | null): number {
     const semiCard = this.estimateSemiJoin(leftCard, rightCard, condition);
     return Math.max(1, leftCard - semiCard);
   }
-
 
   estimateAggregate(inputCard: number, groupByCount: number, groupByExprs: BoundExpr[] = []): number {
     if (groupByCount === 0) return 1;
@@ -199,7 +202,6 @@ export class DefaultCardinalityEstimator {
     }
     return Math.min(inputCard, Math.pow(10, groupByCount));
   }
-
 
   estimateSelectivity(predicate: BoundExpr | null): number {
     if (!predicate) return 1.0;
@@ -240,10 +242,27 @@ export class DefaultCardinalityEstimator {
         if (predicate.op === 'NOT') return Math.max(MIN_SELECTIVITY, 1.0 - this.estimateSelectivity(predicate.operand));
         return 0.5;
       case BoundExprKind.EXISTS:
-        return 0.5;
+        return this.estimateExistsSelectivity(predicate);
       default:
         return 0.5;
     }
+  }
+
+  estimateExistsSelectivity(predicate: BoundExistsNode): number {
+    const matchProbability = predicate.plan
+      ? 1 - Math.exp(-Math.max(0, this.estimateSubqueryCardinality(predicate.plan)))
+      : Config.defaultExistsSelectivity;
+    const selectivity = predicate.negated ? 1 - matchProbability : matchProbability;
+    return Math.max(MIN_SELECTIVITY, Math.min(1, selectivity));
+  }
+
+  estimateSubqueryCardinality(query: BoundQuery): number {
+    const cached = this.subqueryCardinalities.get(query);
+    if (cached !== undefined) return cached;
+
+    const estimate = this.estimatePlan(createLogicalPlan(query));
+    this.subqueryCardinalities.set(query, estimate);
+    return estimate;
   }
 
   estimateEqualitySelectivity(predicate: BoundBinaryNode): number {
@@ -274,8 +293,13 @@ export class DefaultCardinalityEstimator {
     }
 
     const ndv = stats.ndv || DEFAULT_NDV;
-    const nullFrac = stats.nullFraction || 0;
-    return Math.max(MIN_SELECTIVITY, (1.0 - nullFrac) / ndv);
+    const nonNullFraction = 1.0 - (stats.nullFraction || 0);
+    const residualNdv = ndv - (stats.mcv?.values.length ?? 0);
+    const residualFraction = nonNullFraction * (1.0 - (stats.mcv?.totalFrequency ?? 0));
+    if (residualNdv > 0 && residualFraction > 0) {
+      return Math.max(MIN_SELECTIVITY, residualFraction / residualNdv);
+    }
+    return Math.max(MIN_SELECTIVITY, nonNullFraction / ndv);
   }
 
   estimateRangeSelectivity(predicate: BoundBinaryNode): number {
@@ -427,7 +451,6 @@ export class DefaultCardinalityEstimator {
     return fallbacks[type] ?? 0.1;
   }
 
-
   lookupCorrelation(leftPred: BoundExpr, rightPred: BoundExpr): number {
     const leftCol = this.extractSingleColumn(leftPred);
     const rightCol = this.extractSingleColumn(rightPred);
@@ -476,7 +499,6 @@ export class DefaultCardinalityEstimator {
     }
     return null;
   }
-
 
   extractEquiPredicates(condition: BoundExpr | null): EquiPred[] {
     const result: EquiPred[] = [];

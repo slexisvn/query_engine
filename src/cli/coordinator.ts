@@ -19,14 +19,14 @@ interface CoordinatorRegistration extends NodeRegistration {
 
 async function main(): Promise<void> {
   const args: string[] = process.argv.slice(2);
-  let port = 9400;
+  let port = Config.clusterPort;
   const dataPaths: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port' && args[i + 1]) {
       port = parseInt(args[++i], 10);
     } else if (args[i] === '--help' || args[i] === '-h') {
-      console.log('Usage: node src/cli/coordinator.js [--port 9400] <file1> [file2...]');
+      console.log(`Usage: node src/cli/coordinator.js [--port ${Config.clusterPort}] <file1> [file2...]`);
       console.log('');
       console.log('Starts a coordinator node that accepts SQL queries.');
       console.log('Workers connect to this node to form a cluster.');
@@ -42,7 +42,7 @@ async function main(): Promise<void> {
   }
 
   if (dataPaths.length === 0) {
-    console.error('Usage: node src/cli/coordinator.js [--port 9400] <file1> [file2...]');
+    console.error(`Usage: node src/cli/coordinator.js [--port ${Config.clusterPort}] <file1> [file2...]`);
     process.exit(1);
   }
 

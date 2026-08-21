@@ -1,7 +1,7 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanNodeType, JoinType, LogicalJoin, LogicalFilter, LogicalAggregate, getChildren, setChildren, type LogicalPlanNode, type LogicalDependentJoinNode, type LogicalProjectNode, type ProjectedExpr } from '../../planner/logical-plan.js';
+import { PlanNodeType, JoinType, LogicalJoin, LogicalFilter, LogicalSort, LogicalWindow, getChildren, setChildren, type LogicalPlanNode, type LogicalDependentJoinNode, type LogicalProjectNode, type ProjectedExpr, type LogicalOrderKey } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-rewriter.js';
-import { BoundExprKind, type BoundExpr, type BoundColumnRefNode } from '../../binder/expression-binder.js';
+import { BoundExprKind, BoundBinary, BoundLiteral, BoundWindow, type BoundExpr, type BoundColumnRefNode } from '../../binder/expression-binder.js';
 import { combineConjuncts } from '../../binder/conjuncts.js';
 import { DataType } from '../../storage/data-type.js';
 import { SCALAR_OUTPUT_NAME } from '../../planner/logical-plan.js';
@@ -15,6 +15,38 @@ interface CorrelationResult {
 interface PartitionedPredicates {
   correlatedPreds: BoundExpr[];
   localPreds: BoundExpr[];
+}
+
+interface RowLimit {
+  count: number;
+  offset: number;
+  orderKeys: LogicalOrderKey[];
+  input: LogicalPlanNode;
+}
+
+const ROW_NUMBER = 'ROW_NUMBER';
+
+function rowLimitOf(node: LogicalPlanNode): RowLimit | null {
+  if (node.type === PlanNodeType.LIMIT) {
+    return { count: node.count, offset: node.offset || 0, orderKeys: [], input: node.children[0] };
+  }
+  if (node.type === PlanNodeType.TOP_N) {
+    return { count: node.count, offset: node.offset || 0, orderKeys: node.orderKeys, input: LogicalSort(node.orderKeys, node.children[0]) };
+  }
+  if (node.type === PlanNodeType.SORT && node.limit != null) {
+    return { count: node.limit, offset: node.offset || 0, orderKeys: node.orderKeys, input: LogicalSort(node.orderKeys, node.children[0]) };
+  }
+  return null;
+}
+
+function spineOrderKeys(node: LogicalPlanNode): LogicalOrderKey[] {
+  let current: LogicalPlanNode | undefined = node;
+  while (current) {
+    if (current.type === PlanNodeType.SORT || current.type === PlanNodeType.TOP_N) return current.orderKeys;
+    if (current.type !== PlanNodeType.PROJECT) return [];
+    current = current.children[0];
+  }
+  return [];
 }
 
 type ExprRecordValue = BoundExpr | BoundExpr[] | string | number | boolean | bigint | null | undefined | object;
@@ -171,7 +203,8 @@ class UnnestingRewriter extends PlanRewriter {
 
   extractCorrelation(subquery: LogicalPlanNode, correlated: BoundColumnRefNode[]): CorrelationResult {
     const correlatedPredicates: BoundExpr[] = [];
-    const cleanedPlan = this.removeCorrelatedPredicates(subquery, correlated, correlatedPredicates);
+    const prepared = this.decorrelateRowLimits(subquery, correlated);
+    const cleanedPlan = this.removeCorrelatedPredicates(prepared, correlated, correlatedPredicates);
 
     const joinConditions = correlatedPredicates.map(pred => {
       return this.rewriteCorrelatedPredicate(pred, correlated);
@@ -182,6 +215,71 @@ class UnnestingRewriter extends PlanRewriter {
       joinCondition: combineConjuncts(joinConditions),
       correlatedPredicates,
     };
+  }
+
+  decorrelateRowLimits(node: LogicalPlanNode, correlated: BoundColumnRefNode[]): LogicalPlanNode {
+    if (!node) return node;
+
+    const children = getChildren(node);
+    const newChildren = children.map(c => this.decorrelateRowLimits(c, correlated));
+    const rebuilt = newChildren.some((c, i) => c !== children[i]) ? setChildren(node, newChildren) : node;
+
+    const limit = rowLimitOf(rebuilt);
+    if (!limit) return rebuilt;
+
+    const inner = this.collectCorrelatedPredicates(rebuilt, correlated);
+    if (inner.length === 0) return rebuilt;
+
+    const partitionBy = this.getInnerCorrelationExprs(inner, correlated);
+    if (partitionBy.length === 0 || !inner.every(pred => this.isEquiCorrelation(pred, correlated))) {
+      throw new Error('Unsupported correlated subquery: a row-limiting clause correlated by a non-equality predicate cannot be decorrelated');
+    }
+
+    return this.applyPerPartitionLimit(limit, partitionBy);
+  }
+
+  applyPerPartitionLimit(limit: RowLimit, partitionBy: BoundExpr[]): LogicalPlanNode {
+    const orderKeys = limit.orderKeys.length > 0 ? limit.orderKeys : spineOrderKeys(limit.input);
+    const orderBy = orderKeys.map(key => ({ expr: key.expr, direction: key.direction, nullOrder: key.nullOrder }));
+    const rowNumber = BoundWindow(ROW_NUMBER, [], partitionBy, orderBy, null, DataType.INT64);
+
+    const projections: LogicalProjectNode[] = [];
+    let inner: LogicalPlanNode = limit.input;
+    while (inner.type === PlanNodeType.PROJECT) {
+      projections.push(inner);
+      inner = inner.children[0];
+    }
+
+    let ranked: LogicalPlanNode = LogicalFilter(this.rowNumberRange(rowNumber, limit.count, limit.offset), LogicalWindow([rowNumber], inner));
+    for (let i = projections.length - 1; i >= 0; i--) {
+      ranked = setChildren(projections[i], [ranked]);
+    }
+    return ranked;
+  }
+
+  rowNumberRange(rowNumber: BoundExpr, count: number, offset: number): BoundExpr {
+    const bound = (op: string, value: number): BoundExpr =>
+      BoundBinary(op, rowNumber, BoundLiteral(value, DataType.INT64), DataType.BOOLEAN);
+    const upper = bound('<=', offset + count);
+    return offset > 0 ? BoundBinary('AND', bound('>', offset), upper, DataType.BOOLEAN) : upper;
+  }
+
+  collectCorrelatedPredicates(node: LogicalPlanNode, correlated: BoundColumnRefNode[]): BoundExpr[] {
+    const found: BoundExpr[] = [];
+    const walk = (current: LogicalPlanNode): void => {
+      if (!current) return;
+      if (current.type === PlanNodeType.FILTER) {
+        found.push(...this.partitionPredicates(current.condition, correlated).correlatedPreds);
+      }
+      for (const child of getChildren(current)) walk(child);
+    };
+    walk(node);
+    return found;
+  }
+
+  isEquiCorrelation(pred: BoundExpr, correlated: BoundColumnRefNode[]): boolean {
+    if (pred.kind !== BoundExprKind.BINARY || pred.op !== '=') return false;
+    return this.hasCorrelatedRef(pred.left, correlated) !== this.hasCorrelatedRef(pred.right, correlated);
   }
 
   removeCorrelatedPredicates(node: LogicalPlanNode, correlated: BoundColumnRefNode[], collected: BoundExpr[]): LogicalPlanNode {

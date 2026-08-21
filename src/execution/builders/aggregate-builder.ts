@@ -4,7 +4,6 @@ import type { TableStorage } from '../../storage/table-storage.js';
 import type { ChunkSpillStore } from '../../storage/spill-manager/spill-manager.js';
 
 import type {
-  LogicalPlanNode,
   LogicalAggregateNode,
   LogicalPartialAggregateNode,
   LogicalFinalAggregateNode,
@@ -27,8 +26,6 @@ import type { CompiledExpr, EvalValue, CompiledPipeline, ColumnMapping, ExecColu
 type HashAggDefs = ConstructorParameters<typeof HashAggregateOperator>[2];
 type AccumulatorFactory = ReturnType<typeof getAccumulatorFactory>;
 type ExtractValueFn = (chunk: DataChunk, rowIdx: number) => EvalValue | ColumnValue[];
-type AggregateSpecList = Parameters<typeof buildAggregateDefs>[0];
-type FragmentNode = Parameters<typeof buildFragmentSpec>[1];
 type BuiltFragmentSpec = NonNullable<ReturnType<typeof buildFragmentSpec>>;
 type FragmentSpec = BuiltFragmentSpec['spec'];
 
@@ -55,8 +52,6 @@ interface BuiltAggregateDef {
   createAccumulator: AccumulatorFactory;
   extractValue: ExtractValueFn;
 }
-
-
 
 export interface FragmentPoolLike {
   runAggregate(spec: FragmentSpec, columnIndexes: number[], chunks: DataChunk[], options: { spillDir?: string }): Promise<DataChunk[]>;

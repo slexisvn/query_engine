@@ -14,7 +14,6 @@ import type {
   CompoundFilterTask,
   PipelineTask,
   ProjectTask,
-  WorkerTask,
   SelectionVectorResult,
   ScalarAggregateResult,
   ProjectResult,

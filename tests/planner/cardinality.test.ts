@@ -2,7 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { DefaultCardinalityEstimator } from '../../src/planner/cardinality.js';
 import { BoundExprKind } from '../../src/binder/expression-binder.js';
 import { PlanNodeType, JoinType } from '../../src/planner/logical-plan.js';
-import { EquiDepthHistogram } from '../../src/catalog/statistics.js';
+import { EquiDepthHistogram, createMcv } from '../../src/catalog/statistics.js';
+import { Binder } from '../../src/binder/binder.js';
+import { Catalog } from '../../src/catalog/catalog.js';
+import { FunctionRegistry } from '../../src/catalog/function-registry.js';
+import { DataType } from '../../src/storage/data-type.js';
+import { parse } from '../../src/parser/parser.js';
+import { Config } from '../../src/config.js';
 
 function makeColRef(table, column) {
   return { kind: BoundExprKind.COLUMN_REF, tableAlias: table, columnName: column };
@@ -175,7 +181,8 @@ describe('DefaultCardinalityEstimator', () => {
 
   describe('estimateJoin with MCV / histogram (skew-aware)', () => {
     function mcvCol(ndv, mcv, extra = {}) {
-      return { ndv, min: 0, max: ndv, nullFraction: 0, mcv, ...extra };
+      const built = mcv ? createMcv(mcv.values, mcv.frequencies) : null;
+      return { ndv, min: 0, max: ndv, nullFraction: 0, mcv: built, ...extra };
     }
     function joinStats(colA, colB) {
       const stats = new Map();
@@ -266,6 +273,65 @@ describe('DefaultCardinalityEstimator', () => {
       ));
       const semi = est.estimateSemiJoin(10000, 10000, joinCond);
       expect(est.estimateAntiJoin(10000, 10000, joinCond)).toBe(Math.max(1, 10000 - semi));
+    });
+
+    const disjointMcv = (prefix) => ({ values: [`${prefix}1`, `${prefix}2`], frequencies: [0.3, 0.3] });
+
+    it('keeps the non-MCV tail on a nullable column instead of collapsing it to the floor', () => {
+      const est = new DefaultCardinalityEstimator(joinStats(
+        mcvCol(100, disjointMcv('a'), { nullFraction: 0.5 }),
+        mcvCol(100, disjointMcv('b'), { nullFraction: 0.5 }),
+      ));
+      const tailShare = (1 - 0.5) * (1 - 0.6);
+      const expected = Math.round(10000 * 10000 * ((tailShare * tailShare) / 98));
+      expect(est.estimateJoin(10000, 10000, joinCond)).toBe(expected);
+    });
+
+    it('scales the join tail linearly with the non-null fraction', () => {
+      const selectivityFor = (nullFraction) => new DefaultCardinalityEstimator(joinStats(
+        mcvCol(100, disjointMcv('a'), { nullFraction }),
+        mcvCol(100, disjointMcv('b')),
+      )).estimateEquiJoinSelectivity(makeColRef('A', 'FK'), makeColRef('B', 'PK'), 10000, 10000);
+      expect(selectivityFor(0) / selectivityFor(0.5)).toBeCloseTo(2, 10);
+    });
+
+    it('semi join keeps the non-MCV tail on a nullable probe column', () => {
+      const est = new DefaultCardinalityEstimator(joinStats(
+        mcvCol(100, disjointMcv('a'), { nullFraction: 0.5 }),
+        mcvCol(60, disjointMcv('b')),
+      ));
+      const expected = Math.round(10000 * ((1 - 0.5) * (1 - 0.6) * (58 / 98)));
+      expect(est.estimateSemiJoin(10000, 10000, joinCond)).toBe(expected);
+    });
+
+    const hotMcv = () => ({ values: ['h'], frequencies: [0.5] });
+
+    it('scales the whole equi-join selectivity by the product of the non-null fractions', () => {
+      const selectivityFor = (nullFractionA, nullFractionB) => new DefaultCardinalityEstimator(joinStats(
+        mcvCol(100, hotMcv(), { nullFraction: nullFractionA }),
+        mcvCol(100, hotMcv(), { nullFraction: nullFractionB }),
+      )).estimateEquiJoinSelectivity(makeColRef('A', 'FK'), makeColRef('B', 'PK'), 10000, 10000);
+      expect(selectivityFor(0.5, 0.5)).toBeCloseTo(selectivityFor(0, 0) * 0.25, 12);
+      expect(selectivityFor(0.5, 0)).toBeCloseTo(selectivityFor(0, 0) * 0.5, 12);
+    });
+
+    it('scales the whole semi-join selectivity by the probe-side non-null fraction', () => {
+      const selectivityFor = (nullFraction) => new DefaultCardinalityEstimator(joinStats(
+        mcvCol(100, { values: ['h'], frequencies: [0.6] }, { nullFraction }),
+        mcvCol(60, { values: ['h'], frequencies: [0.5] }),
+      )).estimateSemiJoinSelectivity(makeColRef('A', 'FK'), makeColRef('B', 'PK'));
+      expect(selectivityFor(0.5)).toBeCloseTo(selectivityFor(0) * 0.5, 12);
+    });
+
+    it('credits a hot value on a half-null column with a quarter of the row pairs', () => {
+      const est = new DefaultCardinalityEstimator(joinStats(
+        mcvCol(100, hotMcv(), { nullFraction: 0.5 }),
+        mcvCol(100, hotMcv(), { nullFraction: 0.5 }),
+      ));
+      const nonNull = 1 - 0.5;
+      const hotPairs = nonNull * nonNull * (0.5 * 0.5);
+      const tailPairs = (nonNull * 0.5) * (nonNull * 0.5) / 99;
+      expect(est.estimateJoin(10000, 10000, joinCond)).toBe(Math.round(10000 * 10000 * (hotPairs + tailPairs)));
     });
   });
 
@@ -358,9 +424,63 @@ describe('DefaultCardinalityEstimator', () => {
       expect(selEq + selNeq).toBeCloseTo(1.0, 2);
     });
 
-    it('EXISTS returns 0.5', () => {
+    it('EXISTS without a subquery plan falls back to the configured selectivity', () => {
       const est = new DefaultCardinalityEstimator(makeStats());
-      expect(est.estimateSelectivity({ kind: BoundExprKind.EXISTS })).toBe(0.5);
+      const saved = Config.defaultExistsSelectivity;
+      Config.defaultExistsSelectivity = 0.25;
+      try {
+        expect(est.estimateSelectivity({ kind: BoundExprKind.EXISTS })).toBe(0.25);
+      } finally {
+        Config.defaultExistsSelectivity = saved;
+      }
+    });
+  });
+
+  describe('estimateSelectivity of EXISTS over a bound subquery', () => {
+    function boundPredicate(sql) {
+      const catalog = new Catalog();
+      catalog.registerTable('users', [
+        { name: 'ID', dataType: DataType.INT32 },
+        { name: 'NAME', dataType: DataType.VARCHAR },
+      ]);
+      catalog.registerTable('orders', [
+        { name: 'ID', dataType: DataType.INT32 },
+        { name: 'USER_ID', dataType: DataType.INT32 },
+      ]);
+      const binder = new Binder(catalog, new FunctionRegistry());
+      return binder.bind(parse(sql)).where;
+    }
+
+    function ordersStats(rowCount) {
+      const columns = new Map();
+      columns.set('ID', { ndv: rowCount, nullFraction: 0 });
+      columns.set('USER_ID', { ndv: Math.max(1, rowCount / 10), nullFraction: 0 });
+      const stats = new Map();
+      stats.set('USERS', { rowCount: 1000, columnStats: new Map() });
+      stats.set('ORDERS', { rowCount, columnStats: columns });
+      return stats;
+    }
+
+    const exists = () => boundPredicate('SELECT u.id FROM users u WHERE EXISTS (SELECT o.id FROM orders o)');
+    const notExists = () => boundPredicate('SELECT u.id FROM users u WHERE NOT EXISTS (SELECT o.id FROM orders o)');
+
+    it('runs from almost impossible for an empty subquery to almost certain for a large one', () => {
+      const onEmpty = new DefaultCardinalityEstimator(ordersStats(0)).estimateSelectivity(exists());
+      const onLarge = new DefaultCardinalityEstimator(ordersStats(1000000)).estimateSelectivity(exists());
+      expect(onEmpty).toBeLessThan(0.01);
+      expect(onLarge).toBeGreaterThan(0.99);
+    });
+
+    it('NOT EXISTS over a large subquery is almost impossible', () => {
+      const est = new DefaultCardinalityEstimator(ordersStats(1000000));
+      expect(est.estimateSelectivity(notExists())).toBeLessThan(0.01);
+    });
+
+    it('memoizes the subquery estimate so a repeated predicate is planned once', () => {
+      const est = new DefaultCardinalityEstimator(ordersStats(1000000));
+      const predicate = exists();
+      est.estimateSelectivity(predicate);
+      expect(est.subqueryCardinalities.get(predicate.plan)).toBe(1000000);
     });
   });
 
@@ -560,18 +680,42 @@ describe('DefaultCardinalityEstimator', () => {
   });
 
   describe('estimateEqualitySelectivity with MCV', () => {
-    it('returns MCV frequency for known value', () => {
+    function statusStats(column) {
       const stats = new Map();
       const columns = new Map();
-      columns.set('STATUS', {
+      columns.set('STATUS', column);
+      stats.set('ORDERS', { rowCount: 10000, columnStats: columns });
+      return stats;
+    }
+
+    it('returns MCV frequency for known value', () => {
+      const est = new DefaultCardinalityEstimator(statusStats({
         ndv: 5,
         nullFraction: 0,
-        mcv: { values: ['active', 'pending'], frequencies: [0.6, 0.3] },
-      });
-      stats.set('ORDERS', { rowCount: 10000, columnStats: columns });
-      const est = new DefaultCardinalityEstimator(stats);
+        mcv: createMcv(['active', 'pending'], [0.6, 0.3]),
+      }));
       const pred = makeBinary(makeColRef('ORDERS', 'STATUS'), '=', makeLiteral('active'));
       expect(est.estimateSelectivity(pred)).toBeCloseTo(0.6, 2);
+    });
+
+    it('spreads only the non-MCV mass over the non-MCV distinct values', () => {
+      const est = new DefaultCardinalityEstimator(statusStats({
+        ndv: 100,
+        nullFraction: 0,
+        mcv: createMcv(['active', 'pending', 'shipped'], [0.3, 0.3, 0.3]),
+      }));
+      const pred = makeBinary(makeColRef('ORDERS', 'STATUS'), '=', makeLiteral('cancelled'));
+      expect(est.estimateSelectivity(pred)).toBeCloseTo((1 - 0.9) / 97, 6);
+    });
+
+    it('scales the non-MCV density by the non-null fraction', () => {
+      const est = new DefaultCardinalityEstimator(statusStats({
+        ndv: 100,
+        nullFraction: 0.2,
+        mcv: createMcv(['active', 'pending', 'shipped'], [0.3, 0.3, 0.3]),
+      }));
+      const pred = makeBinary(makeColRef('ORDERS', 'STATUS'), '=', makeLiteral('cancelled'));
+      expect(est.estimateSelectivity(pred)).toBeCloseTo(0.8 * (1 - 0.9) / 97, 6);
     });
   });
 

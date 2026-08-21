@@ -54,6 +54,20 @@ export class DictionaryColumn {
     return col;
   }
 
+  scanView(): DictionaryColumn {
+    const view = Object.create(DictionaryColumn.prototype) as DictionaryColumn;
+    view.dataType = this.dataType;
+    view.capacity = this.capacity;
+    view.length = this.length;
+    view.allocator = this.allocator;
+    view._dictionary = this._dictionary;
+    view.reverseDict = this.reverseDict;
+    view.indices = this.indices;
+    view.nullBitmap = this.nullBitmap;
+    view.hasNulls = this.hasNulls;
+    return view;
+  }
+
   get dictionary(): Map<string, number> {
     if (this._dictionary === null) {
       this._dictionary = new Map(this.reverseDict.map((value, id) => [value, id]));

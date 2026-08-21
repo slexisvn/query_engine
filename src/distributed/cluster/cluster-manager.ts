@@ -1,5 +1,4 @@
-import { NodeStatus } from './node-descriptor.js';
-import type { NodeRoleValue } from './node-descriptor.js';
+import { NodeStatus, NodeRole } from '../distributed-types.js';
 import { HeartbeatMonitor } from './heartbeat-monitor.js';
 import { Config } from '../../config.js';
 import type {
@@ -10,15 +9,13 @@ import type {
   ClusterSnapshot,
 } from '../distributed-types.js';
 
-type NodeStatusValue = (typeof NodeStatus)[keyof typeof NodeStatus];
-
 interface NodeDescriptorLike {
   nodeId: NodeId;
   host: string;
   port: number;
-  role: NodeRoleValue;
+  role: NodeRole;
   capacity: NodeCapacity;
-  status: NodeStatusValue;
+  status: NodeStatus;
   canExecuteFragments(): boolean;
   hasPartition(partitionId: string | PartitionId): boolean;
   assignPartition(partitionId: string | PartitionId): void;
@@ -60,7 +57,7 @@ export class ClusterManager {
       intervalMs: options.heartbeatIntervalMs || Config.heartbeatIntervalMs,
     });
 
-    this._heartbeat.onStatusChange((nodeId: NodeId, status: NodeStatusValue) => {
+    this._heartbeat.onStatusChange((nodeId: NodeId, status: NodeStatus) => {
       this._handleStatusChange(nodeId, status);
     });
   }
@@ -182,7 +179,7 @@ export class ClusterManager {
     this._heartbeat.stop();
   }
 
-  _handleStatusChange(nodeId: NodeId, newStatus: NodeStatusValue): void {
+  _handleStatusChange(nodeId: NodeId, newStatus: NodeStatus): void {
     const node = this._nodeMap.get(nodeId);
     if (!node) return;
 

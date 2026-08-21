@@ -1,5 +1,5 @@
 import { OptimizationPass } from '../../optimizer/pass.js';
-import { PlanNodeType, JoinType, getChildren, setChildren } from '../../planner/logical-plan.js';
+import { PlanNodeType, JoinType, getChildren } from '../../planner/logical-plan.js';
 import type { LogicalPlanNode, LogicalJoinNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { BoundExprKind } from '../../binder/expression-binder.js';
@@ -223,15 +223,15 @@ class DistributionAwareJoinRewriter extends PlanRewriter {
     if (node.type === PlanNodeType.SCAN && this._statisticsMap.has(node.table)) {
       return (this._statisticsMap.get(node.table) as TableStatisticsLike).rowCount;
     }
-    return 1000;
+    return Config.defaultCardinality;
   }
 
   _estimateRowWidth(node: LogicalPlanNode): number {
     const table = this._findScanTable(node);
     if (table && this._statisticsMap.has(table)) {
-      return (this._statisticsMap.get(table) as TableStatisticsLike).avgRowWidth || 64;
+      return (this._statisticsMap.get(table) as TableStatisticsLike).avgRowWidth || Config.defaultRowWidthBytes;
     }
-    return 64;
+    return Config.defaultRowWidthBytes;
   }
 
   _estimateNodeCount(): number {

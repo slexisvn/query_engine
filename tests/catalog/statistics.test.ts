@@ -264,6 +264,22 @@ describe('StatisticsCollector', () => {
     expect(mcv.frequencies[1]).toBeCloseTo(2 / 6, 5);
   });
 
+  it('carries the summed MCV mass alongside the frequencies', async () => {
+    const schema = [{ name: 'X', dataType: 'INT32' }];
+    const distinctValues = Config.statsMcvCount + 2;
+    const rows = [];
+    for (let value = 1; value <= distinctValues; value++) {
+      for (let i = 0; i < value; i++) rows.push([value]);
+    }
+    const table = mockTable(rows, schema);
+
+    const stats = await StatisticsCollector.collect(table);
+    const mcv = stats.getColumnStats('X').mcv;
+    const rowsOutsideMcv = 1 + 2;
+    expect(mcv.frequencies).toHaveLength(Config.statsMcvCount);
+    expect(mcv.totalFrequency).toBeCloseTo((rows.length - rowsOutsideMcv) / rows.length, 5);
+  });
+
   it('handles all-null column', async () => {
     const schema = [{ name: 'X', dataType: 'INT32' }];
     const rows = [[null], [null], [null]];

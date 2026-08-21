@@ -13,7 +13,6 @@ import { Fragment, FragmentPlan, ExchangeType } from './fragment.js';
 import { DistributionStrategy } from '../optimizer/distribution-aware-join.js';
 import { ExchangePlacement } from './exchange-placement.js';
 import { PartitionPruner } from '../partition/partition-pruner.js';
-import { Config } from '../../config.js';
 import type {
   NodeId,
   PartitionId,
@@ -107,6 +106,10 @@ interface StatisticsEntryLike {
 type ExchangePlacementCtorArg = ConstructorParameters<typeof ExchangePlacement>[0];
 type ExchangePlacementStatsArg = ConstructorParameters<typeof ExchangePlacement>[1];
 type PrunerPartitionMapArg = Parameters<PartitionPruner['prune']>[2];
+
+function exchangeInputsOf(fragmentIds: FragmentId[], exchangeType: ExchangeType): ExchangeInput[] {
+  return fragmentIds.map(sourceFragmentId => ({ sourceFragmentId, exchangeType }));
+}
 
 export class DistributedPlanner {
   _partitionMap: PartitionMapLike;
@@ -246,8 +249,6 @@ export class DistributedPlanner {
   }
 
   _buildBroadcastJoin(node: LogicalJoinNode): GatherPlacementResult | null {
-    // Only INNER broadcast is supported (the common fact⋈dim case). Outer broadcast falls
-    // back to shuffle/gather to avoid preserved-side duplication and build-side ordering issues.
     if (node.joinType !== JoinType.INNER) return null;
     const broadcastLeft = (node as DistributionAnnotatedJoin)._distributionStrategy === DistributionStrategy.BROADCAST_LEFT;
 
@@ -264,40 +265,40 @@ export class DistributedPlanner {
     const bigWorkers = this._selectNodesForPartitions((bigScan as TableScanNode).table, this._pruner.prune((bigScan as TableScanNode).table, null, this._partitionMap as PrunerPartitionMapArg), alive);
     if (smallWorkers.length === 0 || bigWorkers.length === 0) return null;
 
-    // A fragments: each small-side worker broadcasts its partition to all big-side (join) workers
-    const aIds: FragmentId[] = [];
-    for (const nodeId of smallWorkers) {
-      const f = new Fragment({
-        planRoot: smallChild,
-        targetNodes: [nodeId],
-        exchangeInputs: [],
-        outputPartitioning: { exchangeType: 'broadcast', targetNodes: bigWorkers } as OutputPartitioningLocal as OutputPartitioning,
-        estimatedCardinality: 0,
-      });
-      this._fragments.push(f);
-      aIds.push(f.fragmentId);
-    }
-    const aInputs: ExchangeInput[] = aIds.map(id => ({ sourceFragmentId: id, exchangeType: ExchangeType.BROADCAST }));
-    const recv = LogicalExchangeReceive(aIds, this._deriveSubtreeSchema(smallChild) as ColumnInfo[]);
+    const broadcastIds = this._spawnFragments(smallChild, smallWorkers, [],
+      () => ({ exchangeType: 'broadcast', targetNodes: bigWorkers } as OutputPartitioningLocal as OutputPartitioning));
+    const broadcastInputs = exchangeInputsOf(broadcastIds, ExchangeType.BROADCAST);
+    const recv = LogicalExchangeReceive(broadcastIds, this._deriveSubtreeSchema(smallChild) as ColumnInfo[]);
     const joinPlan = setChildren(node, broadcastLeft ? [recv, bigChild] : [bigChild, recv]);
 
-    // C fragments: each big-side worker scans its local big partition and joins the full broadcast small side
-    const rootInputs: ExchangeInput[] = [];
-    const cIds: FragmentId[] = [];
-    for (const nodeId of bigWorkers) {
-      const f = new Fragment({
-        planRoot: joinPlan,
+    const joinIds = this._spawnFragments(joinPlan, bigWorkers, broadcastInputs,
+      () => ({ exchangeType: 'gather', partitionCount: bigWorkers.length } as OutputPartitioningLocal as OutputPartitioning));
+
+    return {
+      plan: LogicalExchangeReceive(joinIds, this._joinOutputSchema(node) as ColumnInfo[]),
+      exchangeInputs: exchangeInputsOf(joinIds, ExchangeType.GATHER),
+    };
+  }
+
+  _spawnFragments(
+    planRoot: LogicalPlanNode,
+    workers: NodeId[],
+    exchangeInputs: ExchangeInput[],
+    outputPartitioning: () => OutputPartitioning
+  ): FragmentId[] {
+    const ids: FragmentId[] = [];
+    for (const nodeId of workers) {
+      const fragment = new Fragment({
+        planRoot,
         targetNodes: [nodeId],
-        exchangeInputs: aInputs,
-        outputPartitioning: { exchangeType: 'gather', partitionCount: bigWorkers.length } as OutputPartitioningLocal as OutputPartitioning,
+        exchangeInputs,
+        outputPartitioning: outputPartitioning(),
         estimatedCardinality: 0,
       });
-      this._fragments.push(f);
-      cIds.push(f.fragmentId);
-      rootInputs.push({ sourceFragmentId: f.fragmentId, exchangeType: ExchangeType.GATHER });
+      this._fragments.push(fragment);
+      ids.push(fragment.fragmentId);
     }
-
-    return { plan: LogicalExchangeReceive(cIds, this._joinOutputSchema(node) as ColumnInfo[]), exchangeInputs: rootInputs };
+    return ids;
   }
 
   _isShufflePushableJoin(node: LogicalJoinNode): boolean {
@@ -322,51 +323,30 @@ export class DistributedPlanner {
     const rightWorkers = this._selectNodesForPartitions((rightScan as TableScanNode).table, this._pruner.prune((rightScan as TableScanNode).table, null, this._partitionMap as PrunerPartitionMapArg), alive);
     if (leftWorkers.length === 0 || rightWorkers.length === 0) return null;
 
-    const cWorkers = [...new Set([...leftWorkers, ...rightWorkers])];
-    const W = cWorkers.length;
+    const joinWorkers = [...new Set([...leftWorkers, ...rightWorkers])];
+    const joinWorkerCount = joinWorkers.length;
 
-    const mkShuffleFrags = (subtree: LogicalPlanNode, workers: NodeId[], keyColumns: number[]): FragmentId[] => {
-      const ids: FragmentId[] = [];
-      for (const nodeId of workers) {
-        const f = new Fragment({
-          planRoot: subtree,
-          targetNodes: [nodeId],
-          exchangeInputs: [],
-          outputPartitioning: { exchangeType: 'hash_shuffle', partitionCount: W, targetNodes: cWorkers, keyColumns } as OutputPartitioningLocal as OutputPartitioning,
-          estimatedCardinality: 0,
-        });
-        this._fragments.push(f);
-        ids.push(f.fragmentId);
-      }
-      return ids;
-    };
+    const shuffleSideFragments = (subtree: LogicalPlanNode, workers: NodeId[], keyColumns: number[]): FragmentId[] =>
+      this._spawnFragments(subtree, workers, [],
+        () => ({ exchangeType: 'hash_shuffle', partitionCount: joinWorkerCount, targetNodes: joinWorkers, keyColumns } as OutputPartitioningLocal as OutputPartitioning));
 
-    const leftFragIds = mkShuffleFrags(leftChild, leftWorkers, keys.leftIdx);
-    const rightFragIds = mkShuffleFrags(rightChild, rightWorkers, keys.rightIdx);
+    const leftFragIds = shuffleSideFragments(leftChild, leftWorkers, keys.leftIdx);
+    const rightFragIds = shuffleSideFragments(rightChild, rightWorkers, keys.rightIdx);
 
-    const leftInputs: ExchangeInput[] = leftFragIds.map(id => ({ sourceFragmentId: id, exchangeType: ExchangeType.HASH_SHUFFLE }));
-    const rightInputs: ExchangeInput[] = rightFragIds.map(id => ({ sourceFragmentId: id, exchangeType: ExchangeType.HASH_SHUFFLE }));
+    const leftInputs = exchangeInputsOf(leftFragIds, ExchangeType.HASH_SHUFFLE);
+    const rightInputs = exchangeInputsOf(rightFragIds, ExchangeType.HASH_SHUFFLE);
     const joinPlan = setChildren(node, [
       LogicalExchangeReceive(leftFragIds, leftSchema as ColumnInfo[]),
       LogicalExchangeReceive(rightFragIds, rightSchema as ColumnInfo[]),
     ]);
 
-    const rootInputs: ExchangeInput[] = [];
-    const cFragIds: FragmentId[] = [];
-    for (const nodeId of cWorkers) {
-      const f = new Fragment({
-        planRoot: joinPlan,
-        targetNodes: [nodeId],
-        exchangeInputs: [...leftInputs, ...rightInputs],
-        outputPartitioning: { exchangeType: 'gather', partitionCount: W } as OutputPartitioningLocal as OutputPartitioning,
-        estimatedCardinality: 0,
-      });
-      this._fragments.push(f);
-      cFragIds.push(f.fragmentId);
-      rootInputs.push({ sourceFragmentId: f.fragmentId, exchangeType: ExchangeType.GATHER });
-    }
+    const joinIds = this._spawnFragments(joinPlan, joinWorkers, [...leftInputs, ...rightInputs],
+      () => ({ exchangeType: 'gather', partitionCount: joinWorkerCount } as OutputPartitioningLocal as OutputPartitioning));
 
-    return { plan: LogicalExchangeReceive(cFragIds, this._joinOutputSchema(node) as ColumnInfo[]), exchangeInputs: rootInputs };
+    return {
+      plan: LogicalExchangeReceive(joinIds, this._joinOutputSchema(node) as ColumnInfo[]),
+      exchangeInputs: exchangeInputsOf(joinIds, ExchangeType.GATHER),
+    };
   }
 
   _extractShuffleKeyIndices(condition: BoundExpr | null, leftSchema: DistributedScanSchemaColumn[], rightSchema: DistributedScanSchemaColumn[]): JoinShuffleKeyIndices | null {
@@ -478,8 +458,13 @@ export class DistributedPlanner {
     const alias = node.alias || node.table;
     let cols: DistributedScanSchemaColumn[] = tableSchema;
     if (node.columns && node.columns.length > 0 && node.columns.length < tableSchema.length) {
+      const byName = new Map<string, DistributedScanSchemaColumn>();
+      for (const column of tableSchema) {
+        const key = column.name.toUpperCase();
+        if (!byName.has(key)) byName.set(key, column);
+      }
       cols = node.columns
-        .map(c => tableSchema.find(s => s.name.toUpperCase() === ((c.name || c) as string).toUpperCase()))
+        .map(c => byName.get(((c.name || c) as string).toUpperCase()))
         .filter(Boolean) as DistributedScanSchemaColumn[];
     }
     return cols.map((c): DistributedScanSchemaColumn => ({ name: c.name, dataType: c.dataType, tableAlias: alias }));

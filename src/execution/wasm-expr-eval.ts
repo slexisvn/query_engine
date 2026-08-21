@@ -1,7 +1,6 @@
 import { BoundExprKind } from '../binder/expression-binder.js';
 import type { BoundExpr, BoundColumnRefNode } from '../binder/expression-binder.js';
 import { globalDispatch } from '../wasm/dispatch.js';
-import { Config } from '../config.js';
 import type { DataChunk } from '../storage/chunk.js';
 import type { Column } from '../storage/column.js';
 import type { ColumnMapping } from './execution-types.js';

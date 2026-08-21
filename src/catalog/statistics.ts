@@ -10,6 +10,13 @@ const UNKNOWN_FRACTION = 0.5;
 export interface Mcv {
   values: (string | number)[];
   frequencies: number[];
+  totalFrequency: number;
+}
+
+export function createMcv(values: (string | number)[], frequencies: number[]): Mcv {
+  let totalFrequency = 0;
+  for (const frequency of frequencies) totalFrequency += frequency;
+  return { values, frequencies, totalFrequency };
 }
 
 export interface ColumnStatisticsInit {
@@ -367,10 +374,7 @@ function buildMcv(frequent: SpaceSavingCounter, nonNullCount: number): Mcv | nul
   const top = frequent.top(Config.statsMcvCount);
   if (top.length === 0) return null;
 
-  return {
-    values: top.map(item => item.value),
-    frequencies: top.map(item => item.count / nonNullCount),
-  };
+  return createMcv(top.map(item => item.value), top.map(item => item.count / nonNullCount));
 }
 
 export class StatisticsCollector {

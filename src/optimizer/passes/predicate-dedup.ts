@@ -1,6 +1,6 @@
 import { OptimizationPass } from '../pass.js';
 import { PlanRewriter } from '../../planner/plan-rewriter.js';
-import { PlanNodeType, LogicalFilter, type LogicalPlanNode, type LogicalFilterNode, type LogicalJoinNode } from '../../planner/logical-plan.js';
+import { LogicalFilter, type LogicalPlanNode, type LogicalFilterNode, type LogicalJoinNode } from '../../planner/logical-plan.js';
 import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
 import { splitConjuncts, combineConjuncts } from '../../binder/conjuncts.js';
 import { exprKey as canonicalExprKey } from '../../binder/expr-key.js';

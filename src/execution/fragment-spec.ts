@@ -12,7 +12,6 @@ import { FilterOperator } from './operators/filter.js';
 import { ProjectionOperator } from './operators/projection.js';
 import { HashAggregateOperator, getAccumulatorFactory } from './operators/hash-aggregate.js';
 import type { DataChunk } from '../storage/chunk.js';
-import type { ColumnValue } from '../storage/data-type.js';
 import type {
   CompiledExpr,
   ColumnMapping,

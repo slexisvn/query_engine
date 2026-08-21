@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { DefaultCostModel } from '../../src/planner/cost-model.js';
+import { Config } from '../../src/config.js';
 
 describe('DefaultCostModel', () => {
   const model = new DefaultCostModel();
@@ -195,6 +196,19 @@ describe('DefaultCostModel', () => {
       const costLow = lowThresh.hashJoinCost(500, 500);
       const costHigh = highThresh.hashJoinCost(500, 500);
       expect(costLow).toBeGreaterThan(costHigh);
+    });
+
+    it('takes its default from the config table', () => {
+      const saved = Config.costModelSpillThreshold;
+      Config.costModelSpillThreshold = 400;
+      try {
+        const configured = new DefaultCostModel();
+        const overridden = new DefaultCostModel({ spillThreshold: 1000000 });
+        expect(configured.SPILL_THRESHOLD).toBe(400);
+        expect(configured.hashJoinCost(500, 500)).toBeGreaterThan(overridden.hashJoinCost(500, 500));
+      } finally {
+        Config.costModelSpillThreshold = saved;
+      }
     });
   });
 });

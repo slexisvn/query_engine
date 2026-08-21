@@ -3,7 +3,6 @@ import { ExchangeType } from '../planner/fragment.js';
 import { ChunkCodec } from '../transport/chunk-codec.js';
 import { DataChunk } from '../../storage/chunk.js';
 import { Column } from '../../storage/column.js';
-import { murmur3 } from '../partition/partition-strategy.js';
 import { hashKeyValues } from '../../execution/hash-table.js';
 import type { EvalValue } from '../../execution/execution-types.js';
 import type { Transport } from '../transport/transport.js';

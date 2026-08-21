@@ -1,6 +1,7 @@
 import readline from 'readline';
 import { highlight } from 'cli-highlight';
 import { formatResult } from './format.js';
+import { markDistributed } from '../distributed/distributed-types.js';
 import type { QueryCoordinator, QueryEngine } from '../index.js';
 
 interface ReplOptions {
@@ -13,10 +14,6 @@ interface ReadlineInternal extends readline.Interface {
   line: string;
   cursor: number;
   _refreshLine(): void;
-}
-
-interface DistributedFlag {
-  _distributed?: boolean;
 }
 
 interface WorkerPoolWithCount {
@@ -36,12 +33,10 @@ export function startREPL(engine: QueryEngine, options: ReplOptions = {}): void 
   rl._writeToOutput = function(stringToWrite: string): void {
     const promptPatterns = ['sql> ', '...> ', 'dist> '];
     let promptIdx = -1;
-    let promptLen = 0;
     for (const p of promptPatterns) {
       const idx = stringToWrite.indexOf(p);
       if (idx > -1) {
         promptIdx = idx + p.length;
-        promptLen = p.length;
         break;
       }
     }
@@ -175,10 +170,9 @@ async function handleMetaCommand(cmd: string, engine: QueryEngine, coordinator: 
           console.log('\n  DDL statement, no plan.\n');
           break;
         }
-        let plan: ReturnType<QueryEngine['optimize']> & DistributedFlag = compiled.plan;
+        let plan: ReturnType<QueryEngine['optimize']> = compiled.plan;
         if (coordinator) {
-          plan._distributed = true;
-          plan = engine.optimize(plan);
+          plan = engine.optimize(markDistributed(plan));
         }
         const { planToString } = await import('../planner/logical-plan.js');
         console.log('');

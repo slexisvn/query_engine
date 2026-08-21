@@ -16,7 +16,6 @@ import type {
   LogicalPlanNode,
   LogicalCTEAnchorNode,
   LogicalCTEScanNode,
-  LogicalMaterializeNode,
   LogicalDependentJoinNode,
 } from '../../planner/logical-plan.js';
 
@@ -118,7 +117,6 @@ export async function buildCTEScan(executor: ExecutorLike, physical: PhysicalPla
 }
 
 export async function buildMaterialize(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
-  const node = physical.logical as LogicalMaterializeNode;
   const child = await executor.buildPipeline(physical.children[0]);
   return {
     schema: child.schema,
@@ -131,6 +129,9 @@ export async function buildMaterialize(executor: ExecutorLike, physical: Physica
 
 export async function buildDependentJoin(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
   const node = physical.logical as LogicalDependentJoinNode;
+  if ((node.correlatedColumns || []).length > 0) {
+    throw new Error(`Correlated ${node.subqueryType} subquery reached execution without being decorrelated; SubqueryUnnesting is required for correctness`);
+  }
   const outer = await executor.buildPipeline(physical.children[0]);
   const dummyOp = new DependentJoinOperator(node.subqueryType, outer.schema, node.markColumn);
 
@@ -147,24 +148,20 @@ export async function buildDependentJoin(executor: ExecutorLike, physical: Physi
 
       const source: SourceGenerator = async function* () {
         const runtimeOp = new DependentJoinOperator(node.subqueryType, outer.schema, node.markColumn);
-        const isCorrelated = (node.correlatedColumns || []).length > 0;
-        let cachedInnerChunks: DataChunk[] | null = null;
+        let innerChunks: DataChunk[] | null = null;
 
         for (const outerChunk of outerChunks) {
-          const outerRows = outerChunk.toRows();
-          for (const outerRow of outerRows) {
-            if (!isCorrelated && cachedInnerChunks !== null) {
-              await runtimeOp.processOuterRow(outerRow, cachedInnerChunks);
-              continue;
+          for (const outerRow of outerChunk.toRows()) {
+            if (innerChunks === null) {
+              const innerPipeline = await executor.buildPipeline(physical.children[1]);
+              const produced: DataChunk[] = [];
+              const innerGraph = new PipelineGraph();
+              const innerSink: Sink = { consume: async (c: DataChunk) => { produced.push(c); } };
+              const innerPipelineId = innerGraph.createPipeline(innerSink);
+              innerPipeline.register(innerGraph, innerPipelineId, innerSink);
+              await new TaskScheduler(Config.dependentJoinConcurrency).schedule(innerGraph);
+              innerChunks = produced;
             }
-            const innerPipeline = await executor.buildPipeline(physical.children[1]);
-            const innerChunks: DataChunk[] = [];
-            const innerGraph = new PipelineGraph();
-            const innerSink: Sink = { consume: async (c: DataChunk) => { innerChunks.push(c); } };
-            const innerPipelineId = innerGraph.createPipeline(innerSink);
-            innerPipeline.register(innerGraph, innerPipelineId, innerSink);
-            await new TaskScheduler(Config.dependentJoinConcurrency).schedule(innerGraph);
-            if (!isCorrelated) cachedInnerChunks = innerChunks;
             await runtimeOp.processOuterRow(outerRow, innerChunks);
           }
         }
