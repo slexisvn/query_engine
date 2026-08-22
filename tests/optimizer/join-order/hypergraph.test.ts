@@ -1,83 +1,28 @@
 import { describe, it, expect } from 'vitest';
-import {
-  HyperGraph,
-  HyperEdge,
-  popcount,
-  subsets,
-  subsetsByAscendingSize,
-  bitIndices,
-  descendingBitIndices,
-  lowestBitIndex,
-  maskBelowOrEqual,
-  buildHyperGraph,
-  BITMASK_RELATION_CAPACITY,
-} from '../../../src/optimizer/join-order/hypergraph.js';
+import { HyperGraph, HyperEdge, buildJoinHyperGraph } from '../../../src/optimizer/join-order/hypergraph.js';
+import { BITMASK_RELATION_CAPACITY } from '../../../src/optimizer/join-order/bitmask.js';
+import { computeJoinConstraints } from '../../../src/optimizer/join-order/join-conflicts.js';
+import { JoinType } from '../../../src/planner/logical-plan.js';
 import { BoundExprKind } from '../../../src/binder/expression-binder.js';
+import { addJoinEdge, makeColRef, makeEqPred, operatorNode, predicateEntry, relationLeaf, scanRelations } from '../../helpers/join-graphs.js';
 
-function makeColRef(table, column) {
-  return { kind: BoundExprKind.COLUMN_REF, tableAlias: table, columnName: column };
+function innerEdge(leftMask, rightMask, predicate = {}) {
+  return new HyperEdge({
+    joinType: JoinType.INNER,
+    source: null,
+    predicate,
+    leftMask,
+    rightMask,
+    requiredLeft: 0,
+    requiredRight: 0,
+    tesMask: leftMask | rightMask,
+  });
 }
-
-function makeEqPred(leftTable, leftCol, rightTable, rightCol) {
-  return {
-    kind: BoundExprKind.BINARY,
-    op: '=',
-    left: makeColRef(leftTable, leftCol),
-    right: makeColRef(rightTable, rightCol),
-  };
-}
-
-describe('popcount', () => {
-  it('counts bits in zero', () => {
-    expect(popcount(0)).toBe(0);
-  });
-
-  it('counts bits in powers of two', () => {
-    expect(popcount(1)).toBe(1);
-    expect(popcount(2)).toBe(1);
-    expect(popcount(4)).toBe(1);
-    expect(popcount(8)).toBe(1);
-  });
-
-  it('counts bits in mixed values', () => {
-    expect(popcount(0b111)).toBe(3);
-    expect(popcount(0b1010)).toBe(2);
-    expect(popcount(0b11111)).toBe(5);
-    expect(popcount(0b10101010)).toBe(4);
-  });
-});
-
-describe('subsets', () => {
-  it('returns empty array for mask 0', () => {
-    expect(subsets(0)).toEqual([]);
-  });
-
-  it('returns single element for single-bit mask', () => {
-    expect(subsets(0b1)).toEqual([1]);
-    expect(subsets(0b100)).toEqual([4]);
-  });
-
-  it('enumerates all non-empty subsets of 0b111', () => {
-    const result = subsets(0b111);
-    expect(result).toHaveLength(7);
-    expect(new Set(result)).toEqual(new Set([0b001, 0b010, 0b011, 0b100, 0b101, 0b110, 0b111]));
-  });
-
-  it('only generates subsets within the mask', () => {
-    const mask = 0b1010;
-    const result = subsets(mask);
-    for (const s of result) {
-      expect(s & mask).toBe(s);
-      expect(s).toBeGreaterThan(0);
-    }
-    expect(result).toHaveLength(3);
-  });
-});
 
 describe('HyperEdge', () => {
   it('stores left mask, right mask, and predicate', () => {
     const pred = makeEqPred('A', 'id', 'B', 'a_id');
-    const edge = new HyperEdge(0b01, 0b10, pred);
+    const edge = innerEdge(0b01, 0b10, pred);
     expect(edge.leftMask).toBe(1);
     expect(edge.rightMask).toBe(2);
     expect(edge.predicate).toBe(pred);
@@ -219,15 +164,14 @@ describe('HyperGraph', () => {
     });
   });
 
-  describe('findJoinPredicates', () => {
+  describe('resolveJoin', () => {
     it('finds predicate between two relations', () => {
       const pred = makeEqPred('A', 'id', 'B', 'a_id');
       const g = new HyperGraph();
       g.addRelation('A', null, 10);
       g.addRelation('B', null, 20);
       g.addEdge(['A'], ['B'], pred);
-      const found = g.findJoinPredicates(0b01, 0b10);
-      expect(found).toContain(pred);
+      expect(g.resolveJoin(0b01, 0b10).predicates).toContain(pred);
     });
 
     it('finds predicate regardless of argument order', () => {
@@ -236,17 +180,83 @@ describe('HyperGraph', () => {
       g.addRelation('A', null, 10);
       g.addRelation('B', null, 20);
       g.addEdge(['A'], ['B'], pred);
-      const found = g.findJoinPredicates(0b10, 0b01);
-      expect(found).toContain(pred);
+      expect(g.resolveJoin(0b10, 0b01).predicates).toContain(pred);
     });
 
-    it('returns empty when no matching predicates', () => {
+    it('returns null when no edge connects the two sides', () => {
       const g = new HyperGraph();
       g.addRelation('A', null, 10);
       g.addRelation('B', null, 20);
       g.addRelation('C', null, 30);
       g.addEdge(['A'], ['B'], {});
-      expect(g.findJoinPredicates(0b001, 0b100)).toEqual([]);
+      expect(g.resolveJoin(0b001, 0b100)).toBeNull();
+    });
+
+    it('applies a lone non-inner operator and reports its orientation', () => {
+      const g = new HyperGraph();
+      g.addRelation('A', null, 10);
+      g.addRelation('B', null, 20);
+      const pred = makeEqPred('A', 'id', 'B', 'a_id');
+      addJoinEdge(g, JoinType.LEFT, ['A'], ['B'], pred);
+
+      const forward = g.resolveJoin(0b01, 0b10);
+      expect(forward.joinType).toBe(JoinType.LEFT);
+      expect(forward.swapped).toBe(false);
+      expect(forward.predicates).toEqual([pred]);
+    });
+
+    it('reports a swapped orientation when the operator operands arrive reversed', () => {
+      const g = new HyperGraph();
+      g.addRelation('A', null, 10);
+      g.addRelation('B', null, 20);
+      addJoinEdge(g, JoinType.LEFT, ['A'], ['B'], makeEqPred('A', 'id', 'B', 'a_id'));
+
+      expect(g.resolveJoin(0b10, 0b01).swapped).toBe(true);
+    });
+
+    it('refuses a split where a non-inner operator would share the node with an inner predicate', () => {
+      const g = new HyperGraph();
+      g.addRelation('A', null, 10);
+      g.addRelation('B', null, 20);
+      addJoinEdge(g, JoinType.LEFT, ['A'], ['B'], makeEqPred('A', 'id', 'B', 'a_id'));
+      g.addEdge(['A'], ['B'], makeEqPred('A', 'code', 'B', 'code'));
+
+      expect(g.resolveJoin(0b01, 0b10)).toBeNull();
+    });
+
+    it('refuses a split where two non-inner operators become applicable together', () => {
+      const g = new HyperGraph();
+      g.addRelation('A', null, 10);
+      g.addRelation('B', null, 20);
+      addJoinEdge(g, JoinType.LEFT, ['A'], ['B'], makeEqPred('A', 'id', 'B', 'a_id'));
+      addJoinEdge(g, JoinType.SEMI, ['A'], ['B'], makeEqPred('A', 'code', 'B', 'code'));
+
+      expect(g.resolveJoin(0b01, 0b10)).toBeNull();
+    });
+
+    it('refuses a split that tears a required operand of a non-inner operator in two', () => {
+      const g = new HyperGraph();
+      g.addRelation('A', null, 10);
+      g.addRelation('B', null, 20);
+      g.addRelation('C', null, 30);
+      addJoinEdge(g, JoinType.LEFT, ['A', 'B'], ['C'], makeEqPred('B', 'id', 'C', 'b_id'));
+
+      expect(g.resolveJoin(0b011, 0b100)).not.toBeNull();
+      expect(g.resolveJoin(0b100, 0b011).swapped).toBe(true);
+      expect(g.resolveJoin(0b101, 0b010)).toBeNull();
+      expect(g.resolveJoin(0b010, 0b101)).toBeNull();
+    });
+
+    it('conjoins every inner predicate that spans the split', () => {
+      const g = new HyperGraph();
+      g.addRelation('A', null, 10);
+      g.addRelation('B', null, 20);
+      const first = makeEqPred('A', 'id', 'B', 'a_id');
+      const second = makeEqPred('A', 'code', 'B', 'code');
+      g.addEdge(['A'], ['B'], first);
+      g.addEdge(['A'], ['B'], second);
+
+      expect(g.resolveJoin(0b01, 0b10).predicates).toEqual([first, second]);
     });
   });
 
@@ -263,180 +273,65 @@ describe('HyperGraph', () => {
   });
 });
 
-describe('buildHyperGraph', () => {
-  it('builds graph from relations and join predicates', () => {
-    const relations = [
-      { name: 'orders', alias: 'O', plan: { type: 'Scan', table: 'orders' } },
-      { name: 'customers', alias: 'C', plan: { type: 'Scan', table: 'customers' } },
-    ];
-    const pred = makeEqPred('O', 'customer_id', 'C', 'id');
-    const estimator = { estimateScan: () => 500 };
-    const graph = buildHyperGraph(relations, [pred], estimator);
-
-    expect(graph.size).toBe(2);
-    expect(graph.edges.length).toBeGreaterThan(0);
-    expect(graph.relationIndex.has('O')).toBe(true);
-    expect(graph.relationIndex.has('C')).toBe(true);
-  });
+describe('buildJoinHyperGraph', () => {
+  function twoRelationBlock(joinType, predicate, sesMask) {
+    const tree = operatorNode(
+      joinType,
+      relationLeaf(0),
+      relationLeaf(1),
+      [predicateEntry(predicate, sesMask, (sesMask & 0b01) || 0b01, (sesMask & 0b10) || 0b10)],
+    );
+    return { tree, constraints: computeJoinConstraints(tree) };
+  }
 
   it('uses estimatePlan when available', () => {
-    const relations = [
-      { name: 'T', plan: { type: 'Scan', table: 'T' } },
-    ];
-    const estimator = { estimatePlan: (plan) => plan.table === 'T' ? 999 : 0 };
-    const graph = buildHyperGraph(relations, [], estimator);
+    const estimator = { estimatePlan: plan => (plan.table === 'T' ? 999 : 0) };
+    const graph = buildJoinHyperGraph(scanRelations(['T']), [], estimator);
     expect(graph.relations[0].cardinality).toBe(999);
   });
 
-  it('skips predicates referencing fewer than 2 tables', () => {
-    const relations = [
-      { name: 'A', plan: {} },
-      { name: 'B', plan: {} },
-    ];
-    const singleTablePred = {
-      kind: BoundExprKind.BINARY,
-      op: '>',
-      left: makeColRef('A', 'x'),
-      right: { kind: BoundExprKind.LITERAL, value: 10 },
-    };
-    const estimator = { estimateScan: () => 100 };
-    const graph = buildHyperGraph(relations, [singleTablePred], estimator);
-    expect(graph.edges).toHaveLength(0);
+  it('falls back to estimateScan when estimatePlan is absent', () => {
+    const graph = buildJoinHyperGraph(scanRelations(['T']), [], { estimateScan: () => 500 });
+    expect(graph.relations[0].cardinality).toBe(500);
   });
 
-  it('reports a predicate it cannot turn into an edge instead of dropping it', () => {
-    const relations = [
-      { name: 'A', plan: {} },
-      { name: 'B', plan: {} },
-    ];
-    const danglingRef = {
-      kind: BoundExprKind.BINARY,
-      op: '=',
-      left: makeColRef('A', 'x'),
-      right: makeColRef('MISSING', 'y'),
-    };
-    const estimator = { estimateScan: () => 100 };
-    const graph = buildHyperGraph(relations, [danglingRef], estimator);
+  it('creates one inner edge per predicate entry', () => {
+    const pred = makeEqPred('A', 'id', 'B', 'a_id');
+    const { constraints } = twoRelationBlock(JoinType.INNER, pred, 0b11);
+    const graph = buildJoinHyperGraph(scanRelations(['A', 'B']), constraints, { estimateScan: () => 10 });
 
-    expect(graph.edges).toHaveLength(0);
-    expect(graph.unrepresentedPredicates).toContain(danglingRef);
-  });
-
-  it('falls back to a two-sided edge when the operand sides overlap', () => {
-    const relations = [
-      { name: 'A', plan: {} },
-      { name: 'B', plan: {} },
-    ];
-    // (A.x + B.x) = B.y — left refs {A,B} overlap right refs {B}.
-    const overlapping = {
-      kind: BoundExprKind.BINARY,
-      op: '=',
-      left: {
-        kind: BoundExprKind.BINARY,
-        op: '+',
-        left: makeColRef('A', 'x'),
-        right: makeColRef('B', 'x'),
-      },
-      right: makeColRef('B', 'y'),
-    };
-    const estimator = { estimateScan: () => 100 };
-    const graph = buildHyperGraph(relations, [overlapping], estimator);
-
-    expect(graph.unrepresentedPredicates).toHaveLength(0);
     expect(graph.edges).toHaveLength(1);
-    expect(graph.findJoinPredicates(1 << graph.relationIndex.get('A'), 1 << graph.relationIndex.get('B')))
-      .toContain(overlapping);
+    expect(graph.edges[0].predicate).toBe(pred);
+    expect(graph.edges[0].joinType).toBe(JoinType.INNER);
+    expect(graph.edges[0].requiredLeft).toBe(0);
   });
 
-  it('builds a single hyperedge from a multi-table equality (no all-pairs clique)', () => {
-    const relations = [
-      { name: 'A', plan: {} },
-      { name: 'B', plan: {} },
-      { name: 'C', plan: {} },
-    ];
-    // (A.x + B.x) = C.y  →  one edge connecting {A,B} to {C}, NOT a 3-clique.
+  it('keeps a multi-relation predicate as one hyperedge rather than a clique', () => {
     const pred = {
       kind: BoundExprKind.BINARY,
       op: '=',
-      left: {
-        kind: BoundExprKind.BINARY,
-        op: '+',
-        left: makeColRef('A', 'x'),
-        right: makeColRef('B', 'x'),
-      },
+      left: { kind: BoundExprKind.BINARY, op: '+', left: makeColRef('A', 'x'), right: makeColRef('B', 'x') },
       right: makeColRef('C', 'y'),
     };
-    const estimator = { estimateScan: () => 100 };
-    const graph = buildHyperGraph(relations, [pred], estimator);
-
-    const a = 1 << graph.relationIndex.get('A');
-    const b = 1 << graph.relationIndex.get('B');
-    const c = 1 << graph.relationIndex.get('C');
+    const inner = operatorNode(JoinType.INNER, relationLeaf(0), relationLeaf(1), []);
+    const tree = operatorNode(JoinType.INNER, inner, relationLeaf(2), [predicateEntry(pred, 0b111, 0b011, 0b100)]);
+    const graph = buildJoinHyperGraph(scanRelations(['A', 'B', 'C']), computeJoinConstraints(tree), { estimateScan: () => 10 });
 
     expect(graph.edges).toHaveLength(1);
-    const edge = graph.edges[0];
-    expect(edge.leftMask | edge.rightMask).toBe(a | b | c);
-    // one side is exactly {A,B}, the other exactly {C}
-    expect([edge.leftMask, edge.rightMask]).toContain(a | b);
-    expect([edge.leftMask, edge.rightMask]).toContain(c);
-  });
-});
-
-describe('subsetsByAscendingSize', () => {
-  it('returns nothing for an empty mask', () => {
-    expect(subsetsByAscendingSize(0)).toEqual([]);
+    expect(graph.edges[0].leftMask).toBe(0b011);
+    expect(graph.edges[0].rightMask).toBe(0b100);
+    expect(graph.adjacency[0] & 0b010).toBe(0);
   });
 
-  it('returns the same members as the unordered enumeration', () => {
-    const ordered = subsetsByAscendingSize(0b1011);
-    expect([...ordered].sort((a, b) => a - b)).toEqual([...subsets(0b1011)].sort((a, b) => a - b));
-  });
+  it('marks an outer join edge as non-conjunctive and pins it to its operands', () => {
+    const pred = makeEqPred('A', 'id', 'B', 'a_id');
+    const { constraints } = twoRelationBlock(JoinType.LEFT, pred, 0b11);
+    const graph = buildJoinHyperGraph(scanRelations(['A', 'B']), constraints, { estimateScan: () => 10 });
 
-  it('emits singletons before larger subsets', () => {
-    const ordered = subsetsByAscendingSize(0b111);
-    expect(ordered.slice(0, 3).every(mask => popcount(mask) === 1)).toBe(true);
-  });
-
-  it('emits the full mask last', () => {
-    const ordered = subsetsByAscendingSize(0b1111);
-    expect(ordered[ordered.length - 1]).toBe(0b1111);
-  });
-
-  it('never decreases in subset size', () => {
-    const sizes = subsetsByAscendingSize(0b11111).map(popcount);
-    for (let i = 1; i < sizes.length; i++) {
-      expect(sizes[i]).toBeGreaterThanOrEqual(sizes[i - 1]);
-    }
-  });
-
-  it('differs from the unordered enumeration order for multi-bit masks', () => {
-    expect(subsetsByAscendingSize(0b111)).not.toEqual(subsets(0b111));
-  });
-});
-
-describe('bit helpers', () => {
-  it('lists no indices for an empty mask', () => {
-    expect([...bitIndices(0)]).toEqual([]);
-  });
-
-  it('lists set-bit indices in ascending order', () => {
-    expect([...bitIndices(0b1010)]).toEqual([1, 3]);
-  });
-
-  it('lists set-bit indices in descending order', () => {
-    expect(descendingBitIndices(0b1010)).toEqual([3, 1]);
-  });
-
-  it('finds the lowest set bit index', () => {
-    expect(lowestBitIndex(0b1100)).toBe(2);
-  });
-
-  it('builds a mask covering every index up to and including the given one', () => {
-    expect(maskBelowOrEqual(3)).toBe(0b1111);
-  });
-
-  it('builds a single-bit mask for index zero', () => {
-    expect(maskBelowOrEqual(0)).toBe(0b1);
+    expect(graph.edges[0].joinType).toBe(JoinType.LEFT);
+    expect(graph.edges[0].conjunctive).toBe(false);
+    expect(graph.edges[0].requiredLeft).toBe(0b01);
+    expect(graph.edges[0].requiredRight).toBe(0b10);
   });
 });
 
@@ -510,7 +405,7 @@ describe('HyperGraph neighborhood exclusion', () => {
   });
 });
 
-describe('HyperGraph hasJoinPredicate', () => {
+describe('HyperGraph resolveJoin connectivity', () => {
   function chain() {
     const graph = new HyperGraph();
     graph.addRelation('A', { type: 'Scan' }, 1);
@@ -521,42 +416,43 @@ describe('HyperGraph hasJoinPredicate', () => {
     return graph;
   }
 
-  it('reports a predicate between directly connected relations', () => {
-    expect(chain().hasJoinPredicate(0b001, 0b010)).toBe(true);
+  it('resolves a join between directly connected relations', () => {
+    expect(chain().resolveJoin(0b001, 0b010)).not.toBeNull();
   });
 
-  it('reports no predicate between unconnected relations', () => {
-    expect(chain().hasJoinPredicate(0b001, 0b100)).toBe(false);
+  it('refuses a join between unconnected relations', () => {
+    expect(chain().resolveJoin(0b001, 0b100)).toBeNull();
   });
 
-  it('reports a predicate when one side is a grouped subplan', () => {
-    expect(chain().hasJoinPredicate(0b011, 0b100)).toBe(true);
+  it('resolves a join when one side is a grouped subplan', () => {
+    expect(chain().resolveJoin(0b011, 0b100)).not.toBeNull();
   });
 
-  it('agrees with findJoinPredicates on every pair it is asked about', () => {
+  it('always carries at least one predicate when it resolves an inner join', () => {
     const graph = chain();
     for (let left = 1; left <= graph.fullMask; left++) {
       const right = graph.fullMask & ~left;
       if (right === 0) continue;
-      expect(graph.hasJoinPredicate(left, right)).toBe(graph.findJoinPredicates(left, right).length > 0);
+      const resolution = graph.resolveJoin(left, right);
+      if (resolution) expect(resolution.predicates.length).toBeGreaterThan(0);
     }
   });
 });
 
 describe('HyperEdge spans', () => {
   it('accepts a pair that straddles the edge', () => {
-    expect(new HyperEdge(0b01, 0b10, {}).spans(0b01, 0b10)).toBe(true);
+    expect(innerEdge(0b01, 0b10).spans(0b01, 0b10)).toBe(true);
   });
 
   it('accepts the reversed orientation', () => {
-    expect(new HyperEdge(0b01, 0b10, {}).spans(0b10, 0b01)).toBe(true);
+    expect(innerEdge(0b01, 0b10).spans(0b10, 0b01)).toBe(true);
   });
 
   it('rejects a pair that leaves part of the edge outside', () => {
-    expect(new HyperEdge(0b011, 0b100, {}).spans(0b001, 0b100)).toBe(false);
+    expect(innerEdge(0b011, 0b100).spans(0b001, 0b100)).toBe(false);
   });
 
   it('rejects a pair that keeps the whole edge on one side', () => {
-    expect(new HyperEdge(0b01, 0b10, {}).spans(0b11, 0b100)).toBe(false);
+    expect(innerEdge(0b01, 0b10).spans(0b11, 0b100)).toBe(false);
   });
 });

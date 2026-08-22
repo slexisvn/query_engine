@@ -56,10 +56,10 @@ export class GreedyJoinEnumerator implements JoinEnumerator {
 
       const left = remaining.get(leftMask)!;
       const right = remaining.get(rightMask)!;
-      const predicates = this.graph.findJoinPredicates(leftMask, rightMask);
-      if (predicates.length === 0) continue;
+      const resolution = this.graph.resolveJoin(leftMask, rightMask);
+      if (!resolution) continue;
 
-      const entry = bestJoinOf(left, right, predicates, this.costModel, this.cardEstimator);
+      const entry = bestJoinOf(left, right, resolution, this.costModel, this.cardEstimator);
       if (!best || entry.cardinality < best.entry.cardinality
         || (entry.cardinality === best.entry.cardinality && entry.totalCost < best.entry.totalCost)) {
         best = { leftMask, rightMask, entry };

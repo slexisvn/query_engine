@@ -1,4 +1,5 @@
-import { subsetsByAscendingSize, descendingBitIndices, lowestBitIndex, maskBelowOrEqual, type HyperGraph } from './hypergraph.js';
+import { subsetsByAscendingSize, descendingBitIndices, lowestBitIndex, maskBelowOrEqual } from './bitmask.js';
+import type { HyperGraph, JoinResolution } from './hypergraph.js';
 import { bestJoinOf, type JoinCardinalityEstimator, type JoinEnumerator, type JoinOrderEntry } from './join-plan.js';
 import { Config } from '../../config.js';
 import type { DefaultCostModel } from '../../planner/cost-model.js';
@@ -84,7 +85,8 @@ export class DPhypEnumerator implements JoinEnumerator {
 
     for (const index of descendingBitIndices(neighborhood)) {
       const complement = 1 << index;
-      if (this.graph.hasJoinPredicate(subset, complement)) this.emitCsgCmp(subset, complement);
+      const resolution = this.graph.resolveJoin(subset, complement);
+      if (resolution) this.emitCsgCmp(subset, complement, resolution);
       if (this.budgetExhausted) return;
       this.enumerateCmpRec(subset, complement, excluded | (maskBelowOrEqual(index) & neighborhood));
       if (this.budgetExhausted) return;
@@ -99,7 +101,10 @@ export class DPhypEnumerator implements JoinEnumerator {
 
     for (const expansion of expansions) {
       const grown = right | expansion;
-      if (this.dp.has(grown) && this.graph.hasJoinPredicate(left, grown)) this.emitCsgCmp(left, grown);
+      if (this.dp.has(grown)) {
+        const resolution = this.graph.resolveJoin(left, grown);
+        if (resolution) this.emitCsgCmp(left, grown, resolution);
+      }
       if (this.budgetExhausted) return;
     }
 
@@ -110,7 +115,7 @@ export class DPhypEnumerator implements JoinEnumerator {
     }
   }
 
-  emitCsgCmp(left: number, right: number): void {
+  emitCsgCmp(left: number, right: number, resolution: JoinResolution): void {
     if (++this.pairsEmitted > this.pairBudget) {
       this.budgetExhausted = true;
       return;
@@ -120,10 +125,7 @@ export class DPhypEnumerator implements JoinEnumerator {
     const rightEntry = this.dp.get(right);
     if (!leftEntry || !rightEntry) return;
 
-    const predicates = this.graph.findJoinPredicates(left, right);
-    if (predicates.length === 0) return;
-
-    const candidate = bestJoinOf(leftEntry, rightEntry, predicates, this.costModel, this.cardEstimator);
+    const candidate = bestJoinOf(leftEntry, rightEntry, resolution, this.costModel, this.cardEstimator);
     const existing = this.dp.get(candidate.mask);
     if (!existing || candidate.totalCost < existing.totalCost) {
       this.dp.set(candidate.mask, candidate);

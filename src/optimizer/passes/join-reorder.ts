@@ -1,14 +1,23 @@
 import { OptimizationPass } from '../pass.js';
-import { PlanNodeType, JoinType, LogicalJoin, LogicalFilter, getChildren, type LogicalPlanNode, type LogicalScanNode } from '../../planner/logical-plan.js';
+import { PlanNodeType, LogicalJoin, LogicalFilter, getChildren, type LogicalPlanNode, type LogicalJoinNode, type LogicalScanNode } from '../../planner/logical-plan.js';
 import { PlanRewriter } from '../../planner/plan-rewriter.js';
-import { buildHyperGraph } from '../join-order/hypergraph.js';
+import { buildJoinHyperGraph, type Relation } from '../join-order/hypergraph.js';
 import { enumerateJoinOrder } from '../join-order/enumerator.js';
+import { BITMASK_RELATION_CAPACITY, popcount } from '../join-order/bitmask.js';
+import {
+  ambiguousRelations,
+  computeJoinConstraints,
+  nullRejectedRelations,
+  JOIN_TYPE_PROPERTIES,
+  JoinTreeNodeKind,
+  type JoinTreeNode,
+  type JoinTreeOperator,
+} from '../join-order/join-conflicts.js';
 import { DefaultCostModel } from '../../planner/cost-model.js';
 import { DefaultCardinalityEstimator, type TableStats } from '../../planner/cardinality.js';
 import { collectTableRefs } from '../expr-walk.js';
 import type { JoinPlan } from '../join-order/join-plan.js';
-import type { Relation } from '../join-order/hypergraph.js';
-import type { BoundExpr } from '../../binder/expression-binder.js';
+import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
 import { splitConjuncts, combineConjuncts } from '../../binder/conjuncts.js';
 
 const SYNTHETIC_RELATION_PREFIX = '_rel_';
@@ -27,6 +36,10 @@ function declaredRelationName(node: LogicalPlanNode): string | null {
     default:
       return null;
   }
+}
+
+function isConjunctiveJoin(node: LogicalPlanNode): node is LogicalJoinNode {
+  return node.type === PlanNodeType.JOIN && JOIN_TYPE_PROPERTIES[node.joinType].conjunctive;
 }
 
 export class JoinReorder extends OptimizationPass {
@@ -49,6 +62,186 @@ export class JoinReorder extends OptimizationPass {
   }
 }
 
+class JoinBlock {
+  relations: Relation[];
+  relationNames: string[];
+  relationIndex: Map<string, number>;
+  residuals: BoundExpr[];
+  operators: JoinTreeOperator[];
+  conjunctiveOnly: boolean;
+  overflowed: boolean;
+  syntheticCount: number;
+
+  constructor(syntheticCount: number) {
+    this.relations = [];
+    this.relationNames = [];
+    this.relationIndex = new Map();
+    this.residuals = [];
+    this.operators = [];
+    this.conjunctiveOnly = true;
+    this.overflowed = false;
+    this.syntheticCount = syntheticCount;
+  }
+
+  get edgeCount(): number {
+    let total = 0;
+    for (const operator of this.operators) total += operator.predicates.length;
+    return total;
+  }
+
+  build(node: LogicalPlanNode): JoinTreeNode | null {
+    if (node.type === PlanNodeType.JOIN) return this.buildOperator(node);
+    if (node.type === PlanNodeType.FILTER && isConjunctiveJoin(node.children[0])) {
+      const child = this.build(node.children[0]);
+      if (!child || child.kind !== JoinTreeNodeKind.OPERATOR) return child;
+      for (const conjunct of splitConjuncts(node.condition)) this.placePredicate(child, conjunct);
+      return child;
+    }
+    return this.addRelation(node);
+  }
+
+  buildOperator(node: LogicalJoinNode): JoinTreeNode | null {
+    const left = this.build(node.children[0]);
+    if (!left) return null;
+    const right = this.build(node.children[1]);
+    if (!right) return null;
+
+    const operator: JoinTreeOperator = {
+      kind: JoinTreeNodeKind.OPERATOR,
+      joinType: node.joinType,
+      source: node,
+      predicates: [],
+      left,
+      right,
+      leftRels: relationsOf(left),
+      rightRels: relationsOf(right),
+      sesMask: 0,
+      nullRejectedMask: 0,
+    };
+    this.operators.push(operator);
+
+    if (JOIN_TYPE_PROPERTIES[node.joinType].conjunctive) {
+      for (const conjunct of splitConjuncts(node.condition)) this.placePredicate(operator, conjunct);
+    } else {
+      this.conjunctiveOnly = false;
+      this.addWholeCondition(operator);
+    }
+
+    return operator;
+  }
+
+  addRelation(node: LogicalPlanNode): JoinTreeNode | null {
+    if (this.relations.length >= BITMASK_RELATION_CAPACITY) {
+      this.overflowed = true;
+      return null;
+    }
+
+    const id = this.relations.length;
+    const scan = node.type === PlanNodeType.FILTER && node.children[0].type === PlanNodeType.SCAN
+      ? node.children[0]
+      : node.type === PlanNodeType.SCAN ? node : null;
+    const alias = scan ? (scan.alias || scan.table) : this.inferAlias(node);
+    const name = scan ? scan.table : alias;
+
+    this.relations.push({ name, alias, plan: node });
+    this.relationNames.push(alias.toUpperCase());
+    if (!this.relationIndex.has(alias.toUpperCase())) this.relationIndex.set(alias.toUpperCase(), id);
+
+    return { kind: JoinTreeNodeKind.RELATION, mask: 1 << id };
+  }
+
+  inferAlias(node: LogicalPlanNode): string {
+    const declared = declaredRelationName(node);
+    if (declared) return declared;
+    const scan = findFirstScan(node);
+    return scan?.alias || scan?.table || `${SYNTHETIC_RELATION_PREFIX}${this.syntheticCount++}`;
+  }
+
+  addWholeCondition(operator: JoinTreeOperator): void {
+    const condition = operator.source.condition;
+    const refs = condition ? this.refsMask(condition) : 0;
+    const sesMask = refs < 0 ? 0 : refs & (operator.leftRels | operator.rightRels);
+
+    operator.sesMask = sesMask;
+    operator.predicates.push({
+      predicate: condition,
+      sesMask,
+      leftMask: (sesMask & operator.leftRels) || operator.leftRels,
+      rightMask: (sesMask & operator.rightRels) || operator.rightRels,
+    });
+  }
+
+  placePredicate(operator: JoinTreeOperator, predicate: BoundExpr): void {
+    const sesMask = this.refsMask(predicate);
+    const subtree = operator.leftRels | operator.rightRels;
+
+    if (sesMask < 0 || popcount(sesMask) < 2 || (sesMask & ~subtree) !== 0) {
+      this.residuals.push(predicate);
+      return;
+    }
+
+    let target = operator;
+    while ((sesMask & target.leftRels) === 0 || (sesMask & target.rightRels) === 0) {
+      const next = (sesMask & target.leftRels) !== 0 ? target.left : target.right;
+      if (next.kind !== JoinTreeNodeKind.OPERATOR || !JOIN_TYPE_PROPERTIES[next.joinType].conjunctive) {
+        this.residuals.push(predicate);
+        return;
+      }
+      target = next;
+    }
+
+    const sides = this.predicateSides(predicate, sesMask);
+    target.predicates.push({ predicate, sesMask, leftMask: sides.leftMask, rightMask: sides.rightMask });
+    target.sesMask |= sesMask;
+  }
+
+  predicateSides(predicate: BoundExpr, sesMask: number): { leftMask: number; rightMask: number } {
+    if (predicate.kind === BoundExprKind.BINARY) {
+      const leftMask = this.refsMask(predicate.left);
+      const rightMask = this.refsMask(predicate.right);
+      if (leftMask > 0 && rightMask > 0 && (leftMask & rightMask) === 0) return { leftMask, rightMask };
+    }
+    const anchor = sesMask & -sesMask;
+    return { leftMask: anchor, rightMask: sesMask & ~anchor };
+  }
+
+  refsMask(expr: BoundExpr): number {
+    let mask = 0;
+    for (const ref of collectTableRefs(expr)) {
+      const id = this.relationIndex.get(ref);
+      if (id === undefined) return -1;
+      mask |= 1 << id;
+    }
+    return mask;
+  }
+
+  annotateNullRejection(): void {
+    const ambiguous = ambiguousRelations(this.relationNames);
+    for (const operator of this.operators) {
+      operator.nullRejectedMask = nullRejectedRelations(
+        operator.source.condition,
+        operator.leftRels | operator.rightRels,
+        this.relationNames,
+        ambiguous,
+      );
+    }
+  }
+}
+
+function relationsOf(node: JoinTreeNode): number {
+  return node.kind === JoinTreeNodeKind.RELATION ? node.mask : node.leftRels | node.rightRels;
+}
+
+function findFirstScan(node: LogicalPlanNode | null): LogicalScanNode | null {
+  if (!node) return null;
+  if (node.type === PlanNodeType.SCAN) return node;
+  for (const child of getChildren(node)) {
+    const found = findFirstScan(child);
+    if (found) return found;
+  }
+  return null;
+}
+
 class JoinReorderRewriter extends PlanRewriter {
   costModel: DefaultCostModel;
   cardEstimator: DefaultCardinalityEstimator;
@@ -61,141 +254,39 @@ class JoinReorderRewriter extends PlanRewriter {
     this.syntheticRelationCount = 0;
   }
 
-  override rewriteJoin(node: LogicalPlanNode): LogicalPlanNode {
+  override rewriteJoin(node: LogicalJoinNode): LogicalPlanNode {
     const rewritten = this.rewriteChildren(node);
-    if (this.isInnerJoinTree(rewritten)) {
-      return this.reorderJoinTree(rewritten);
-    }
-    if (this.isNonInnerJoin(rewritten)) {
-      return this.reorderNonInnerJoin(rewritten);
-    }
-    return rewritten;
+    return rewritten.type === PlanNodeType.JOIN ? this.reorderJoinTree(rewritten) : rewritten;
   }
 
-  override rewriteDefault(node: LogicalPlanNode): LogicalPlanNode {
-    const rewritten = this.rewriteChildren(node);
-    if (this.isInnerJoinTree(rewritten)) {
-      return this.reorderJoinTree(rewritten);
-    }
-    return rewritten;
-  }
+  reorderJoinTree(root: LogicalJoinNode): LogicalPlanNode {
+    const block = new JoinBlock(this.syntheticRelationCount);
+    const tree = block.build(root);
+    this.syntheticRelationCount = block.syntheticCount;
 
-  isInnerJoinTree(node: LogicalPlanNode): boolean {
-    if (node.type !== PlanNodeType.JOIN) return false;
-    if (node.joinType !== JoinType.INNER && node.joinType !== JoinType.CROSS) return false;
-    return true;
-  }
+    if (!tree || block.overflowed || block.relations.length < 2) return root;
+    if (!block.conjunctiveOnly && block.residuals.length > 0) return root;
 
-  isNonInnerJoin(node: LogicalPlanNode): boolean {
-    if (node.type !== PlanNodeType.JOIN) return false;
-    return node.joinType === JoinType.SEMI
-      || node.joinType === JoinType.ANTI
-      || node.joinType === JoinType.LEFT
-      || node.joinType === JoinType.MARK;
-  }
+    block.annotateNullRejection();
 
-  reorderNonInnerJoin(node: LogicalPlanNode): LogicalPlanNode {
-    let left = node.children![0];
-    let right = node.children![1];
-
-    if (this.isInnerJoinTree(left)) left = this.reorderJoinTree(left);
-    if (this.isInnerJoinTree(right)) right = this.reorderJoinTree(right);
-
-    return { ...node, children: [left, right] };
-  }
-
-  reorderJoinTree(root: LogicalPlanNode): LogicalPlanNode {
-    const relations: Relation[] = [];
-    const joinPredicates: BoundExpr[] = [];
-    const nonJoinFilters: BoundExpr[] = [];
-
-    this.flattenJoinTree(root, relations, joinPredicates, nonJoinFilters);
-
-    if (relations.length < 2) return root;
-
-    const graph = buildHyperGraph(relations, joinPredicates, this.cardEstimator);
-
-    if (graph.size < 2) return root;
+    const constraints = computeJoinConstraints(tree);
+    const graph = buildJoinHyperGraph(block.relations, constraints, this.cardEstimator);
+    if (graph.size !== block.relations.length || graph.edges.length !== block.edgeCount) return root;
 
     const result = enumerateJoinOrder(graph, this.costModel, this.cardEstimator);
     if (!result) return root;
 
-    let plan = this.reconstructPlan(result.plan);
-
-    const residualFilters = [...graph.unrepresentedPredicates, ...nonJoinFilters];
-    if (residualFilters.length > 0) {
-      plan = LogicalFilter(combineConjuncts(residualFilters), plan);
-    }
-
-    return plan;
-  }
-
-  flattenJoinTree(node: LogicalPlanNode, relations: Relation[], joinPredicates: BoundExpr[], nonJoinFilters: BoundExpr[]): void {
-    if (node.type === PlanNodeType.JOIN
-        && (node.joinType === JoinType.INNER || node.joinType === JoinType.CROSS)) {
-      this.flattenJoinTree(node.children[0], relations, joinPredicates, nonJoinFilters);
-      this.flattenJoinTree(node.children[1], relations, joinPredicates, nonJoinFilters);
-      this.classifyPredicates(node.condition, joinPredicates, nonJoinFilters);
-      return;
-    }
-
-    if (node.type === PlanNodeType.FILTER) {
-      const child = node.children[0];
-
-      if (child.type === PlanNodeType.JOIN
-          && (child.joinType === JoinType.INNER || child.joinType === JoinType.CROSS)) {
-        this.classifyPredicates(node.condition, joinPredicates, nonJoinFilters);
-        this.flattenJoinTree(child, relations, joinPredicates, nonJoinFilters);
-        return;
-      }
-
-      if (child.type === PlanNodeType.SCAN) {
-        relations.push({ name: child.table, alias: child.alias || child.table, plan: node });
-        return;
-      }
-    }
-
-    if (node.type === PlanNodeType.SCAN) {
-      relations.push({ name: node.table, alias: node.alias || node.table, plan: node });
-      return;
-    }
-
-    const alias = this.inferAlias(node);
-    relations.push({ name: alias, alias, plan: node });
-  }
-
-  classifyPredicates(condition: BoundExpr | null, joinPredicates: BoundExpr[], nonJoinFilters: BoundExpr[]): void {
-    if (!condition) return;
-    for (const pred of splitConjuncts(condition)) {
-      if (collectTableRefs(pred).size >= 2) joinPredicates.push(pred);
-      else nonJoinFilters.push(pred);
-    }
+    const plan = this.reconstructPlan(result.plan);
+    return block.residuals.length > 0 ? LogicalFilter(combineConjuncts(block.residuals), plan) : plan;
   }
 
   reconstructPlan(dpPlan: JoinPlan | LogicalPlanNode): LogicalPlanNode {
-    if (!dpPlan) return dpPlan;
     if (dpPlan.type === 'HashJoin') {
-      const left = this.reconstructPlan(dpPlan.buildSide);
-      const right = this.reconstructPlan(dpPlan.probeSide);
-      return LogicalJoin(JoinType.INNER, dpPlan.condition, left, right);
+      const left = this.reconstructPlan(dpPlan.leftSide);
+      const right = this.reconstructPlan(dpPlan.rightSide);
+      if (!dpPlan.source) return LogicalJoin(dpPlan.joinType, dpPlan.condition, left, right);
+      return { ...dpPlan.source, condition: dpPlan.condition, children: [left, right] };
     }
     return dpPlan;
-  }
-
-  inferAlias(node: LogicalPlanNode): string {
-    const declared = declaredRelationName(node);
-    if (declared) return declared;
-    const scan = this.findFirstScan(node);
-    return scan?.alias || scan?.table || `${SYNTHETIC_RELATION_PREFIX}${this.syntheticRelationCount++}`;
-  }
-
-  findFirstScan(node: LogicalPlanNode | null): LogicalScanNode | null {
-    if (!node) return null;
-    if (node.type === PlanNodeType.SCAN) return node;
-    for (const child of getChildren(node)) {
-      const found = this.findFirstScan(child);
-      if (found) return found;
-    }
-    return null;
   }
 }

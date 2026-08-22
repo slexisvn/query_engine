@@ -13,11 +13,12 @@ import {
   proportionalEstimator,
   seededRandom,
   bruteForceOptimum,
+  buildHyperEdgeGraph,
 } from '../../helpers/join-graphs.js';
 
 function simpleEstimator() {
   return {
-    estimateJoin(leftCard, rightCard, condition) {
+    estimateJoinOf(joinType, leftCard, rightCard, condition) {
       if (!condition) return leftCard * rightCard;
       return Math.max(1, Math.round(Math.max(leftCard, rightCard)));
     },
@@ -66,8 +67,8 @@ describe('DPhypEnumerator', () => {
       const cost = new DefaultCostModel();
       const result = new DPhypEnumerator(g, cost, simpleEstimator()).solve();
 
-      expect(result.plan.buildSide.table).toBe('Small');
-      expect(result.plan.probeSide.table).toBe('Big');
+      expect(result.plan.leftSide.table).toBe('Small');
+      expect(result.plan.rightSide.table).toBe('Big');
     });
   });
 
@@ -87,7 +88,7 @@ describe('DPhypEnumerator', () => {
       expect(result).not.toBeNull();
       const plan = result.plan;
       expect(plan.type).toBe('HashJoin');
-      const innerJoin = [plan.buildSide, plan.probeSide].find(s => s.type === 'HashJoin');
+      const innerJoin = [plan.leftSide, plan.rightSide].find(s => s.type === 'HashJoin');
       expect(innerJoin).toBeDefined();
     });
   });
@@ -156,7 +157,7 @@ describe('DPhypEnumerator', () => {
       g2.addEdge(['A'], ['C'], makeEqPred('A', 'id', 'C', 'a_id'));
 
       const naiveResult = new DPhypEnumerator(g2, cost, {
-        estimateJoin: (l, r) => l * r,
+        estimateJoinOf: (_joinType, l, r) => l * r,
       }).solve();
 
       expect(result.totalCost).toBeLessThanOrEqual(naiveResult.totalCost);
@@ -191,7 +192,7 @@ describe('DPhypEnumerator', () => {
     });
   });
 
-  describe('hypergraph findJoinPredicates dedup', () => {
+  describe('hypergraph resolveJoin dedup', () => {
     it('returns each predicate at most once for symmetric edges', () => {
       const g = new HyperGraph();
       g.addRelation('A', { type: 'Scan', table: 'A' }, 100);
@@ -201,11 +202,8 @@ describe('DPhypEnumerator', () => {
 
       const leftMask = 1;
       const rightMask = 2;
-      const preds = g.findJoinPredicates(leftMask, rightMask);
-      expect(preds).toHaveLength(1);
-
-      const predsReversed = g.findJoinPredicates(rightMask, leftMask);
-      expect(predsReversed).toHaveLength(1);
+      expect(g.resolveJoin(leftMask, rightMask).predicates).toHaveLength(1);
+      expect(g.resolveJoin(rightMask, leftMask).predicates).toHaveLength(1);
     });
   });
 });
@@ -305,9 +303,9 @@ describe('DPhypEnumerator enumeration budget', () => {
     const enumerator = new DPhypEnumerator(graph, new DefaultCostModel(), proportionalEstimator());
     const seen = [];
     const original = enumerator.emitCsgCmp.bind(enumerator);
-    enumerator.emitCsgCmp = (left, right) => {
+    enumerator.emitCsgCmp = (left, right, resolution) => {
       seen.push([left, right]);
-      return original(left, right);
+      return original(left, right, resolution);
     };
 
     enumerator.solve();
@@ -316,7 +314,62 @@ describe('DPhypEnumerator enumeration budget', () => {
     for (const [left, right] of seen) {
       expect(graph.isConnected(left)).toBe(true);
       expect(graph.isConnected(right)).toBe(true);
-      expect(graph.hasJoinPredicate(left, right)).toBe(true);
+      expect(graph.resolveJoin(left, right)).not.toBeNull();
     }
+  });
+});
+
+describe('DPhypEnumerator over true hyperedges', () => {
+  const HYPER_SHAPES = {
+    'pair joined to a third relation': [[[0], [1]], [[0, 1], [2]]],
+    'two overlapping hyperedges': [[[0], [1]], [[0, 1], [2]], [[1, 2], [3]]],
+    'hyperedge bridging two chains': [[[0], [1]], [[2], [3]], [[0, 1], [2, 3]]],
+    'hyperedge plus redundant simple edge': [[[0], [1]], [[0, 1], [2]], [[1], [2]]],
+    'star centre expanded by a hyperedge': [[[0], [1]], [[0], [2]], [[1, 2], [3]]],
+  };
+
+  for (const [shapeName, edges] of Object.entries(HYPER_SHAPES)) {
+    it(`matches brute-force optimum on a ${shapeName}`, () => {
+      const size = Math.max(...edges.flat(2)) + 1;
+      const random = seededRandom(shapeName.length * 7 + size);
+      const cardinalities = Array.from({ length: size }, () => 10 + Math.floor(random() * 100000));
+      const costModel = new DefaultCostModel();
+      const estimator = proportionalEstimator();
+
+      const reference = bruteForceOptimum(buildHyperEdgeGraph(cardinalities, edges), costModel, estimator);
+      const actual = new DPhypEnumerator(buildHyperEdgeGraph(cardinalities, edges), costModel, estimator).solve();
+
+      expect(reference, shapeName).not.toBeNull();
+      expect(actual, shapeName).not.toBeNull();
+      expect(actual.mask).toBe(reference.mask);
+      expect(actual.totalCost).toBeCloseTo(reference.totalCost, 6);
+    });
+  }
+
+  it('never offers the far side of a hyperedge as a neighbour on its own', () => {
+    const graph = buildHyperEdgeGraph([100, 200, 300], [[[0], [1]], [[0, 1], [2]]]);
+
+    expect(graph.neighborhood(0b001, 0)).toBe(0b010);
+    expect(graph.neighborhood(0b011, 0)).toBe(0b100);
+  });
+
+  it('reaches the far side of a hyperedge once both near relations are present', () => {
+    const graph = buildHyperEdgeGraph([100, 200, 300, 400], [[[0], [1]], [[2], [3]], [[0, 1], [2, 3]]]);
+
+    expect(graph.neighborhood(0b0001, 0)).toBe(0b0010);
+    expect(graph.neighborhood(0b0011, 0)).toBe(0b0100);
+  });
+
+  it('offers only neighbours that lead to a usable join on a hyperedge chain', () => {
+    const edges = [[[0], [1]], [[0, 1], [2]], [[1, 2], [3]], [[2, 3], [4]], [[3, 4], [5]]];
+    const graph = buildHyperEdgeGraph([100, 200, 300, 400, 500, 600], edges);
+    const resolveJoin = graph.resolveJoin.bind(graph);
+    let resolved = 0;
+    graph.resolveJoin = (left, right) => { resolved++; return resolveJoin(left, right); };
+
+    const enumerator = new DPhypEnumerator(graph, new DefaultCostModel(), proportionalEstimator());
+
+    expect(enumerator.solve()).not.toBeNull();
+    expect(resolved).toBe(enumerator.pairsEmitted);
   });
 });

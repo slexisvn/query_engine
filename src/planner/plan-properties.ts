@@ -1,4 +1,4 @@
-import { PlanNodeType, JoinType, type LogicalPlanNode, type LogicalSortNode } from './logical-plan.js';
+import { PlanNodeType, type LogicalPlanNode, type LogicalSortNode } from './logical-plan.js';
 import { PlanRewriter } from './plan-rewriter.js';
 import { DefaultCardinalityEstimator, type TableStats } from './cardinality.js';
 import { columnKeyOf, inferSortOrder } from './sort-properties.js';
@@ -73,20 +73,7 @@ class PlanPropertiesRewriter extends PlanRewriter {
     const leftCard = node.children[0]._cardinality ?? Config.defaultCardinality;
     const rightCard = node.children[1]._cardinality ?? Config.defaultCardinality;
 
-    switch (node.joinType) {
-      case JoinType.SEMI:
-        return this.cardEstimator.estimateSemiJoin(leftCard, rightCard, node.condition);
-      case JoinType.ANTI:
-        return this.cardEstimator.estimateAntiJoin(leftCard, rightCard, node.condition);
-      case JoinType.MARK:
-        return leftCard;
-      case JoinType.LEFT:
-        return this.cardEstimator.estimateLeftJoin(leftCard, rightCard, node.condition);
-      case JoinType.CROSS:
-        return leftCard * rightCard;
-      default:
-        return this.cardEstimator.estimateJoin(leftCard, rightCard, node.condition);
-    }
+    return this.cardEstimator.estimateJoinOf(node.joinType, leftCard, rightCard, node.condition);
   }
 }
 

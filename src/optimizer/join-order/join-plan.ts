@@ -1,15 +1,19 @@
 import { BoundExprKind, type BoundExpr } from '../../binder/expression-binder.js';
-import type { LogicalPlanNode } from '../../planner/logical-plan.js';
+import { JoinType, type LogicalJoinNode, type LogicalPlanNode } from '../../planner/logical-plan.js';
 import type { DefaultCostModel } from '../../planner/cost-model.js';
 import { DataType } from '../../storage/data-type.js';
+import { JOIN_TYPE_PROPERTIES } from './join-conflicts.js';
+import type { JoinResolution } from './hypergraph.js';
 
 export interface JoinPlan {
   type: 'HashJoin';
-  buildSide: LogicalPlanNode | JoinPlan;
-  probeSide: LogicalPlanNode | JoinPlan;
+  joinType: JoinType;
+  source: LogicalJoinNode | null;
+  leftSide: LogicalPlanNode | JoinPlan;
+  rightSide: LogicalPlanNode | JoinPlan;
   condition: BoundExpr | null;
-  buildCard: number;
-  probeCard: number;
+  leftCard: number;
+  rightCard: number;
 }
 
 export interface JoinOrderEntry {
@@ -20,7 +24,7 @@ export interface JoinOrderEntry {
 }
 
 export interface JoinCardinalityEstimator {
-  estimateJoin(leftCard: number, rightCard: number, condition: BoundExpr | null): number;
+  estimateJoinOf(joinType: JoinType, leftCard: number, rightCard: number, condition: BoundExpr | null): number;
 }
 
 export interface JoinEnumerator {
@@ -56,20 +60,26 @@ export function combinePredicates(preds: BoundExpr[]): BoundExpr | null {
 export function bestJoinOf(
   left: JoinOrderEntry,
   right: JoinOrderEntry,
-  predicates: BoundExpr[],
+  resolution: JoinResolution,
   costModel: DefaultCostModel,
   estimator: JoinCardinalityEstimator,
 ): JoinOrderEntry {
-  const condition = combinePredicates(predicates);
-  const cardinality = estimator.estimateJoin(left.cardinality, right.cardinality, condition);
-  const forward = orientedJoin(left, right, condition, cardinality, costModel);
-  const reversed = orientedJoin(right, left, condition, cardinality, costModel);
+  const condition = combinePredicates(resolution.predicates);
+  const outer = resolution.swapped ? right : left;
+  const inner = resolution.swapped ? left : right;
+  const cardinality = estimator.estimateJoinOf(resolution.joinType, outer.cardinality, inner.cardinality, condition);
+
+  const forward = orientedJoin(resolution, outer, inner, condition, cardinality, costModel);
+  if (!JOIN_TYPE_PROPERTIES[resolution.joinType].commutative) return forward;
+
+  const reversed = orientedJoin(resolution, inner, outer, condition, cardinality, costModel);
   return forward.totalCost <= reversed.totalCost ? forward : reversed;
 }
 
 function orientedJoin(
-  build: JoinOrderEntry,
-  probe: JoinOrderEntry,
+  resolution: JoinResolution,
+  leftSide: JoinOrderEntry,
+  rightSide: JoinOrderEntry,
   condition: BoundExpr | null,
   cardinality: number,
   costModel: DefaultCostModel,
@@ -77,16 +87,18 @@ function orientedJoin(
   return {
     plan: {
       type: 'HashJoin',
-      buildSide: build.plan,
-      probeSide: probe.plan,
+      joinType: resolution.joinType,
+      source: resolution.source,
+      leftSide: leftSide.plan,
+      rightSide: rightSide.plan,
       condition,
-      buildCard: build.cardinality,
-      probeCard: probe.cardinality,
+      leftCard: leftSide.cardinality,
+      rightCard: rightSide.cardinality,
     },
     cardinality,
-    totalCost: build.totalCost + probe.totalCost
-      + costModel.hashJoinCost(build.cardinality, probe.cardinality, cardinality),
-    mask: build.mask | probe.mask,
+    totalCost: leftSide.totalCost + rightSide.totalCost
+      + costModel.hashJoinCost(leftSide.cardinality, rightSide.cardinality, cardinality),
+    mask: leftSide.mask | rightSide.mask,
   };
 }
 

@@ -15,8 +15,8 @@ import {
 
 function collectLeafCardinalities(plan, out = []) {
   if (plan.type === 'HashJoin') {
-    collectLeafCardinalities(plan.buildSide, out);
-    collectLeafCardinalities(plan.probeSide, out);
+    collectLeafCardinalities(plan.leftSide, out);
+    collectLeafCardinalities(plan.rightSide, out);
     return out;
   }
   out.push(plan.table);
@@ -86,7 +86,7 @@ describe('GreedyJoinEnumerator', () => {
       const graph = buildGraph([1000000, 5, 5000], starEdges(3));
       const result = new GreedyJoinEnumerator(graph, costModel, proportionalEstimator()).solve();
 
-      const innerJoin = [result.plan.buildSide, result.plan.probeSide].find(side => side.type === 'HashJoin');
+      const innerJoin = [result.plan.leftSide, result.plan.rightSide].find(side => side.type === 'HashJoin');
       const innerLeaves = collectLeafCardinalities(innerJoin);
       expect(innerLeaves).toContain('A');
       expect(innerLeaves).toContain('B');

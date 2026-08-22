@@ -16,6 +16,25 @@ export interface EquiPred {
   right: BoundExpr;
 }
 
+type JoinCardinalityRule = (
+  estimator: DefaultCardinalityEstimator,
+  leftCard: number,
+  rightCard: number,
+  condition: BoundExpr | null,
+) => number;
+
+const JOIN_CARDINALITY_RULES: Record<JoinType, JoinCardinalityRule> = {
+  [JoinType.INNER]: (e, l, r, c) => e.estimateJoin(l, r, c),
+  [JoinType.CROSS]: (_e, l, r) => l * r,
+  [JoinType.LEFT]: (e, l, r, c) => e.estimateLeftJoin(l, r, c),
+  [JoinType.RIGHT]: (e, l, r, c) => e.estimateLeftJoin(r, l, c),
+  [JoinType.FULL]: (e, l, r, c) => Math.max(l, r, e.estimateJoin(l, r, c)),
+  [JoinType.SEMI]: (e, l, r, c) => e.estimateSemiJoin(l, r, c),
+  [JoinType.ANTI]: (e, l, r, c) => e.estimateAntiJoin(l, r, c),
+  [JoinType.MARK]: (_e, l) => l,
+  [JoinType.SINGLE]: (_e, l) => l,
+};
+
 export class DefaultCardinalityEstimator {
   stats: StatsProvider;
   subqueryCardinalities: WeakMap<BoundQuery, number>;
@@ -47,16 +66,13 @@ export class DefaultCardinalityEstimator {
         const childCard = this.estimatePlan(node.children?.[0]);
         return Math.min(node.count || childCard, childCard);
       }
-      case PlanNodeType.JOIN: {
-        const leftCard = this.estimatePlan(node.children[0]);
-        const rightCard = this.estimatePlan(node.children[1]);
-        if (node.joinType === JoinType.SEMI) return this.estimateSemiJoin(leftCard, rightCard, node.condition);
-        if (node.joinType === JoinType.ANTI) return this.estimateAntiJoin(leftCard, rightCard, node.condition);
-        if (node.joinType === JoinType.MARK) return leftCard;
-        if (node.joinType === JoinType.LEFT) return this.estimateLeftJoin(leftCard, rightCard, node.condition);
-        if (node.joinType === JoinType.CROSS) return leftCard * rightCard;
-        return this.estimateJoin(leftCard, rightCard, node.condition);
-      }
+      case PlanNodeType.JOIN:
+        return this.estimateJoinOf(
+          node.joinType,
+          this.estimatePlan(node.children[0]),
+          this.estimatePlan(node.children[1]),
+          node.condition,
+        );
       case PlanNodeType.AGGREGATE:
         return this.estimateAggregate(this.estimatePlan(node.children[0]), node.groupBy?.length || 0, node.groupBy);
       case PlanNodeType.EMPTY:
@@ -69,6 +85,10 @@ export class DefaultCardinalityEstimator {
   estimateFilter(inputCard: number, predicate: BoundExpr | null): number {
     const sel = this.estimateSelectivity(predicate);
     return Math.max(1, Math.round(inputCard * sel));
+  }
+
+  estimateJoinOf(joinType: JoinType, leftCard: number, rightCard: number, condition: BoundExpr | null): number {
+    return JOIN_CARDINALITY_RULES[joinType](this, leftCard, rightCard, condition);
   }
 
   estimateJoin(leftCard: number, rightCard: number, condition: BoundExpr | null): number {

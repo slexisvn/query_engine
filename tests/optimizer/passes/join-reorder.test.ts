@@ -494,3 +494,174 @@ describe('JoinReorder determinism', () => {
     expect(signature).not.toMatch(/_rel_[a-z0-9]{4}[^0-9]/);
   });
 });
+
+function joinShape(node) {
+  if (!node) return '?';
+  if (node.type === PlanNodeType.JOIN) {
+    return `${node.joinType}(${joinShape(node.children[0])},${joinShape(node.children[1])})`;
+  }
+  if (node.type === PlanNodeType.FILTER) return `filter(${joinShape(node.children[0])})`;
+  if (node.type === PlanNodeType.SCAN) return node.table;
+  return node.children?.length ? joinShape(node.children[0]) : node.type;
+}
+
+function joinNodesOfType(node, joinType) {
+  const found = [];
+  walkJoins(node, join => { if (join.joinType === joinType) found.push(join); });
+  return found;
+}
+
+function operandTables(join) {
+  return [collectScanTables(join.children[0]).sort(), collectScanTables(join.children[1]).sort()];
+}
+
+describe('JoinReorder conflict detection', () => {
+  const CARDS = { a: 100000, b: 10, c: 5, d: 20 };
+
+  function reorder(plan, cards = CARDS) {
+    return new JoinReorder(makeStats(cards)).apply(plan);
+  }
+
+  function isNull(table, column) {
+    return { kind: BoundExprKind.IS_NULL, expr: colRef(table, column), negated: false };
+  }
+
+  describe('reorders that are allowed', () => {
+    it('pulls an inner join under a left join when the predicate only touches the preserved side', () => {
+      const plan = LogicalJoin(
+        JoinType.INNER,
+        eqJoin('a', 'fk', 'c', 'id'),
+        LogicalJoin(JoinType.LEFT, eqJoin('a', 'id', 'b', 'fk'), scan('a'), scan('b')),
+        scan('c')
+      );
+
+      expect(joinShape(reorder(plan))).toBe('LEFT(INNER(c,a),b)');
+    });
+
+    it('pushes a left join under an inner join when the outer predicate only touches the inner right input', () => {
+      const plan = LogicalJoin(
+        JoinType.LEFT,
+        eqJoin('b', 'fk', 'c', 'id'),
+        LogicalJoin(JoinType.INNER, eqJoin('a', 'id', 'b', 'fk'), scan('a'), scan('b')),
+        scan('c')
+      );
+
+      expect(joinShape(reorder(plan))).toBe('INNER(LEFT(b,c),a)');
+    });
+
+    it('re-associates a left join chain when the upper predicate rejects nulls from the middle input', () => {
+      const plan = LogicalJoin(
+        JoinType.LEFT,
+        eqJoin('b', 'fk', 'c', 'id'),
+        LogicalJoin(JoinType.LEFT, eqJoin('a', 'id', 'b', 'fk'), scan('a'), scan('b')),
+        scan('c')
+      );
+
+      expect(joinShape(reorder(plan))).toBe('LEFT(a,LEFT(b,c))');
+    });
+
+    it('pulls an inner join under a semi join when the predicate only touches the preserved side', () => {
+      const plan = LogicalJoin(
+        JoinType.INNER,
+        eqJoin('a', 'fk', 'c', 'id'),
+        LogicalJoin(JoinType.SEMI, eqJoin('a', 'id', 'b', 'fk'), scan('a'), scan('b')),
+        scan('c')
+      );
+
+      expect(joinShape(reorder(plan))).toBe('SEMI(INNER(c,a),b)');
+    });
+
+    it('pulls an inner join under an anti join when the predicate only touches the preserved side', () => {
+      const plan = LogicalJoin(
+        JoinType.INNER,
+        eqJoin('a', 'fk', 'c', 'id'),
+        LogicalJoin(JoinType.ANTI, eqJoin('a', 'id', 'b', 'fk'), scan('a'), scan('b')),
+        scan('c')
+      );
+
+      expect(joinShape(reorder(plan))).toBe('ANTI(INNER(c,a),b)');
+    });
+  });
+
+  describe('reorders that are refused', () => {
+    function withFourthRelation(blocked, joinType, blockedPredicate) {
+      return LogicalJoin(
+        JoinType.INNER,
+        eqJoin('a', 'id', 'd', 'fk'),
+        LogicalJoin(
+          joinType,
+          blockedPredicate,
+          LogicalJoin(blocked, eqJoin('a', 'id', 'b', 'fk'), scan('a'), scan('b')),
+          scan('c')
+        ),
+        scan('d')
+      );
+    }
+
+    it('never joins the null-supplying input of a left join to a relation from above it', () => {
+      const result = reorder(withFourthRelation(JoinType.LEFT, JoinType.INNER, eqJoin('b', 'fk', 'c', 'id')));
+
+      const [left] = joinNodesOfType(result, JoinType.LEFT);
+      expect(collectScanTables(left.children[1])).toEqual(['b']);
+      for (const join of joinNodesOfType(result, JoinType.INNER)) {
+        const tables = collectScanTables(join).sort();
+        expect(tables.includes('b') && tables.includes('c') && !tables.includes('a')).toBe(false);
+      }
+      expect(joinShape(result)).toBe('INNER(c,LEFT(INNER(d,a),b))');
+    });
+
+    it('refuses to re-associate a left join chain when the upper predicate tolerates nulls', () => {
+      const tolerant = bin(isNull('b', 'fk'), 'OR', eqJoin('b', 'fk', 'c', 'id'));
+      const result = reorder(withFourthRelation(JoinType.LEFT, JoinType.LEFT, tolerant));
+
+      expect(joinShape(result)).toBe('LEFT(INNER(d,LEFT(a,b)),c)');
+    });
+
+    it('re-associates the same chain once the upper predicate rejects nulls from the middle input', () => {
+      const result = reorder(withFourthRelation(JoinType.LEFT, JoinType.LEFT, eqJoin('b', 'fk', 'c', 'id')));
+
+      expect(joinShape(result)).toBe('INNER(d,LEFT(a,LEFT(b,c)))');
+    });
+
+    it('never lets an anti join lose the producer of the rows it filters', () => {
+      const result = reorder(withFourthRelation(JoinType.ANTI, JoinType.INNER, eqJoin('b', 'fk', 'c', 'id')));
+
+      const [anti] = joinNodesOfType(result, JoinType.ANTI);
+      expect(collectScanTables(anti.children[1])).toEqual(['b']);
+      expect(joinShape(result)).toBe('INNER(ANTI(INNER(d,a),b),c)');
+    });
+
+    it('never grows the probe input of a semi join with a relation from above it', () => {
+      const result = reorder(withFourthRelation(JoinType.SEMI, JoinType.INNER, eqJoin('b', 'fk', 'c', 'id')));
+
+      const [semi] = joinNodesOfType(result, JoinType.SEMI);
+      expect(collectScanTables(semi.children[1])).toEqual(['b']);
+      expect(joinShape(result)).toBe('INNER(c,SEMI(INNER(d,a),b))');
+    });
+
+    it('keeps a mark join anchored to its probe input and carries the mark column across', () => {
+      const markJoin = {
+        ...LogicalJoin(JoinType.MARK, eqJoin('a', 'id', 'b', 'fk'), scan('a'), scan('b')),
+        markColumn: '__mark_0',
+      };
+      const plan = LogicalJoin(JoinType.INNER, eqJoin('a', 'fk', 'c', 'id'), markJoin, scan('c'));
+
+      const result = reorder(plan);
+      const [mark] = joinNodesOfType(result, JoinType.MARK);
+      expect(collectScanTables(mark.children[1])).toEqual(['b']);
+      expect(mark.markColumn).toBe('__mark_0');
+      expect(joinShape(result)).toBe('MARK(INNER(c,a),b)');
+    });
+
+    it('abandons a mixed block rather than hoisting a residual filter above an outer join', () => {
+      const plan = LogicalJoin(
+        JoinType.INNER,
+        bin(eqJoin('a', 'fk', 'c', 'id'), 'AND', bin(colRef('c', 'id'), '>', lit(5))),
+        LogicalJoin(JoinType.LEFT, eqJoin('a', 'id', 'b', 'fk'), scan('a'), scan('b')),
+        scan('c')
+      );
+
+      expect(joinShape(reorder(plan))).toBe('INNER(LEFT(a,b),c)');
+    });
+  });
+});
