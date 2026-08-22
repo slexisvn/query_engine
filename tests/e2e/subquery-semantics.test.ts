@@ -437,6 +437,32 @@ describe('subquery and derived table semantics', () => {
     });
   });
 
+  describe('a mark that distinguishes UNKNOWN from FALSE', () => {
+    it('treats an empty correlated group as NOT IN true even when the correlating predicate is unknown', async () => {
+      const rows = await runQuery(
+        'SELECT ID FROM EMP E WHERE E.DEPT NOT IN (SELECT F.DEPT FROM EMP F WHERE F.MGR = E.ID)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 3 }, { ID: 4 }, { ID: 5 }]));
+    });
+
+    it('treats an empty correlated group as NOT IN true when the outer correlating value is NULL', async () => {
+      const rows = await runQuery(
+        'SELECT ID FROM EMP E WHERE E.ID NOT IN (SELECT F.MGR FROM EMP F WHERE F.DEPT = E.DEPT)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 3 }, { ID: 4 }, { ID: 5 }]));
+    });
+
+    it('satisfies op ALL vacuously over an empty correlated group', async () => {
+      const rows = await runQuery(
+        'SELECT ID FROM EMP E WHERE E.SAL >= ALL (SELECT F.SAL FROM EMP F WHERE F.MGR = E.ID)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 3 }, { ID: 4 }, { ID: 5 }]));
+    });
+
+    it('still reports NOT IN unknown when the correlated group itself holds a NULL', async () => {
+      const rows = await runQuery(
+        'SELECT ID FROM EMP E WHERE E.SAL NOT IN (SELECT F.SAL FROM EMP F WHERE F.DEPT = E.DEPT)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 5 }]));
+    });
+  });
+
   describe('depth of correlation', () => {
     it('correlates a subquery nested inside another subquery to its own parent', async () => {
       const rows = await runQuery(

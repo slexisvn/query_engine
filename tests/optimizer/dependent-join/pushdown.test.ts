@@ -36,7 +36,7 @@ const equality = () => bin(corrRef('a', 'id'), '=', colRef('b', 'id'));
 const inequality = () => bin(corrRef('a', 'id'), '>', colRef('b', 'id'));
 
 function pushLifted(subquery, set = CORRELATION) {
-  return pushDependentJoin(subquery, set, new LiftedDomain(set), collectCorrelatedNodes(subquery, set), false);
+  return pushDependentJoin(subquery, set, new LiftedDomain(set, false), collectCorrelatedNodes(subquery, set), false);
 }
 
 function pushMaterialized(subquery, { alwaysNullSafe = false, set = CORRELATION } = {}) {

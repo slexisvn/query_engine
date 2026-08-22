@@ -23,6 +23,8 @@ export function formatExpression(expr?: BoundExpr | null): string {
       return `${expr.name}(${expr.args.map(formatExpression).join(', ')})`;
     case BoundExprKind.AGGREGATE:
       return `${expr.name}(${expr.args.map(formatExpression).join(', ')})`;
+    case BoundExprKind.IS_NULL:
+      return `(${formatExpression(expr.expr)} IS ${expr.negated ? 'NOT NULL' : 'NULL'})`;
     default:
       return expr.kind ? `<${expr.kind}>` : JSON.stringify(expr);
   }

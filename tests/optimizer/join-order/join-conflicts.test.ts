@@ -6,7 +6,6 @@ import {
   JOIN_TYPES,
   JOIN_TYPE_PROPERTIES,
   Reorderability,
-  ambiguousRelations,
   computeJoinConstraints,
   nullRejectedRelations,
 } from '../../../src/optimizer/join-order/join-conflicts.js';
@@ -17,6 +16,7 @@ import { makeColRef, makeEqPred, operatorNode, predicateEntry, relationLeaf } fr
 const A = 0b001;
 const B = 0b010;
 const C = 0b100;
+const D = 0b1000;
 
 function constraintFor(constraints, operator) {
   return constraints.find(constraint => constraint.operator === operator);
@@ -143,6 +143,24 @@ describe('computeJoinConstraints', () => {
     expect(constraintFor(computeJoinConstraints(root), root).conflictMask).toBe(A);
   });
 
+  it('drops the chain conflict when the upper predicate rejects nulls from part of a composite middle', () => {
+    const middle = operatorNode(JoinType.INNER, relationLeaf(1), relationLeaf(2), [entry(B | C, B, C)]);
+    const lower = operatorNode(JoinType.LEFT, relationLeaf(0), middle, [entry(A | B, A, B | C)]);
+    const root = operatorNode(JoinType.LEFT, lower, relationLeaf(3), [entry(B | D, B, D)]);
+    root.nullRejectedMask = B;
+
+    expect(constraintFor(computeJoinConstraints(root), root).conflictMask & A).toBe(0);
+  });
+
+  it('keeps a chain conflict whose own middle is unrejected even when a sibling chain is rejected', () => {
+    const rejected = operatorNode(JoinType.LEFT, relationLeaf(0), relationLeaf(1), [entry(A | B, A, B)]);
+    const tolerated = operatorNode(JoinType.LEFT, rejected, relationLeaf(2), [entry(A | C, A, C)]);
+    const root = operatorNode(JoinType.LEFT, tolerated, relationLeaf(3), [entry(B | D, B, D)]);
+    root.nullRejectedMask = B;
+
+    expect(constraintFor(computeJoinConstraints(root), root).conflictMask & (A | B)).toBe(A | B);
+  });
+
   it('pins a left join nested in the right input of another join', () => {
     const lower = operatorNode(JoinType.LEFT, relationLeaf(1), relationLeaf(2), [entry(B | C, B, C)]);
     const root = operatorNode(JoinType.LEFT, relationLeaf(0), lower, [entry(A | B, A, B)]);
@@ -172,7 +190,7 @@ describe('nullRejectedRelations', () => {
   const names = ['A', 'B'];
 
   it('reports a relation whose nulls make an equality predicate unsatisfiable', () => {
-    expect(nullRejectedRelations(makeEqPred('A', 'id', 'B', 'fk'), A | B, names, 0)).toBe(A | B);
+    expect(nullRejectedRelations(makeEqPred('A', 'id', 'B', 'fk'), A | B, names)).toBe(A | B);
   });
 
   it('reports nothing for a predicate that survives nulls', () => {
@@ -183,24 +201,10 @@ describe('nullRejectedRelations', () => {
       right: makeEqPred('A', 'id', 'B', 'fk'),
     };
 
-    expect(nullRejectedRelations(tolerant, A | B, names, 0) & B).toBe(0);
+    expect(nullRejectedRelations(tolerant, A | B, names) & B).toBe(0);
   });
 
   it('reports nothing without a predicate', () => {
-    expect(nullRejectedRelations(null, A | B, names, 0)).toBe(0);
-  });
-
-  it('skips relations whose name is shared with another relation', () => {
-    expect(nullRejectedRelations(makeEqPred('A', 'id', 'B', 'fk'), A | B, names, B)).toBe(A);
-  });
-});
-
-describe('ambiguousRelations', () => {
-  it('reports nothing when every name is distinct', () => {
-    expect(ambiguousRelations(['A', 'B', 'C'])).toBe(0);
-  });
-
-  it('marks every relation that shares a name', () => {
-    expect(ambiguousRelations(['A', 'B', 'A'])).toBe(A | C);
+    expect(nullRejectedRelations(null, A | B, names)).toBe(0);
   });
 });

@@ -56,8 +56,9 @@ export function chooseDomain(
   outer: LogicalPlanNode,
   set: CorrelationSet,
   correlated: ReadonlySet<LogicalPlanNode>,
+  distinguishesUnknown: boolean,
 ): CorrelationDomain {
   return canLiftCorrelation(subquery, set, correlated)
-    ? new LiftedDomain(set)
+    ? new LiftedDomain(set, distinguishesUnknown)
     : new MaterializedDomain(set, outer);
 }

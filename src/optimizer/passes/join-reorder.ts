@@ -5,7 +5,6 @@ import { buildJoinHyperGraph, type Relation } from '../join-order/hypergraph.js'
 import { enumerateJoinOrder } from '../join-order/enumerator.js';
 import { BITMASK_RELATION_CAPACITY, popcount } from '../join-order/bitmask.js';
 import {
-  ambiguousRelations,
   computeJoinConstraints,
   nullRejectedRelations,
   JOIN_TYPE_PROPERTIES,
@@ -70,6 +69,7 @@ class JoinBlock {
   operators: JoinTreeOperator[];
   conjunctiveOnly: boolean;
   overflowed: boolean;
+  ambiguousAlias: boolean;
   syntheticCount: number;
 
   constructor(syntheticCount: number) {
@@ -80,6 +80,7 @@ class JoinBlock {
     this.operators = [];
     this.conjunctiveOnly = true;
     this.overflowed = false;
+    this.ambiguousAlias = false;
     this.syntheticCount = syntheticCount;
   }
 
@@ -143,9 +144,11 @@ class JoinBlock {
     const alias = scan ? (scan.alias || scan.table) : this.inferAlias(node);
     const name = scan ? scan.table : alias;
 
+    const key = alias.toUpperCase();
     this.relations.push({ name, alias, plan: node });
-    this.relationNames.push(alias.toUpperCase());
-    if (!this.relationIndex.has(alias.toUpperCase())) this.relationIndex.set(alias.toUpperCase(), id);
+    this.relationNames.push(key);
+    if (this.relationIndex.has(key)) this.ambiguousAlias = true;
+    else this.relationIndex.set(key, id);
 
     return { kind: JoinTreeNodeKind.RELATION, mask: 1 << id };
   }
@@ -216,13 +219,11 @@ class JoinBlock {
   }
 
   annotateNullRejection(): void {
-    const ambiguous = ambiguousRelations(this.relationNames);
     for (const operator of this.operators) {
       operator.nullRejectedMask = nullRejectedRelations(
         operator.source.condition,
         operator.leftRels | operator.rightRels,
         this.relationNames,
-        ambiguous,
       );
     }
   }
@@ -265,6 +266,7 @@ class JoinReorderRewriter extends PlanRewriter {
     this.syntheticRelationCount = block.syntheticCount;
 
     if (!tree || block.overflowed || block.relations.length < 2) return root;
+    if (block.ambiguousAlias) return root;
     if (!block.conjunctiveOnly && block.residuals.length > 0) return root;
 
     block.annotateNullRejection();

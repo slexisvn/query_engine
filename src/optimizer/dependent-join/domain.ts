@@ -54,6 +54,10 @@ export function equiBindingColumn(pred: BoundExpr, set: CorrelationSet): BoundCo
   return inner.kind === BoundExprKind.COLUMN_REF ? inner : null;
 }
 
+export function definitelyTrue(pred: BoundExpr): BoundExpr {
+  return BoundBinary('AND', pred, BoundIsNull(pred, true), DataType.BOOLEAN);
+}
+
 export function nullSafeEquals(outer: BoundExpr, domain: BoundExpr): BoundExpr {
   const bothPresent = BoundBinary(
     'AND',
@@ -70,9 +74,11 @@ export class LiftedDomain implements CorrelationDomain {
   readonly liftsPredicates = true;
   readonly width = 0;
   private readonly set: CorrelationSet;
+  private readonly distinguishesUnknown: boolean;
 
-  constructor(set: CorrelationSet) {
+  constructor(set: CorrelationSet, distinguishesUnknown: boolean) {
     this.set = set;
+    this.distinguishesUnknown = distinguishesUnknown;
   }
 
   columnMatcher(): NullColumnPredicate {
@@ -88,7 +94,12 @@ export class LiftedDomain implements CorrelationDomain {
   }
 
   correlatedConjunct(pred: BoundExpr): CorrelatedConjunct {
-    return { lift: decorrelateRefs(pred, this.set), keep: null, column: equiBindingColumn(pred, this.set) };
+    const lifted = decorrelateRefs(pred, this.set);
+    return {
+      lift: this.distinguishesUnknown ? definitelyTrue(lifted) : lifted,
+      keep: null,
+      column: equiBindingColumn(pred, this.set),
+    };
   }
 
   joinBack(): BoundExpr[] {

@@ -41,6 +41,40 @@ function makeStats(tables) {
 }
 
 describe('JoinReorder', () => {
+  describe('ambiguous relation aliases', () => {
+    function leafAliases(node) {
+      if (node.type === PlanNodeType.SCAN) return [node.alias];
+      return (node.children || []).flatMap(leafAliases);
+    }
+
+    function shadowedPlan(shadow, shadowAlias) {
+      return LogicalJoin(
+        JoinType.INNER,
+        eqJoin('a', 'fk', 'b', 'id'),
+        LogicalJoin(JoinType.INNER, eqJoin('a', 'id', shadowAlias, 'fk'), scan('a'), shadow),
+        scan('b'),
+      );
+    }
+
+    const projections = [colRef('b', 'id'), colRef('b', 'fk')];
+    const stats = () => makeStats({ a: 1000, b: 10 });
+
+    it('leaves the enclosing block alone when two leaves resolve to the same alias', () => {
+      const plan = shadowedPlan(LogicalProject(projections, scan('b')), 'b');
+      const result = new JoinReorder(stats()).apply(plan);
+
+      expect(leafAliases(result.children[1])).toEqual(['b']);
+    });
+
+    it('reorders the same block once the shadowing leaf carries its own alias', () => {
+      const plan = shadowedPlan(LogicalProject(projections, scan('b'), 'x'), 'x');
+      const result = new JoinReorder(stats()).apply(plan);
+
+      expect(leafAliases(result.children[1]).length).toBeGreaterThan(1);
+      expect(planSignature(result)).not.toBe(planSignature(plan));
+    });
+  });
+
   describe('two-table reorder', () => {
     it('puts smaller table on build side', () => {
       const stats = makeStats({ small: 10, big: 100000 });

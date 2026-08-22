@@ -32,7 +32,7 @@ const CORRELATION = new CorrelationSet([corrRef('a', 'id'), corrRef('a', 'val')]
 
 function kindFor(subquery, set = CORRELATION) {
   const correlated = collectCorrelatedNodes(subquery, set);
-  return chooseDomain(subquery, scan('a'), set, correlated).kind;
+  return chooseDomain(subquery, scan('a'), set, correlated, false).kind;
 }
 
 const equality = () => bin(corrRef('a', 'id'), '=', colRef('b', 'id'));

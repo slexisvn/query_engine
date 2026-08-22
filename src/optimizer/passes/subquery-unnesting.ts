@@ -78,7 +78,7 @@ class UnnestingRewriter extends PlanRewriter {
       throw new Error(`Unsupported correlated subquery: a common table expression reads the correlating column ${hidden.tableAlias}.${hidden.columnName}`);
     }
     const correlated = collectCorrelatedNodes(subquery, set);
-    const domain = chooseDomain(subquery, outer, set, correlated);
+    const domain = chooseDomain(subquery, outer, set, correlated, shape.distinguishesUnknown);
     const pushed = pushDependentJoin(subquery, set, domain, correlated, shape.distinguishesUnknown);
     const outputRef = subqueryOutputRef(pushed.plan);
 

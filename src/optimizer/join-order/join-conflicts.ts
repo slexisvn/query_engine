@@ -126,34 +126,24 @@ export function nullRejectedRelations(
   predicate: BoundExpr | null,
   mask: number,
   relationNames: readonly string[],
-  ambiguous: number,
 ): number {
   if (!predicate) return 0;
   let rejected = 0;
-  for (const index of bitIndices(mask & ~ambiguous)) {
+  for (const index of bitIndices(mask)) {
     if (isNullRejecting(predicate, relationRefsOf(1 << index, relationNames))) rejected |= 1 << index;
   }
   return rejected;
 }
 
-export function ambiguousRelations(relationNames: readonly string[]): number {
-  const seen = new Map<string, number>();
-  let ambiguous = 0;
-  relationNames.forEach((name, index) => {
-    const first = seen.get(name);
-    if (first === undefined) {
-      seen.set(name, index);
-      return;
-    }
-    ambiguous |= (1 << first) | (1 << index);
-  });
-  return ambiguous;
+interface ConditionalConflict {
+  upperSlots: number;
+  conflict: number;
+  middle: number;
 }
 
 interface SubtreeConflicts {
   ascendingFixed: Int32Array;
-  ascendingConditional: Int32Array;
-  ascendingGuard: Int32Array;
+  ascendingConditional: ConditionalConflict[];
   descendingFixed: Int32Array;
 }
 
@@ -161,8 +151,7 @@ function emptyConflicts(): SubtreeConflicts {
   const width = JOIN_TYPES.length;
   return {
     ascendingFixed: new Int32Array(width),
-    ascendingConditional: new Int32Array(width),
-    ascendingGuard: new Int32Array(width),
+    ascendingConditional: [],
     descendingFixed: new Int32Array(width),
   };
 }
@@ -172,19 +161,24 @@ function rejectsMiddle(operator: JoinTreeOperator, middle: number): boolean {
 }
 
 function accumulateAscending(target: SubtreeConflicts, operator: JoinTreeOperator): void {
+  let upperSlots = 0;
+
   for (const upper of JOIN_TYPES) {
     const slot = JOIN_TYPE_SLOT[upper];
     const assoc = ASSOCIATIVITY[operator.joinType][upper];
     const asscom = LEFT_ASSCOM[operator.joinType][upper];
 
     if (assoc === Reorderability.MIDDLE_MUST_BE_NULL_REJECTED) {
-      target.ascendingConditional[slot] |= operator.leftRels;
-      target.ascendingGuard[slot] |= operator.rightRels;
+      upperSlots |= 1 << slot;
     } else if (assoc !== Reorderability.ALWAYS) {
       target.ascendingFixed[slot] |= operator.leftRels;
     }
 
     if (asscom !== Reorderability.ALWAYS) target.ascendingFixed[slot] |= operator.rightRels;
+  }
+
+  if (upperSlots !== 0) {
+    target.ascendingConditional.push({ upperSlots, conflict: operator.leftRels, middle: operator.rightRels });
   }
 }
 
@@ -205,17 +199,21 @@ function accumulateDescending(target: SubtreeConflicts, operator: JoinTreeOperat
 function mergeConflicts(into: SubtreeConflicts, from: SubtreeConflicts): void {
   for (let slot = 0; slot < into.ascendingFixed.length; slot++) {
     into.ascendingFixed[slot] |= from.ascendingFixed[slot];
-    into.ascendingConditional[slot] |= from.ascendingConditional[slot];
-    into.ascendingGuard[slot] |= from.ascendingGuard[slot];
     into.descendingFixed[slot] |= from.descendingFixed[slot];
   }
+  for (const conditional of from.ascendingConditional) into.ascendingConditional.push(conditional);
 }
 
 function ascendingContribution(subtree: SubtreeConflicts, operator: JoinTreeOperator): number {
   const slot = JOIN_TYPE_SLOT[operator.joinType];
-  const guard = subtree.ascendingGuard[slot];
-  const middleRejected = guard !== 0 && (guard & ~operator.nullRejectedMask) === 0;
-  return subtree.ascendingFixed[slot] | (middleRejected ? 0 : subtree.ascendingConditional[slot]);
+  let conflicts = subtree.ascendingFixed[slot];
+
+  for (const conditional of subtree.ascendingConditional) {
+    if ((conditional.upperSlots & (1 << slot)) === 0) continue;
+    if (!rejectsMiddle(operator, conditional.middle)) conflicts |= conditional.conflict;
+  }
+
+  return conflicts;
 }
 
 export function computeJoinConstraints(root: JoinTreeNode): JoinConstraint[] {

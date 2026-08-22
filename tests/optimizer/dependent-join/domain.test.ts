@@ -87,7 +87,7 @@ describe('correlation domains', () => {
   });
 
   describe('the lifted domain', () => {
-    const domain = new LiftedDomain(CORRELATION);
+    const domain = new LiftedDomain(CORRELATION, false);
 
     it('leaves the subquery untouched where the dependent join stops', () => {
       const node = scan('b');

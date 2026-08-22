@@ -130,17 +130,24 @@ async function runConfiguration(removedPass: string | null) {
   return { outcomes, passes };
 }
 
+const CORRECTNESS_CRITICAL_PASS = 'SubqueryUnnesting';
+
 describe('subquery unnesting under pass ablation', () => {
   it('answers every correlated shape the same way however the pipeline is trimmed', async () => {
     const base = await runConfiguration(null);
     const divergences: string[] = [];
 
     for (const pass of base.passes) {
+      if (pass === CORRECTNESS_CRITICAL_PASS) continue;
       const trimmed = await runConfiguration(pass);
       for (const sql of CORPUS) {
         const expected = base.outcomes.get(sql)!;
         const actual = trimmed.outcomes.get(sql)!;
-        if (expected.error || actual.error) continue;
+        if (expected.error) continue;
+        if (actual.error) {
+          divergences.push(`without ${pass}: ${sql}\n  default answered, trimmed threw: ${actual.error}`);
+          continue;
+        }
         if (expected.rows!.join('') !== actual.rows!.join('')) {
           divergences.push(`without ${pass}: ${sql}\n  default: ${expected.rows!.join(' | ')}\n  trimmed: ${actual.rows!.join(' | ')}`);
         }
@@ -167,7 +174,7 @@ describe('subquery unnesting under pass ablation', () => {
   }, 120000);
 
   it('still answers the uncorrelated subqueries the dependent join can evaluate', async () => {
-    const trimmed = await runConfiguration('SubqueryUnnesting');
+    const trimmed = await runConfiguration(CORRECTNESS_CRITICAL_PASS);
     const base = await runConfiguration(null);
 
     for (const sql of RUNS_WITHOUT_UNNESTING) {
@@ -176,7 +183,7 @@ describe('subquery unnesting under pass ablation', () => {
   }, 120000);
 
   it('refuses to run a correlated subquery once unnesting is removed', async () => {
-    const trimmed = await runConfiguration('SubqueryUnnesting');
+    const trimmed = await runConfiguration(CORRECTNESS_CRITICAL_PASS);
     const correlated = CORPUS.filter((sql) => /\bC\.\w+\b[^()]*\)/.test(sql));
     const answered = correlated.filter((sql) => !trimmed.outcomes.get(sql)!.error);
 
