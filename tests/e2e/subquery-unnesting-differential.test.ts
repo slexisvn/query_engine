@@ -73,6 +73,18 @@ const CORRELATED = [
   `SELECT X.NAME FROM (SELECT C.NAME AS NAME, C.ID AS ID FROM CUSTOMERS C) X WHERE EXISTS (SELECT 1 FROM ORDERS O WHERE O.CUST = X.ID)`,
 ];
 
+const CONJOINED = [
+  `SELECT C.NAME FROM CUSTOMERS C WHERE EXISTS (SELECT 1 FROM ORDERS O WHERE O.CUST = C.ID) AND C.REGION IS NOT NULL`,
+  `SELECT C.NAME FROM CUSTOMERS C WHERE C.REGION IS NOT NULL AND EXISTS (SELECT 1 FROM ORDERS O WHERE O.CUST = C.ID)`,
+  `SELECT C.NAME FROM CUSTOMERS C WHERE NOT EXISTS (SELECT 1 FROM ORDERS O WHERE O.CUST = C.ID) AND C.REGION IS NOT NULL`,
+  `SELECT C.NAME FROM CUSTOMERS C WHERE C.TIER IN (SELECT O.SHIPPER FROM ORDERS O WHERE O.CUST = C.ID) AND C.REGION IS NOT NULL`,
+  `SELECT C.NAME FROM CUSTOMERS C WHERE C.TIER NOT IN (SELECT O.SHIPPER FROM ORDERS O WHERE O.CUST = C.ID AND O.SHIPPER IS NOT NULL) AND C.REGION IS NOT NULL`,
+  `SELECT C.NAME FROM CUSTOMERS C WHERE C.TIER > ANY (SELECT O.SHIPPER FROM ORDERS O WHERE O.CUST = C.ID) AND C.REGION IS NOT NULL`,
+  `SELECT C.NAME FROM CUSTOMERS C WHERE (SELECT COUNT(*) FROM ORDERS O WHERE O.CUST = C.ID) > 1 AND C.REGION IS NOT NULL`,
+  `SELECT C.NAME FROM CUSTOMERS C WHERE C.REGION IS NOT NULL AND EXISTS (SELECT 1 FROM ORDERS O WHERE O.CUST = C.ID) AND C.TIER IS NOT NULL`,
+  `SELECT C.NAME FROM CUSTOMERS C WHERE EXISTS (SELECT 1 FROM ORDERS O WHERE O.CUST = C.ID) AND C.TIER IN (SELECT S.ID FROM SHIPPERS S WHERE S.ID = C.TIER)`,
+];
+
 const UNCORRELATED = [
   `SELECT C.NAME FROM CUSTOMERS C WHERE EXISTS (SELECT 1 FROM ORDERS O WHERE O.AMOUNT > 300)`,
   `SELECT C.NAME FROM CUSTOMERS C WHERE NOT EXISTS (SELECT 1 FROM ORDERS O WHERE O.AMOUNT > 1000)`,
@@ -83,7 +95,7 @@ const UNCORRELATED = [
 
 const RUNS_WITHOUT_UNNESTING = UNCORRELATED.slice(0, 3);
 
-const CORPUS = [...CORRELATED, ...UNCORRELATED];
+const CORPUS = [...CORRELATED, ...CONJOINED, ...UNCORRELATED];
 
 interface Outcome {
   rows?: string[];
@@ -142,6 +154,16 @@ describe('subquery unnesting under pass ablation', () => {
     const base = await runConfiguration(null);
     const failures = CORPUS.filter((sql) => base.outcomes.get(sql)!.error);
     expect(failures).toEqual([]);
+  }, 120000);
+
+  it('answers a subquery conjoined with another predicate without relying on PredicatePushdown', async () => {
+    const base = await runConfiguration(null);
+    const trimmed = await runConfiguration('PredicatePushdown');
+
+    for (const sql of CONJOINED) {
+      expect(base.outcomes.get(sql)!.rows!.length).toBeGreaterThan(0);
+      expect(trimmed.outcomes.get(sql)).toEqual(base.outcomes.get(sql));
+    }
   }, 120000);
 
   it('still answers the uncorrelated subqueries the dependent join can evaluate', async () => {

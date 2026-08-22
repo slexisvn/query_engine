@@ -63,6 +63,13 @@ function findAll(plan, type) {
   return collect(plan).filter(n => n.type === type);
 }
 
+function conjunctsOf(expr) {
+  if (expr && expr.kind === BoundExprKind.BINARY && expr.op === 'AND') {
+    return [...conjunctsOf(expr.left), ...conjunctsOf(expr.right)];
+  }
+  return [expr];
+}
+
 describe('plan structure', () => {
   it('full query builds Limit → Project → Sort → HAVING Filter → Aggregate → WHERE Filter → Join → 2 Scans', () => {
     const plan = planSQL(`
@@ -333,6 +340,47 @@ describe('subquery extraction', () => {
     expect(filter.condition.kind).toBe(BoundExprKind.BETWEEN);
     expect(filter.condition.low.value).toBe(18);
     expect(filter.condition.high.value).toBe(65);
+  });
+
+  it('hoisting a subquery out of a conjunction leaves the sibling predicate, not a null operand', () => {
+    const hoisted = [
+      'EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id)',
+      'NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id)',
+      'u.id IN (SELECT o.user_id FROM orders o WHERE o.total > 100)',
+      'u.age > ANY (SELECT o.total FROM orders o WHERE o.user_id = u.id)',
+    ];
+
+    for (const subquery of hoisted) {
+      for (const where of [`${subquery} AND u.dept IS NOT NULL`, `u.dept IS NOT NULL AND ${subquery}`]) {
+        const filter = find(planSQL(`SELECT * FROM users u WHERE ${where}`), PlanNodeType.FILTER);
+        expect(conjunctsOf(filter.condition)).not.toContain(null);
+        expect(filter.condition.kind).toBe(BoundExprKind.IS_NULL);
+        expect(filter.condition.negated).toBe(true);
+      }
+    }
+  });
+
+  it('keeps the surviving conjuncts when a subquery is hoisted out of a longer conjunction', () => {
+    const plan = planSQL(`
+      SELECT * FROM users u
+      WHERE u.dept IS NOT NULL
+        AND EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id)
+        AND u.age > 18
+    `);
+    const conjuncts = conjunctsOf(find(plan, PlanNodeType.FILTER).condition);
+    expect(conjuncts).not.toContain(null);
+    expect(conjuncts.map(c => c.kind)).toEqual([BoundExprKind.IS_NULL, BoundExprKind.BINARY]);
+  });
+
+  it('drops the whole condition when every conjunct is a hoisted subquery', () => {
+    const plan = planSQL(`
+      SELECT * FROM users u
+      WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id)
+        AND u.id IN (SELECT o.user_id FROM orders o WHERE o.total > 100)
+    `);
+    expect(findAll(plan, PlanNodeType.DEPENDENT_JOIN)).toHaveLength(2);
+    expect(plan.type).toBe(PlanNodeType.PROJECT);
+    expect(plan.children[0].type).toBe(PlanNodeType.DEPENDENT_JOIN);
   });
 
   it('CASE in WHERE is preserved through walkAndReplace', () => {

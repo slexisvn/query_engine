@@ -3,6 +3,7 @@ import { BoundExprKind, BoundColumnRef, getExprType, type BoundExpr, type BoundC
 import type { BoundQuery, BoundSelect, BoundSetOp, BoundFrom, OutputColumn } from '../binder/binder.js';
 import { DataType } from '../storage/data-type.js';
 import { exprKey } from '../binder/expr-key.js';
+import { combineConjuncts } from '../binder/conjuncts.js';
 import { projectedColumnName } from './project-schema.js';
 import { formatExpression } from './plan-formatter.js';
 
@@ -335,11 +336,12 @@ export class LogicalPlanner {
     switch (expr.kind) {
       case BoundExprKind.BINARY: {
         const childConjunctive = conjunctive && expr.op === 'AND';
-        return {
-          ...expr,
-          left: this.walkAndReplace(expr.left, fn, childConjunctive),
-          right: this.walkAndReplace(expr.right, fn, childConjunctive),
-        } as BoundExpr;
+        const left = this.walkAndReplace(expr.left, fn, childConjunctive);
+        const right = this.walkAndReplace(expr.right, fn, childConjunctive);
+        if (left === null || right === null) {
+          return combineConjuncts([left, right].filter((operand): operand is BoundExpr => operand !== null));
+        }
+        return { ...expr, left, right } as BoundExpr;
       }
       case BoundExprKind.UNARY:
         return { ...expr, operand: this.walkAndReplace(expr.operand, fn, false) } as BoundExpr;
