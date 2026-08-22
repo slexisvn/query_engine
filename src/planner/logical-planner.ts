@@ -241,7 +241,7 @@ export class LogicalPlanner {
       const subPlan = this.planQuery(plan);
       const correlated = this.findCorrelatedRefs(plan);
       subqueryJoins.push((child) =>
-        LP.LogicalDependentJoin(child, subPlan, correlated, 'MARK', outerExpr, markColumn, compareOp)
+        LP.LogicalDependentJoin(child, subPlan, correlated, LP.SubqueryType.MARK, outerExpr, markColumn, compareOp)
       );
       return BoundColumnRef('', markColumn, -1, DataType.BOOLEAN);
     };
@@ -250,7 +250,7 @@ export class LogicalPlanner {
       const subPlan = this.planQuery(plan);
       const correlated = this.findCorrelatedRefs(plan);
       subqueryJoins.push((child) =>
-        LP.LogicalDependentJoin(child, subPlan, correlated, 'IN', outerExpr, null, compareOp)
+        LP.LogicalDependentJoin(child, subPlan, correlated, LP.SubqueryType.IN, outerExpr, null, compareOp)
       );
     };
 
@@ -265,7 +265,7 @@ export class LogicalPlanner {
         const subPlan = this.planQuery(negatedExists.plan);
         const correlated = this.findCorrelatedRefs(negatedExists.plan);
         subqueryJoins.push((child) =>
-          LP.LogicalDependentJoin(child, subPlan, correlated, 'NOT_EXISTS', null)
+          LP.LogicalDependentJoin(child, subPlan, correlated, LP.SubqueryType.NOT_EXISTS, null)
         );
         return null;
       }
@@ -278,7 +278,7 @@ export class LogicalPlanner {
         const subPlan = this.planQuery(node.plan);
         const correlated = this.findCorrelatedRefs(node.plan);
         subqueryJoins.push((child) =>
-          LP.LogicalDependentJoin(child, subPlan, correlated, node.negated ? 'NOT_EXISTS' : 'EXISTS', null)
+          LP.LogicalDependentJoin(child, subPlan, correlated, node.negated ? LP.SubqueryType.NOT_EXISTS : LP.SubqueryType.EXISTS, null)
         );
         return null;
       }
@@ -307,7 +307,7 @@ export class LogicalPlanner {
 
         const scalarColumn = LP.nextScalarOutputName();
         subqueryJoins.push((child) =>
-          LP.LogicalDependentJoin(child, subPlan, correlated, 'SCALAR', null, scalarColumn)
+          LP.LogicalDependentJoin(child, subPlan, correlated, LP.SubqueryType.SCALAR, null, scalarColumn)
         );
         const scalarType = node.plan.outputColumns[0]?.dataType ?? DataType.FLOAT64;
         const scalarRef = BoundColumnRef('', scalarColumn, -1, scalarType);

@@ -272,6 +272,130 @@ export function walkExpr(expr: BoundExpr | null | undefined, fn: (node: BoundExp
   }
 }
 
+type ExprMapper = (node: BoundExpr) => BoundExpr | null;
+
+function mapAll(exprs: readonly BoundExpr[], fn: ExprMapper): BoundExpr[] | null {
+  let changed = false;
+  const mapped = exprs.map((item) => {
+    const next = mapExpr(item, fn);
+    if (next !== item) changed = true;
+    return next;
+  });
+  return changed ? mapped : null;
+}
+
+function mapOrderKeys(keys: readonly BoundWindowOrderKey[], fn: ExprMapper): BoundWindowOrderKey[] | null {
+  let changed = false;
+  const mapped = keys.map((key) => {
+    const next = mapExpr(key.expr, fn);
+    if (next === key.expr) return key;
+    changed = true;
+    return { ...key, expr: next };
+  });
+  return changed ? mapped : null;
+}
+
+function mapWhenClauses(clauses: readonly BoundWhenClause[], fn: ExprMapper): BoundWhenClause[] | null {
+  let changed = false;
+  const mapped = clauses.map((clause) => {
+    const condition = mapExpr(clause.condition, fn);
+    const result = mapExpr(clause.result, fn);
+    if (condition === clause.condition && result === clause.result) return clause;
+    changed = true;
+    return { condition, result };
+  });
+  return changed ? mapped : null;
+}
+
+function rebuild(expr: BoundExpr, fn: ExprMapper): BoundExpr {
+  switch (expr.kind) {
+    case BoundExprKind.BINARY: {
+      const left = mapExpr(expr.left, fn);
+      const right = mapExpr(expr.right, fn);
+      return left === expr.left && right === expr.right ? expr : { ...expr, left, right };
+    }
+    case BoundExprKind.UNARY: {
+      const operand = mapExpr(expr.operand, fn);
+      return operand === expr.operand ? expr : { ...expr, operand };
+    }
+    case BoundExprKind.FUNCTION:
+    case BoundExprKind.AGGREGATE: {
+      const args = mapAll(expr.args, fn);
+      return args ? { ...expr, args } : expr;
+    }
+    case BoundExprKind.CASE: {
+      const whenClauses = mapWhenClauses(expr.whenClauses, fn);
+      const elseExpr = expr.elseExpr ? mapExpr(expr.elseExpr, fn) : null;
+      if (!whenClauses && elseExpr === expr.elseExpr) return expr;
+      return { ...expr, whenClauses: whenClauses ?? expr.whenClauses, elseExpr };
+    }
+    case BoundExprKind.CAST: {
+      const inner = mapExpr(expr.expr, fn);
+      return inner === expr.expr ? expr : { ...expr, expr: inner };
+    }
+    case BoundExprKind.BETWEEN: {
+      const inner = mapExpr(expr.expr, fn);
+      const low = mapExpr(expr.low, fn);
+      const high = mapExpr(expr.high, fn);
+      if (inner === expr.expr && low === expr.low && high === expr.high) return expr;
+      return { ...expr, expr: inner, low, high };
+    }
+    case BoundExprKind.IN_LIST: {
+      const inner = mapExpr(expr.expr, fn);
+      const list = Array.isArray(expr.list) ? mapAll(expr.list, fn) : mapExpr(expr.list, fn);
+      const listChanged = Array.isArray(expr.list) ? list !== null : list !== expr.list;
+      if (inner === expr.expr && !listChanged) return expr;
+      return { ...expr, expr: inner, list: (list ?? expr.list) as BoundExpr | BoundExpr[] };
+    }
+    case BoundExprKind.LIKE: {
+      const inner = mapExpr(expr.expr, fn);
+      const pattern = mapExpr(expr.pattern, fn);
+      if (inner === expr.expr && pattern === expr.pattern) return expr;
+      return { ...expr, expr: inner, pattern };
+    }
+    case BoundExprKind.IS_NULL: {
+      const inner = mapExpr(expr.expr, fn);
+      return inner === expr.expr ? expr : { ...expr, expr: inner };
+    }
+    case BoundExprKind.EXTRACT: {
+      const source = mapExpr(expr.source, fn);
+      return source === expr.source ? expr : { ...expr, source };
+    }
+    case BoundExprKind.WINDOW: {
+      const args = mapAll(expr.args, fn);
+      const partitionBy = mapAll(expr.partitionBy, fn);
+      const orderBy = mapOrderKeys(expr.orderBy, fn);
+      if (!args && !partitionBy && !orderBy) return expr;
+      return {
+        ...expr,
+        args: args ?? expr.args,
+        partitionBy: partitionBy ?? expr.partitionBy,
+        orderBy: orderBy ?? expr.orderBy,
+      };
+    }
+    case BoundExprKind.QUANTIFIED: {
+      const inner = mapExpr(expr.expr, fn);
+      return inner === expr.expr ? expr : { ...expr, expr: inner };
+    }
+    case BoundExprKind.COLUMN_REF:
+    case BoundExprKind.LITERAL:
+    case BoundExprKind.INTERVAL:
+    case BoundExprKind.SUBQUERY:
+    case BoundExprKind.EXISTS:
+      return expr;
+    default:
+      return assertAllKindsMapped(expr);
+  }
+}
+
+export function mapExpr(expr: BoundExpr, fn: ExprMapper): BoundExpr {
+  return fn(expr) ?? rebuild(expr, fn);
+}
+
+function assertAllKindsMapped(expr: never): never {
+  throw new Error(`mapExpr has no case for expression kind: ${(expr as BoundExpr).kind}`);
+}
+
 function assertAllKindsWalked(expr: never): never {
   throw new Error(`walkExpr has no case for expression kind: ${(expr as BoundExpr).kind}`);
 }

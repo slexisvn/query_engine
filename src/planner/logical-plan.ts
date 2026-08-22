@@ -37,6 +37,14 @@ export enum SetOpType {
   EXCEPT = 'EXCEPT',
 }
 
+export enum SubqueryType {
+  EXISTS = 'EXISTS',
+  NOT_EXISTS = 'NOT_EXISTS',
+  IN = 'IN',
+  MARK = 'MARK',
+  SCALAR = 'SCALAR',
+}
+
 export enum JoinType {
   INNER = 'INNER',
   LEFT = 'LEFT',
@@ -151,7 +159,7 @@ export interface LogicalCTEAnchorNode extends PlanNodeBase {
 export interface LogicalDependentJoinNode extends PlanNodeBase {
   type: PlanNodeType.DEPENDENT_JOIN;
   correlatedColumns: BoundColumnRefNode[];
-  subqueryType: string;
+  subqueryType: SubqueryType;
   condition: BoundExpr | null;
   compareOp: string;
   markColumn: string | null;
@@ -315,7 +323,7 @@ export function nextScalarOutputName(): string {
   return `${SCALAR_OUTPUT_NAME}_${_scalarOutputCounter++}`;
 }
 
-export function LogicalDependentJoin(child: LogicalPlanNode, subquery: LogicalPlanNode, correlatedColumns: BoundColumnRefNode[], subqueryType: string, condition: BoundExpr | null, markColumn: string | null = null, compareOp: string = '='): LogicalDependentJoinNode {
+export function LogicalDependentJoin(child: LogicalPlanNode, subquery: LogicalPlanNode, correlatedColumns: BoundColumnRefNode[], subqueryType: SubqueryType, condition: BoundExpr | null, markColumn: string | null = null, compareOp: string = '='): LogicalDependentJoinNode {
   return {
     type: PlanNodeType.DEPENDENT_JOIN,
     correlatedColumns,

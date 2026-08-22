@@ -4,26 +4,26 @@ import { DataType } from '../../storage/data-type.js';
 import type { ColumnValue } from '../../storage/data-type.js';
 import type { ExecColumn, ExecSchema } from '../execution-types.js';
 import { materializeActiveRow } from './join-core.js';
-import { SCALAR_OUTPUT_NAME } from '../../planner/logical-plan.js';
+import { SCALAR_OUTPUT_NAME, SubqueryType } from '../../planner/logical-plan.js';
 
 type JoinRow = ColumnValue[];
 
 type SubqueryEmitter = (outerRow: JoinRow, subRows: JoinRow[]) => JoinRow | null;
 
-const EMITTERS: Record<string, SubqueryEmitter> = {
-  EXISTS: (outerRow, subRows) => (subRows.length > 0 ? outerRow : null),
-  NOT_EXISTS: (outerRow, subRows) => (subRows.length === 0 ? outerRow : null),
-  SCALAR: (outerRow, subRows) => [...outerRow, subRows.length > 0 ? subRows[0][0] : null],
+const EMITTERS: Partial<Record<SubqueryType, SubqueryEmitter>> = {
+  [SubqueryType.EXISTS]: (outerRow, subRows) => (subRows.length > 0 ? outerRow : null),
+  [SubqueryType.NOT_EXISTS]: (outerRow, subRows) => (subRows.length === 0 ? outerRow : null),
+  [SubqueryType.SCALAR]: (outerRow, subRows) => [...outerRow, subRows.length > 0 ? subRows[0][0] : null],
 };
 
 export class DependentJoinOperator {
-  subqueryType: string;
+  subqueryType: SubqueryType;
   outerSchema: ExecSchema;
   resultRows: JoinRow[];
   resultSchema: ExecSchema;
   emit: SubqueryEmitter;
 
-  constructor(subqueryType: string, outerSchema: ExecSchema, scalarColumn: string | null = null) {
+  constructor(subqueryType: SubqueryType, outerSchema: ExecSchema, scalarColumn: string | null = null) {
     const emit = EMITTERS[subqueryType];
     if (!emit) {
       throw new Error(`Dependent join cannot evaluate a ${subqueryType} subquery: it compares no outer expression`);
@@ -32,7 +32,7 @@ export class DependentJoinOperator {
     this.outerSchema = outerSchema;
     this.resultRows = [];
     this.emit = emit;
-    this.resultSchema = this.subqueryType === 'SCALAR'
+    this.resultSchema = this.subqueryType === SubqueryType.SCALAR
       ? [...outerSchema, { name: scalarColumn ?? SCALAR_OUTPUT_NAME, dataType: DataType.FLOAT64, tableAlias: '' } as ExecColumn]
       : outerSchema;
   }

@@ -4,7 +4,7 @@ import {
   BoundFunction, BoundAggregate, BoundCase, BoundCast,
   BoundBetween, BoundInList, BoundLike, BoundIsNull,
   BoundSubquery, BoundExists, BoundExtract, BoundInterval,
-  getExprType, collectCorrelatedColumns,
+  getExprType, collectCorrelatedColumns, mapExpr,
 } from '../../src/binder/expression-binder.js';
 import { DataType } from '../../src/storage/data-type.js';
 
@@ -288,5 +288,95 @@ describe('collectCorrelatedColumns', () => {
     const corr = outer('ID');
     const refs = collectCorrelatedColumns(BoundUnary('NOT', corr, DataType.BOOLEAN));
     expect(refs[0]).toBe(corr);
+  });
+});
+
+// ─── mapExpr: structural rewriting ────────────────────────────────────────────
+
+describe('mapExpr', () => {
+  const swapId = (node) =>
+    (node.kind === BoundExprKind.COLUMN_REF && node.columnName === 'ID'
+      ? BoundColumnRef('T', 'KEY', 0, DataType.INT32)
+      : null);
+
+  it('returns the original expression when nothing is replaced', () => {
+    const expr = BoundBinary('=', BoundColumnRef('T', 'X', 0, DataType.INT32), BoundLiteral(1, DataType.INT32), DataType.BOOLEAN);
+    expect(mapExpr(expr, () => null)).toBe(expr);
+  });
+
+  it('rebuilds only the branch that changed', () => {
+    const untouched = BoundLiteral(1, DataType.INT32);
+    const expr = BoundBinary('=', BoundColumnRef('T', 'ID', 0, DataType.INT32), untouched, DataType.BOOLEAN);
+
+    const mapped = mapExpr(expr, swapId);
+
+    expect(mapped).not.toBe(expr);
+    expect(mapped.right).toBe(untouched);
+    expect(mapped.left.columnName).toBe('KEY');
+  });
+
+  it('does not descend into a node the mapper replaced', () => {
+    const inner = BoundColumnRef('T', 'ID', 0, DataType.INT32);
+    const seen = [];
+    mapExpr(BoundUnary('NOT', inner, DataType.BOOLEAN), (node) => {
+      seen.push(node.kind);
+      return node.kind === BoundExprKind.UNARY ? BoundLiteral(true, DataType.BOOLEAN) : null;
+    });
+    expect(seen).toEqual([BoundExprKind.UNARY]);
+  });
+
+  it('rewrites inside CASE branches', () => {
+    const expr = BoundCase(
+      [{ condition: BoundColumnRef('T', 'ID', 0, DataType.INT32), result: BoundLiteral(1, DataType.INT32) }],
+      BoundColumnRef('T', 'ID', 0, DataType.INT32),
+      DataType.INT32,
+    );
+
+    const mapped = mapExpr(expr, swapId);
+
+    expect(mapped.whenClauses[0].condition.columnName).toBe('KEY');
+    expect(mapped.elseExpr.columnName).toBe('KEY');
+  });
+
+  it('rewrites inside BETWEEN, IN lists, LIKE and CAST', () => {
+    const id = () => BoundColumnRef('T', 'ID', 0, DataType.INT32);
+    const between = mapExpr(BoundBetween(id(), id(), id(), false), swapId);
+    const inList = mapExpr(BoundInList(id(), [id()], false), swapId);
+    const like = mapExpr(BoundLike(id(), id(), false), swapId);
+    const cast = mapExpr(BoundCast(id(), DataType.INT64), swapId);
+
+    expect([between.expr, between.low, between.high].map(e => e.columnName)).toEqual(['KEY', 'KEY', 'KEY']);
+    expect(inList.list[0].columnName).toBe('KEY');
+    expect(like.pattern.columnName).toBe('KEY');
+    expect(cast.expr.columnName).toBe('KEY');
+  });
+
+  it('rewrites window arguments, partitions and order keys', () => {
+    const id = () => BoundColumnRef('T', 'ID', 0, DataType.INT32);
+    const window = {
+      kind: BoundExprKind.WINDOW,
+      name: 'SUM',
+      args: [id()],
+      partitionBy: [id()],
+      orderBy: [{ expr: id(), direction: 'ASC' }],
+      frame: null,
+      resultType: DataType.INT64,
+    };
+
+    const mapped = mapExpr(window, swapId);
+
+    expect(mapped.args[0].columnName).toBe('KEY');
+    expect(mapped.partitionBy[0].columnName).toBe('KEY');
+    expect(mapped.orderBy[0].expr.columnName).toBe('KEY');
+    expect(mapped.orderBy[0].direction).toBe('ASC');
+  });
+
+  it('leaves subquery and literal leaves alone', () => {
+    const subquery = BoundSubquery({}, 'SCALAR');
+    expect(mapExpr(subquery, swapId)).toBe(subquery);
+  });
+
+  it('refuses to guess at an unknown expression kind', () => {
+    expect(() => mapExpr({ kind: 'NotAnExpression' }, () => null)).toThrow(/no case for expression kind/);
   });
 });

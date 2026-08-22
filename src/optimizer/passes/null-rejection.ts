@@ -1,14 +1,25 @@
-import { BoundExprKind, type BoundExpr, type LiteralValue } from '../../binder/expression-binder.js';
+import { BoundExprKind, type BoundColumnRefNode, type BoundExpr, type LiteralValue } from '../../binder/expression-binder.js';
 import type { PlanRefs } from './plan-refs.js';
 
 type EvalResult = LiteralValue | undefined;
 
-export function isNullRejecting(expr: BoundExpr, nullSupplyingRefs: PlanRefs): boolean {
-  const result = evaluateWithNulls(expr, nullSupplyingRefs);
+export type NullColumnPredicate = (ref: BoundColumnRefNode) => boolean;
+
+export type NullColumnSource = PlanRefs | NullColumnPredicate;
+
+function suppliesNull(source: NullColumnSource): NullColumnPredicate {
+  if (typeof source === 'function') return source;
+  return (ref) => (ref.tableAlias
+    ? source.aliases.has(ref.tableAlias.toUpperCase())
+    : source.columns.has((ref.columnName || '').toUpperCase()));
+}
+
+export function isNullRejecting(expr: BoundExpr, nullSupplyingRefs: NullColumnSource): boolean {
+  const result = evaluateWithNulls(expr, suppliesNull(nullSupplyingRefs));
   return result === false || result === null;
 }
 
-function evaluateWithNulls(expr: BoundExpr | null | undefined, nullRefs: PlanRefs): EvalResult {
+function evaluateWithNulls(expr: BoundExpr | null | undefined, nullRefs: NullColumnPredicate): EvalResult {
   if (!expr) return undefined;
 
     switch (expr.kind) {
@@ -16,13 +27,7 @@ function evaluateWithNulls(expr: BoundExpr | null | undefined, nullRefs: PlanRef
       return expr.value;
 
           case BoundExprKind.COLUMN_REF:
-      if (expr.tableAlias && nullRefs.aliases.has(expr.tableAlias.toUpperCase())) {
-        return null;
-      }
-      if (!expr.tableAlias && nullRefs.columns.has((expr.columnName || '').toUpperCase())) {
-        return null;
-      }
-      return 'UNKNOWN';
+      return nullRefs(expr) ? null : 'UNKNOWN';
 
           case BoundExprKind.BINARY: {
       const left = evaluateWithNulls(expr.left, nullRefs);

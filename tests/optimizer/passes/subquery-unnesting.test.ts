@@ -30,6 +30,10 @@ function bin(left, op, right) {
   return { kind: BoundExprKind.BINARY, op, left, right, resultType: 'BOOLEAN' };
 }
 
+function agg(name, args, outputName) {
+  return { kind: BoundExprKind.AGGREGATE, name, args, distinct: false, resultType: 'INT64', outputName };
+}
+
 function scan(name) {
   return LogicalScan(name, ['id', 'val'], name);
 }
@@ -74,7 +78,7 @@ describe('SubqueryUnnesting', () => {
       expect(result.condition.op).toBe('=');
     });
 
-    it('removes projection wrapper from EXISTS subquery', () => {
+    it('drops the passthrough projection so the subquery columns stay reachable', () => {
       const projected = LogicalProject(
         [colRef('b', 'id')],
         LogicalFilter(
@@ -138,7 +142,7 @@ describe('SubqueryUnnesting', () => {
       expect(result.joinType).toBe(JoinType.SEMI);
     });
 
-    it('strips the passthrough subquery projection so correlation columns stay available', () => {
+    it('keeps the correlation column reachable from the join condition', () => {
       const subquery = LogicalProject(
         [colRef('b', 'val')],
         LogicalFilter(
@@ -224,15 +228,15 @@ describe('SubqueryUnnesting', () => {
     });
 
     it('converts scalar subquery with aggregate to LEFT join', () => {
-      const agg = LogicalAggregate(
+      const counted = LogicalAggregate(
         [],
-        [{ fn: 'COUNT', args: [], outputName: 'cnt' }],
+        [agg('COUNT', [], 'cnt')],
         LogicalFilter(
           bin(corrRef('a', 'id'), '=', colRef('b', 'id')),
           scan('b')
         )
       );
-      const subquery = LogicalProject([colRef('', 'cnt')], agg);
+      const subquery = LogicalProject([colRef('', 'cnt')], counted);
       const plan = depJoin('SCALAR', scan('a'), subquery, [corrRef('a', 'id')]);
 
       const result = pass.apply(plan);
@@ -242,15 +246,15 @@ describe('SubqueryUnnesting', () => {
     });
 
     it('adds group-by from correlated predicates when scalar has aggregate', () => {
-      const agg = LogicalAggregate(
+      const totalled = LogicalAggregate(
         [],
-        [{ fn: 'SUM', args: [colRef('b', 'val')], outputName: 'total' }],
+        [agg('SUM', [colRef('b', 'val')], 'total')],
         LogicalFilter(
           bin(corrRef('a', 'id'), '=', colRef('b', 'id')),
           scan('b')
         )
       );
-      const subquery = LogicalProject([colRef('', 'total')], agg);
+      const subquery = LogicalProject([colRef('', 'total')], totalled);
       const plan = depJoin('SCALAR', scan('a'), subquery, [corrRef('a', 'id')]);
 
       const result = pass.apply(plan);
@@ -302,11 +306,11 @@ describe('SubqueryUnnesting', () => {
   });
 
   describe('row-limited correlated subqueries', () => {
-    function findNode(node, type) {
+    function findNode(node, type, matches = () => true) {
       if (!node) return null;
-      if (node.type === type) return node;
+      if (node.type === type && matches(node)) return node;
       for (const child of node.children || []) {
-        const found = findNode(child, type);
+        const found = findNode(child, type, matches);
         if (found) return found;
       }
       return null;
@@ -376,14 +380,53 @@ describe('SubqueryUnnesting', () => {
       expect(findNode(result, PlanNodeType.WINDOW)).toBeNull();
     });
 
-    it('rejects a row limit correlated by a non-equality predicate', () => {
-      const subquery = LogicalLimit(1, 0, LogicalProject(
+    function nonEquiLimitPlan(count) {
+      const subquery = LogicalLimit(count, 0, LogicalProject(
         [colRef('b', 'val')],
         LogicalFilter(bin(corrRef('a', 'val'), '>', colRef('b', 'val')), scan('b'))
       ));
-      const plan = depJoin('IN', scan('a'), subquery, [corrRef('a', 'val')], colRef('a', 'val'));
+      return depJoin('IN', scan('a'), subquery, [corrRef('a', 'val')], colRef('a', 'val'));
+    }
 
-      expect(() => pass.apply(plan)).toThrow(/cannot be decorrelated/);
+    it('decorrelates a row limit correlated by a non-equality predicate', () => {
+      const result = pass.apply(nonEquiLimitPlan(1));
+
+      expect(result.type).toBe(PlanNodeType.JOIN);
+      expect(findNode(result, PlanNodeType.LIMIT)).toBeNull();
+      expect(findNode(result, PlanNodeType.DEPENDENT_JOIN)).toBeNull();
+    });
+
+    it('materialises the correlating values and partitions the row number by them', () => {
+      const result = pass.apply(nonEquiLimitPlan(1));
+
+      const window = findNode(result, PlanNodeType.WINDOW);
+      const partition = window.windowExprs[0].partitionBy[0];
+      const cross = findNode(result, PlanNodeType.JOIN, node => node.joinType === JoinType.CROSS);
+      const domain = cross.children[1];
+
+      expect(domain.type).toBe(PlanNodeType.DISTINCT);
+      expect(domain.children[0].outputAlias).toBe(partition.tableAlias);
+      expect(domain.children[0].expressions[0].columnName).toBe('val');
+      expect(domain.children[0].children[0].table).toBe('a');
+    });
+
+    it('joins the outer row back onto its own correlating value', () => {
+      const result = pass.apply(nonEquiLimitPlan(1));
+
+      const window = findNode(result, PlanNodeType.WINDOW);
+      const partition = window.windowExprs[0].partitionBy[0];
+      const conjuncts = [];
+      const split = expr => {
+        if (expr.op === 'AND') { split(expr.left); split(expr.right); return; }
+        conjuncts.push(expr);
+      };
+      split(result.condition);
+
+      expect(conjuncts).toContainEqual(expect.objectContaining({
+        op: '=',
+        left: expect.objectContaining({ tableAlias: 'a', columnName: 'val', isCorrelated: false }),
+        right: expect.objectContaining({ tableAlias: partition.tableAlias, columnName: partition.columnName }),
+      }));
     });
   });
 

@@ -300,10 +300,140 @@ describe('subquery and derived table semantics', () => {
       expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 5 }]));
     });
 
-    it('rejects a row limit correlated by a non-equality predicate', async () => {
-      await expect(runQuery(
-        'SELECT ID FROM EMP E WHERE E.DEPT IN (SELECT F.DEPT FROM EMP F WHERE F.SAL > E.SAL ORDER BY F.ID LIMIT 2)'))
-        .rejects.toThrow(/cannot be decorrelated/);
+  });
+
+  describe('row limits correlated by a non-equality predicate', () => {
+    it('applies the per-group LIMIT to an IN subquery', async () => {
+      const rows = await runQuery(
+        'SELECT ID FROM EMP E WHERE E.DEPT IN (SELECT F.DEPT FROM EMP F WHERE F.SAL > E.SAL ORDER BY F.ID LIMIT 2)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 1 }]));
+    });
+
+    it('keeps NOT IN consistent with the same per-group LIMIT', async () => {
+      const rows = await runQuery(
+        'SELECT ID FROM EMP E WHERE E.DEPT NOT IN (SELECT F.DEPT FROM EMP F WHERE F.SAL > E.SAL ORDER BY F.ID LIMIT 2)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 4 }, { ID: 5 }]));
+    });
+
+    it('applies the per-group LIMIT to EXISTS', async () => {
+      const rows = await runQuery(
+        'SELECT ID FROM EMP E WHERE EXISTS (SELECT 1 FROM EMP F WHERE F.SAL > E.SAL ORDER BY F.ID LIMIT 1)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 1 }, { ID: 2 }, { ID: 3 }]));
+    });
+
+    it('picks the first row of each group for a scalar subquery', async () => {
+      const rows = await runQuery(
+        'SELECT E.ID AS I, (SELECT F.SAL FROM EMP F WHERE F.SAL > E.SAL ORDER BY F.SAL LIMIT 1) AS N FROM EMP E');
+      expect(sortedRows(rows)).toEqual(sortedRows([
+        { I: 1, N: 200 }, { I: 2, N: 300 }, { I: 3, N: 500 }, { I: 4, N: null }, { I: 5, N: null },
+      ]));
+    });
+
+    it('applies OFFSET within each group', async () => {
+      const rows = await runQuery(
+        'SELECT E.ID AS I, (SELECT F.SAL FROM EMP F WHERE F.SAL > E.SAL ORDER BY F.SAL LIMIT 1 OFFSET 1) AS N FROM EMP E');
+      expect(sortedRows(rows)).toEqual(sortedRows([
+        { I: 1, N: 300 }, { I: 2, N: 500 }, { I: 3, N: null }, { I: 4, N: null }, { I: 5, N: null },
+      ]));
+    });
+
+    it('yields an empty group when the offset runs past the group', async () => {
+      const rows = await runQuery(
+        'SELECT ID FROM EMP E WHERE E.DEPT IN (SELECT F.DEPT FROM EMP F WHERE F.SAL > E.SAL ORDER BY F.ID LIMIT 1 OFFSET 1)');
+      expect(rows).toEqual([]);
+    });
+  });
+
+  describe('correlated subqueries under set operations', () => {
+    it('correlates one branch of a UNION ALL and leaves the other alone', async () => {
+      const rows = await runQuery(
+        'SELECT ID FROM EMP E WHERE E.DEPT IN (SELECT F.DEPT FROM EMP F WHERE F.SAL > E.SAL UNION ALL SELECT G.DEPT FROM DEPT G WHERE G.DEPT = 30)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 1 }]));
+    });
+
+    it('deduplicates a UNION whose correlated branch uses an inequality', async () => {
+      const rows = await runQuery(
+        'SELECT ID FROM EMP E WHERE E.DEPT IN (SELECT F.DEPT FROM EMP F WHERE F.SAL > E.SAL UNION SELECT G.DEPT FROM DEPT G WHERE G.DEPT = 30)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 1 }]));
+    });
+
+    it('intersects a correlated branch with an uncorrelated one', async () => {
+      const rows = await runQuery(
+        'SELECT ID FROM EMP E WHERE E.DEPT IN (SELECT F.DEPT FROM EMP F WHERE F.SAL > E.SAL INTERSECT SELECT G.DEPT FROM DEPT G)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 1 }]));
+    });
+  });
+
+  describe('correlated subqueries under window functions', () => {
+    it('confines an unpartitioned window to its correlation group', async () => {
+      const rows = await runQuery(
+        'SELECT ID FROM EMP E WHERE E.SAL IN (SELECT MAX(F.SAL) OVER () FROM EMP F WHERE F.DEPT = E.DEPT)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 2 }, { ID: 3 }]));
+    });
+
+    it('numbers rows within the correlation group of a non-equality correlation', async () => {
+      const rows = await runQuery(
+        'SELECT ID FROM EMP E WHERE E.DEPT IN (SELECT F.DEPT FROM (SELECT F2.DEPT AS DEPT, ROW_NUMBER() OVER (ORDER BY F2.ID) AS RN FROM EMP F2 WHERE F2.SAL > E.SAL) F WHERE F.RN = 1)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 1 }]));
+    });
+  });
+
+  describe('correlated references outside a predicate', () => {
+    it('reads the outer row inside a projected expression', async () => {
+      const rows = await runQuery('SELECT E.ID AS I, (SELECT F.SAL + E.SAL FROM EMP F WHERE F.ID = E.MGR) AS X FROM EMP E');
+      expect(sortedRows(rows)).toEqual(sortedRows([
+        { I: 1, X: null }, { I: 2, X: 300 }, { I: 3, X: 400 }, { I: 4, X: null }, { I: 5, X: 700 },
+      ]));
+    });
+
+    it('reads the outer row inside an aggregate argument', async () => {
+      const rows = await runQuery('SELECT E.ID AS I, (SELECT SUM(F.SAL + E.SAL) FROM EMP F WHERE F.DEPT = E.DEPT) AS X FROM EMP E');
+      expect(sortedRows(rows)).toEqual(sortedRows([
+        { I: 1, X: 500 }, { I: 2, X: 700 }, { I: 3, X: 600 }, { I: 4, X: null }, { I: 5, X: null },
+      ]));
+    });
+
+    it('reads the outer row inside an outer join condition', async () => {
+      const rows = await runQuery(
+        'SELECT E.ID AS I, (SELECT COUNT(F.ID) FROM DEPT D LEFT JOIN EMP F ON F.DEPT = D.DEPT AND F.SAL > E.SAL WHERE D.DEPT = E.DEPT) AS C FROM EMP E');
+      expect(sortedRows(rows)).toEqual(sortedRows([
+        { I: 1, C: 1 }, { I: 2, C: 0 }, { I: 3, C: 0 }, { I: 4, C: 0 }, { I: 5, C: 0 },
+      ]));
+    });
+
+    it('aggregates over a join correlated by a non-equality predicate', async () => {
+      const rows = await runQuery(
+        'SELECT E.ID AS I, (SELECT COUNT(*) FROM EMP F JOIN DEPT D ON F.DEPT = D.DEPT WHERE F.SAL > E.SAL) AS C FROM EMP E');
+      expect(sortedRows(rows)).toEqual(sortedRows([
+        { I: 1, C: 2 }, { I: 2, C: 1 }, { I: 3, C: 0 }, { I: 4, C: 0 }, { I: 5, C: 0 },
+      ]));
+    });
+
+    it('applies DISTINCT within each correlation group', async () => {
+      const rows = await runQuery('SELECT ID FROM EMP E WHERE E.DEPT IN (SELECT DISTINCT F.DEPT FROM EMP F WHERE F.SAL > E.SAL)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 1 }]));
+    });
+
+    it('correlates a derived table that renames the correlated column away', async () => {
+      const rows = await runQuery(
+        'SELECT E.ID AS I FROM EMP E WHERE EXISTS (SELECT 1 FROM (SELECT F.DEPT AS DD FROM EMP F WHERE F.SAL > E.SAL) X WHERE X.DD = E.DEPT)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ I: 1 }]));
+    });
+  });
+
+  describe('correlation values that are NULL', () => {
+    it('keeps the group whose correlation value is NULL when the subquery still matches', async () => {
+      const rows = await runQuery(
+        'SELECT E.ID AS I, (SELECT COUNT(*) FROM EMP F WHERE F.DEPT = E.DEPT AND (F.SAL > E.SAL OR E.SAL IS NULL)) AS C FROM EMP E');
+      expect(sortedRows(rows)).toEqual(sortedRows([
+        { I: 1, C: 1 }, { I: 2, C: 0 }, { I: 3, C: 0 }, { I: 4, C: 2 }, { I: 5, C: 0 },
+      ]));
+    });
+
+    it('keeps the row whose correlation value is NULL matched to its own group', async () => {
+      const rows = await runQuery(
+        'SELECT ID FROM EMP E WHERE E.DEPT IN (SELECT F.DEPT FROM EMP F WHERE F.SAL > E.SAL OR E.SAL IS NULL ORDER BY F.ID DESC LIMIT 2)');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 4 }]));
     });
   });
 
@@ -311,6 +441,18 @@ describe('subquery and derived table semantics', () => {
     it('correlates a subquery nested inside another subquery to its own parent', async () => {
       const rows = await runQuery(
         'SELECT ID FROM EMP WHERE EXISTS (SELECT 1 FROM DEPT D WHERE D.DEPT = EMP.DEPT AND EXISTS (SELECT 1 FROM EMP E2 WHERE E2.DEPT = D.DEPT))');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 1 }, { ID: 2 }, { ID: 3 }, { ID: 4 }]));
+    });
+
+    it('refuses a correlated subquery whose common table expression reads the outer row', async () => {
+      await expect(runQuery(
+        'SELECT ID FROM EMP E WHERE EXISTS (WITH X AS (SELECT F.DEPT AS D FROM EMP F WHERE F.SAL > E.SAL) SELECT 1 FROM X WHERE X.D = E.DEPT)'))
+        .rejects.toThrow(/common table expression reads the correlating column/);
+    });
+
+    it('still unnests a correlated subquery over a common table expression that does not', async () => {
+      const rows = await runQuery(
+        'SELECT ID FROM EMP E WHERE EXISTS (WITH X AS (SELECT F.DEPT AS D FROM EMP F WHERE F.SAL > 150) SELECT 1 FROM X WHERE X.D = E.DEPT)');
       expect(sortedRows(rows)).toEqual(sortedRows([{ ID: 1 }, { ID: 2 }, { ID: 3 }, { ID: 4 }]));
     });
 
