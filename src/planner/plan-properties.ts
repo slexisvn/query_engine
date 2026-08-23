@@ -58,6 +58,8 @@ class PlanPropertiesRewriter extends PlanRewriter {
       case PlanNodeType.JOIN:
         return this.estimateJoinCardinality(node);
       case PlanNodeType.AGGREGATE:
+      case PlanNodeType.PARTIAL_AGGREGATE:
+      case PlanNodeType.FINAL_AGGREGATE:
         return this.cardEstimator.estimateAggregate(childCardinality(node), node.groupBy?.length || 0, node.groupBy || []);
       case PlanNodeType.LIMIT:
       case PlanNodeType.TOP_N:

@@ -1,20 +1,23 @@
+import { concatBytes } from '../encoding/byte-io.js';
 import type { SpillReader, SpillStorage } from './spill-manager.js';
 
+const EMPTY_BYTES = new Uint8Array(0);
+
 class BufferListSpillReader implements SpillReader {
-  buffers: Buffer[];
+  buffers: Uint8Array[];
   bufferIndex: number;
   offsetInBuffer: number;
 
-  constructor(buffers: Buffer[]) {
+  constructor(buffers: Uint8Array[]) {
     this.buffers = buffers;
     this.bufferIndex = 0;
     this.offsetInBuffer = 0;
   }
 
-  async read(length: number): Promise<Buffer | null> {
-    if (length === 0) return Buffer.alloc(0);
+  async read(length: number): Promise<Uint8Array | null> {
+    if (length === 0) return EMPTY_BYTES;
 
-    const slices: Buffer[] = [];
+    const slices: Uint8Array[] = [];
     let remaining = length;
 
     while (remaining > 0) {
@@ -34,7 +37,7 @@ class BufferListSpillReader implements SpillReader {
       remaining -= take;
     }
 
-    return slices.length === 1 ? slices[0] : Buffer.concat(slices);
+    return concatBytes(slices);
   }
 
   async close(): Promise<void> {
@@ -43,19 +46,19 @@ class BufferListSpillReader implements SpillReader {
 }
 
 export class MemoryStorage implements SpillStorage {
-  store: Map<string, Buffer[]>;
+  store: Map<string, Uint8Array[]>;
 
   constructor() {
     this.store = new Map();
   }
 
-  async append(partitionId: string, buffer: Buffer): Promise<void> {
+  async append(partitionId: string, buffer: Uint8Array): Promise<void> {
     let buffers = this.store.get(partitionId);
     if (!buffers) {
       buffers = [];
       this.store.set(partitionId, buffers);
     }
-    buffers.push(Buffer.from(buffer));
+    buffers.push(new Uint8Array(buffer));
   }
 
   async openReader(partitionId: string): Promise<SpillReader | null> {

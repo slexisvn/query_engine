@@ -9,6 +9,16 @@ export interface OptimizerStage {
   maxIterations: number;
 }
 
+export interface PassTraceEvent {
+  stage: string;
+  pass: string;
+  iteration: number;
+  before: LogicalPlanNode;
+  after: LogicalPlanNode;
+}
+
+export type OptimizerObserver = (event: PassTraceEvent) => void;
+
 export class Optimizer {
   stages: OptimizerStage[];
 
@@ -54,30 +64,32 @@ export class Optimizer {
     return this;
   }
 
-  optimize(plan: LogicalPlanNode, context: OptimizationContext = {} as OptimizationContext): LogicalPlanNode {
+  optimize(plan: LogicalPlanNode, context: OptimizationContext = {} as OptimizationContext, observer?: OptimizerObserver): LogicalPlanNode {
     let current = plan;
     for (const stage of this.stages) {
       current = stage.maxIterations <= 1
-        ? this.runOnce(stage, current, context)
-        : this.runToFixpoint(stage, current, context);
+        ? this.runOnce(stage, current, context, 0, observer)
+        : this.runToFixpoint(stage, current, context, observer);
     }
     return current;
   }
 
-  runOnce(stage: OptimizerStage, plan: LogicalPlanNode, context: OptimizationContext): LogicalPlanNode {
+  runOnce(stage: OptimizerStage, plan: LogicalPlanNode, context: OptimizationContext, iteration: number = 0, observer?: OptimizerObserver): LogicalPlanNode {
     let current = plan;
     for (const pass of stage.passes) {
-      current = pass.apply(current, context);
+      const before = current;
+      current = pass.apply(before, context);
+      observer?.({ stage: stage.name, pass: pass.name, iteration, before, after: current });
     }
     return current;
   }
 
-  runToFixpoint(stage: OptimizerStage, plan: LogicalPlanNode, context: OptimizationContext): LogicalPlanNode {
+  runToFixpoint(stage: OptimizerStage, plan: LogicalPlanNode, context: OptimizationContext, observer?: OptimizerObserver): LogicalPlanNode {
     let current = plan;
     let signature = planSignature(current);
 
     for (let iteration = 0; iteration < stage.maxIterations; iteration++) {
-      current = this.runOnce(stage, current, context);
+      current = this.runOnce(stage, current, context, iteration, observer);
       const nextSignature = planSignature(current);
       if (nextSignature === signature) break;
       signature = nextSignature;

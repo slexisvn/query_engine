@@ -64,7 +64,7 @@ export class MergeExchangeOperator {
       this._buffers.set(nodeId, []);
     }
 
-    this._transport.onChunkReceived(this._channelId, (sourceNodeId: NodeId, encodedChunk: Buffer) => {
+    this._transport.onChunkReceived(this._channelId, (sourceNodeId: NodeId, encodedChunk: Uint8Array) => {
       this._handleChunk(sourceNodeId, encodedChunk);
     });
   }
@@ -202,7 +202,7 @@ export class MergeExchangeOperator {
     this._transport.removeChunkListener(this._channelId);
   }
 
-  _handleChunk(sourceNodeId: NodeId, encodedChunk: Buffer): void {
+  _handleChunk(sourceNodeId: NodeId, encodedChunk: Uint8Array): void {
     try {
       const chunk = this._codec.decode(encodedChunk);
 

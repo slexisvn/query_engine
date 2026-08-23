@@ -6,10 +6,10 @@ import { heapAllocator, type Allocator } from './sab-arena.js';
 const CHUNK_HEADER_BYTES = UINT32_BYTES + UINT16_BYTES;
 
 export class ChunkSerializer {
-  static serialize(source: DataChunk): Buffer {
+  static serialize(source: DataChunk): Uint8Array {
     const chunk = source.selectionVector ? source.flatten() : source;
 
-    const writer = new ByteWriter(Buffer.allocUnsafe(CHUNK_HEADER_BYTES + chunkRecordBytes(chunk.columns)));
+    const writer = new ByteWriter(new Uint8Array(CHUNK_HEADER_BYTES + chunkRecordBytes(chunk.columns)));
     writer.u32(chunk.size);
     writer.u16(chunk.columns.length);
     writeChunkRecords(writer, chunk.columns);
@@ -17,7 +17,7 @@ export class ChunkSerializer {
     return writer.buffer;
   }
 
-  static deserialize(buffer: Buffer, allocator: Allocator = heapAllocator): DataChunk {
+  static deserialize(buffer: Uint8Array, allocator: Allocator = heapAllocator): DataChunk {
     const reader = new ByteReader(buffer, 0, allocator);
     const size = reader.u32();
     const columnCount = reader.u16();

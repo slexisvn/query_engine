@@ -50,11 +50,11 @@ export function createDefaultOptimizer({ catalog, statistics }: OptimizerPipelin
       new PredicateInference(),
       new OuterToInnerJoin(),
     ])
-    .registerPass(new AggregatePushdown())
     .registerPass(new JoinReorder(statsMap))
     .registerPass(new PredicatePushdown())
     .registerPass(new JoinElimination(catalog))
     .registerPass(new DistinctElimination(catalog))
+    .registerPass(new AggregatePushdown(statsMap))
     .registerPass(new ProjectionPushdown())
     .registerPass(new LimitPushdown())
     .registerPass(new EmptyPropagation())

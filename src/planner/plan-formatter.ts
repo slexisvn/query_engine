@@ -6,6 +6,16 @@ const SET_OP_LABELS: Readonly<Record<SetOpType, string>> = {
   [SetOpType.EXCEPT]: 'Except',
 };
 import { BoundExprKind, type BoundExpr, type BoundAggregateNode, type BoundWindowNode } from '../binder/expression-binder.js';
+import { DataType, epochDaysToDate } from '../storage/data-type.js';
+
+function padded(value: number): string {
+  return value < 10 ? `0${value}` : `${value}`;
+}
+
+function formatEpochDays(days: number): string {
+  const { year, month, day } = epochDaysToDate(days);
+  return `${year}-${padded(month)}-${padded(day)}`;
+}
 
 export function formatExpression(expr?: BoundExpr | null): string {
   if (!expr) return '';
@@ -14,6 +24,7 @@ export function formatExpression(expr?: BoundExpr | null): string {
       return expr.tableAlias ? `${expr.tableAlias}.${expr.columnName}` : expr.columnName;
     case BoundExprKind.LITERAL:
       if (typeof expr.value === 'string') return `'${expr.value}'`;
+      if (expr.dataType === DataType.DATE && typeof expr.value === 'number') return `DATE '${formatEpochDays(expr.value)}'`;
       return String(expr.value);
     case BoundExprKind.BINARY:
       return `(${formatExpression(expr.left)} ${expr.op} ${formatExpression(expr.right)})`;
@@ -43,7 +54,7 @@ export function formatPlan(plan: LogicalPlanNode, depth: number = 0): string {
   return result;
 }
 
-function formatNode(node: LogicalPlanNode): string {
+export function formatNode(node: LogicalPlanNode): string {
   switch (node.type) {
     case PlanNodeType.SCAN:
       return `Seq Scan on ${node.table}${node.alias ? ' as ' + node.alias : ''}`;

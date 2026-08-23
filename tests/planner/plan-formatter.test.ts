@@ -1,5 +1,6 @@
 import { formatExpression, formatPlan } from '../../src/planner/plan-formatter.js';
 import { BoundExprKind } from '../../src/binder/expression-binder.js';
+import { DataType, dateToEpochDays } from '../../src/storage/data-type.js';
 import {
   LogicalScan, LogicalFilter, LogicalProject, LogicalJoin, LogicalAggregate,
   LogicalSort, LogicalLimit, LogicalDistinct, LogicalUnion, LogicalCTEScan,
@@ -16,6 +17,9 @@ function lit(v) {
 function strLit(v) {
   return { kind: BoundExprKind.LITERAL, value: v, dataType: 'VARCHAR' };
 }
+function dateLit(year, month, day) {
+  return { kind: BoundExprKind.LITERAL, value: dateToEpochDays(year, month, day), dataType: DataType.DATE };
+}
 function bin(op, l, r) {
   return { kind: BoundExprKind.BINARY, op, left: l, right: r };
 }
@@ -30,6 +34,18 @@ function agg(name, args) {
 }
 
 describe('formatExpression', () => {
+  it('spells a date literal out as a calendar date', () => {
+    expect(formatExpression(dateLit(1995, 3, 15))).toBe("DATE '1995-03-15'");
+  });
+
+  it('pads single digit months and days', () => {
+    expect(formatExpression(dateLit(1992, 1, 2))).toBe("DATE '1992-01-02'");
+  });
+
+  it('leaves a plain number literal alone', () => {
+    expect(formatExpression({ kind: BoundExprKind.LITERAL, value: 9204, dataType: DataType.INT32 })).toBe('9204');
+  });
+
   it('returns empty string for null/undefined', () => {
     expect(formatExpression(null)).toBe('');
     expect(formatExpression(undefined)).toBe('');

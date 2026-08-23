@@ -207,14 +207,14 @@ const PLAN_NODES: Record<PlanNodeType, PlanNodeDescriptor> = {
   [PlanNodeType.PARTIAL_AGGREGATE]: {
     rewriteMethod: 'rewritePartialAggregate',
     physicalType: PhysicalNodeType.PARTIAL_AGGREGATE,
-    cost: outputCardinalityCost,
+    cost: inputHashAggregateCost,
     capability: COORDINATOR_ONLY,
     preservesSchema: false,
   },
   [PlanNodeType.FINAL_AGGREGATE]: {
     rewriteMethod: 'rewriteFinalAggregate',
     physicalType: PhysicalNodeType.FINAL_AGGREGATE,
-    cost: outputCardinalityCost,
+    cost: inputHashAggregateCost,
     capability: COORDINATOR_ONLY,
     preservesSchema: false,
   },

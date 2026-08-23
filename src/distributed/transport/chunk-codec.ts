@@ -6,10 +6,10 @@ const HEADER_MAGIC = 0x51454348;
 const CODEC_HEADER_BYTES = UINT32_BYTES + UINT16_BYTES + UINT32_BYTES;
 
 export class ChunkCodec {
-  encode(chunk: DataChunk): Buffer {
+  encode(chunk: DataChunk): Uint8Array {
     const flatChunk = chunk.selectionVector ? chunk.flatten() : chunk;
 
-    const writer = new ByteWriter(Buffer.allocUnsafe(CODEC_HEADER_BYTES + chunkRecordBytes(flatChunk.columns)));
+    const writer = new ByteWriter(new Uint8Array(CODEC_HEADER_BYTES + chunkRecordBytes(flatChunk.columns)));
     writer.u32(HEADER_MAGIC);
     writer.u16(flatChunk.columns.length);
     writer.u32(flatChunk.size);
@@ -18,7 +18,7 @@ export class ChunkCodec {
     return writer.buffer;
   }
 
-  decode(buffer: Buffer): DataChunk {
+  decode(buffer: Uint8Array): DataChunk {
     const reader = new ByteReader(buffer);
     if (reader.u32() !== HEADER_MAGIC) {
       throw new Error('Invalid chunk codec magic number');

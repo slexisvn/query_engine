@@ -292,8 +292,11 @@ export async function buildFinalAggregate(executor: ExecutorLike, physical: Phys
   const child = await executor.buildPipeline(physical.children[0]);
 
   const groupByCount = (node.groupBy || []).length;
-  const groupByEvals = (node.groupBy || []).map((_expr: BoundExpr, i: number): CompiledExpr => {
-    const colIdx = i;
+  const childIndexOf = (expr: BoundExpr | undefined, fallback: number): number =>
+    (expr === undefined ? undefined : child.columnMapping?.get(exprKey(expr))) ?? fallback;
+
+  const groupByEvals = (node.groupBy || []).map((expr: BoundExpr, i: number): CompiledExpr => {
+    const colIdx = childIndexOf(expr, i);
     return (chunk: DataChunk, rowIdx: number) => chunk.columns[colIdx]?.get(rowIdx) ?? null;
   });
   const groupByTypes = (node.groupBy || []).map((expr: GroupByExpr) =>
@@ -306,8 +309,9 @@ export async function buildFinalAggregate(executor: ExecutorLike, physical: Phys
   const partialStarts: number[] = [];
   let partialOffset = groupByCount;
   for (let i = 0; i < finalAggs.length; i++) {
-    partialStarts.push(partialOffset);
-    partialOffset += partialWidth(partialAggs[i] || finalAggs[i]);
+    const partial = partialAggs[i] || finalAggs[i];
+    partialStarts.push(childIndexOf(partial as BoundExpr | undefined, partialOffset));
+    partialOffset += partialWidth(partial);
   }
 
   const aggDefs: BuiltAggregateDef[] = finalAggs.map((agg: AggDescriptor, aggIdx: number) => {

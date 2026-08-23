@@ -1,13 +1,14 @@
 import { ChunkSerializer } from '../serializer.js';
+import { ByteReader, ByteWriter, UINT32_BYTES } from '../encoding/byte-io.js';
 import type { DataChunk } from '../chunk.js';
 
 export interface SpillReader {
-  read(length: number): Promise<Buffer | null>;
+  read(length: number): Promise<Uint8Array | null>;
   close(): Promise<void>;
 }
 
 export interface SpillStorage {
-  append(partitionId: string, buffer: Buffer): Promise<void>;
+  append(partitionId: string, buffer: Uint8Array): Promise<void>;
   openReader(partitionId: string): Promise<SpillReader | null>;
   exists(partitionId: string): boolean;
   remove(partitionId: string): Promise<void>;
@@ -21,7 +22,7 @@ export interface ChunkSpillStore {
   clearAll(): Promise<void>;
 }
 
-const LENGTH_HEADER_BYTES = 4;
+const LENGTH_HEADER_BYTES = UINT32_BYTES;
 
 export class SpillManager implements ChunkSpillStore {
   storage: SpillStorage;
@@ -33,9 +34,10 @@ export class SpillManager implements ChunkSpillStore {
   async appendChunk(partitionId: string, chunk: DataChunk | null): Promise<void> {
     if (!chunk || chunk.size === 0) return;
     const data = ChunkSerializer.serialize(chunk);
-    const header = Buffer.allocUnsafe(LENGTH_HEADER_BYTES);
-    header.writeUInt32LE(data.length, 0);
-    await this.storage.append(partitionId, Buffer.concat([header, data]));
+    const writer = new ByteWriter(new Uint8Array(LENGTH_HEADER_BYTES + data.length));
+    writer.u32(data.length);
+    writer.bytes(data);
+    await this.storage.append(partitionId, writer.buffer);
   }
 
   async *readChunks(partitionId: string): AsyncGenerator<DataChunk> {
@@ -46,7 +48,7 @@ export class SpillManager implements ChunkSpillStore {
       for (;;) {
         const header = await reader.read(LENGTH_HEADER_BYTES);
         if (!header) return;
-        const payload = await reader.read(header.readUInt32LE(0));
+        const payload = await reader.read(new ByteReader(header).u32());
         if (!payload) return;
         yield ChunkSerializer.deserialize(payload);
       }

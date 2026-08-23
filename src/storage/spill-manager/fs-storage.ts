@@ -13,7 +13,7 @@ class FileSpillReader implements SpillReader {
     this.position = 0;
   }
 
-  async read(length: number): Promise<Buffer | null> {
+  async read(length: number): Promise<Uint8Array | null> {
     if (length === 0) return Buffer.alloc(0);
 
     const target = Buffer.allocUnsafe(length);
@@ -58,7 +58,7 @@ export class FsStorage implements SpillStorage {
     return opening;
   }
 
-  async append(partitionId: string, buffer: Buffer): Promise<void> {
+  async append(partitionId: string, buffer: Uint8Array): Promise<void> {
     const handle = await this.writeHandle(partitionId);
     await handle.write(buffer);
   }

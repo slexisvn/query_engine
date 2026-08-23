@@ -550,9 +550,14 @@ describe('createDefaultOptimizer composition', () => {
     expect(passes.filter(name => name === 'PredicatePushdown')).toHaveLength(2);
   });
 
-  it('runs physical design before sort elimination', () => {
+  it('annotates sort order before the pass that consumes it', () => {
     const passes = createDefaultOptimizer({ catalog: createCatalog() }).listPasses();
-    expect(passes.indexOf('PhysicalDesign')).toBeLessThan(passes.indexOf('SortElimination'));
+    const chain = ['IndexSelection', 'PlanProperties', 'SortElimination'];
+
+    expect(chain.filter(name => !passes.includes(name))).toEqual([]);
+
+    const positions = chain.map(name => passes.indexOf(name));
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
   });
 
   it('reorders a multi-join query without statistics', () => {

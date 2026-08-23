@@ -3,6 +3,7 @@ import { Optimizer } from '../../src/optimizer/optimizer.js';
 import { OptimizationPass } from '../../src/optimizer/pass.js';
 import { LogicalScan, LogicalFilter, PlanNodeType } from '../../src/planner/logical-plan.js';
 import { BoundExprKind } from '../../src/binder/expression-binder.js';
+import { planSignature } from '../../src/optimizer/plan-signature.js';
 
 function scan(table = 'ORDERS') {
   return LogicalScan(table, [{ name: 'ID', dataType: 'INT32' }], table);
@@ -243,5 +244,77 @@ describe('Optimizer fixpoint stages', () => {
       .optimize(scan());
 
     expect(filterDepth(result)).toBe(3);
+  });
+});
+
+describe('Optimizer pass observer', () => {
+  it('emits one event per pass application', () => {
+    const events = [];
+    new Optimizer()
+      .registerPass(new RecordingPass('A'))
+      .registerPass(new RecordingPass('B'))
+      .optimize(scan(), {}, event => events.push(event));
+
+    expect(events.map(e => e.pass)).toEqual(['A', 'B']);
+  });
+
+  it('reports the stage name a pass ran under', () => {
+    const events = [];
+    new Optimizer()
+      .registerFixpoint('Group', [new RecordingPass('A')])
+      .optimize(scan(), {}, event => events.push(event));
+
+    expect(events.map(e => e.stage)).toEqual(['Group']);
+  });
+
+  it('chains the plan through consecutive events', () => {
+    const events = [];
+    new Optimizer()
+      .registerPass(new RecordingPass('Wrap', plan => LogicalFilter(predicate(1), plan)))
+      .registerPass(new RecordingPass('Keep'))
+      .optimize(scan(), {}, event => events.push(event));
+
+    expect(events[1].before).toBe(events[0].after);
+  });
+
+  it('exposes the plan a pass received and produced', () => {
+    const events = [];
+    const input = scan();
+    new Optimizer()
+      .registerPass(new RecordingPass('Wrap', plan => LogicalFilter(predicate(1), plan)))
+      .optimize(input, {}, event => events.push(event));
+
+    expect(events[0].before).toBe(input);
+    expect(filterDepth(events[0].after)).toBe(1);
+  });
+
+  it('numbers the iterations of a fixpoint stage', () => {
+    const events = [];
+    new Optimizer()
+      .registerFixpoint('Group', [new WrapUntilPass('Wrap', 2)], 10)
+      .optimize(scan(), {}, event => events.push(event));
+
+    expect(events.map(e => e.iteration)).toEqual([0, 1, 2]);
+  });
+
+  it('numbers every pass of one fixpoint iteration alike', () => {
+    const events = [];
+    new Optimizer()
+      .registerFixpoint('Group', [new WrapUntilPass('Wrap', 1), new RecordingPass('Second')], 10)
+      .optimize(scan(), {}, event => events.push(event));
+
+    expect(events.map(e => `${e.pass}@${e.iteration}`))
+      .toEqual(['Wrap@0', 'Second@0', 'Wrap@1', 'Second@1']);
+  });
+
+  it('leaves the optimized plan identical to an untraced run', () => {
+    const build = () => new Optimizer()
+      .registerFixpoint('Group', [new WrapUntilPass('Wrap', 2)])
+      .registerPass(new RecordingPass('After', plan => LogicalFilter(predicate(99), plan)));
+
+    const traced = build().optimize(scan(), {}, () => {});
+    const untraced = build().optimize(scan());
+
+    expect(planSignature(traced)).toBe(planSignature(untraced));
   });
 });

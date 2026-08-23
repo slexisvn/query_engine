@@ -1,0 +1,68 @@
+name: Deploy visualizer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - src/**
+      - tools/visualizer/**
+      - package.json
+      - package-lock.json
+      - .github/workflows/deploy-visualizer.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            tools/visualizer/package-lock.json
+
+      - name: Install the engine
+        run: npm ci
+
+      - name: Install the visualizer
+        run: npm --prefix tools/visualizer ci
+
+      - name: Typecheck
+        run: npm --prefix tools/visualizer run typecheck
+
+      - name: Test
+        run: npm --prefix tools/visualizer test
+
+      - name: Build
+        run: npm --prefix tools/visualizer run build
+        env:
+          VIZ_BASE: /${{ github.event.repository.name }}/
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: tools/visualizer/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

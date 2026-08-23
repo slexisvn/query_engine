@@ -74,6 +74,8 @@ export class DefaultCardinalityEstimator {
           node.condition,
         );
       case PlanNodeType.AGGREGATE:
+      case PlanNodeType.PARTIAL_AGGREGATE:
+      case PlanNodeType.FINAL_AGGREGATE:
         return this.estimateAggregate(this.estimatePlan(node.children[0]), node.groupBy?.length || 0, node.groupBy);
       case PlanNodeType.EMPTY:
         return 0;

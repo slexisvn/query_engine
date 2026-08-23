@@ -17,7 +17,7 @@ export class Transport {
     throw new Error('Transport subclass must implement stop()');
   }
 
-  async sendChunk(targetNodeId: NodeId, channelId: ChannelId, encodedChunk: Buffer): Promise<void> {
+  async sendChunk(targetNodeId: NodeId, channelId: ChannelId, encodedChunk: Uint8Array): Promise<void> {
     throw new Error('Transport subclass must implement sendChunk()');
   }
 

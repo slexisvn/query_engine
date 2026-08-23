@@ -56,6 +56,7 @@ export const Config = {
   defaultRowWidthBytes,
   defaultExistsSelectivity: envFloat('QE_DEFAULT_EXISTS_SELECTIVITY', 0.5),
   nestedLoopMaxRows: env('QE_NESTED_LOOP_MAX_ROWS', 50000),
+  eagerAggregationMinRows: env('QE_EAGER_AGG_MIN_ROWS', 50000),
   costModelSpillThreshold: env('QE_COST_MODEL_SPILL_THRESHOLD', Math.floor(memoryLimitBytes / defaultRowWidthBytes)),
   costTuple: envFloat('QE_COST_TUPLE', 1.0),
   costOperator: envFloat('QE_COST_OPERATOR', 0.24),

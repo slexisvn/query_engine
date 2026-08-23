@@ -117,14 +117,14 @@ export interface StatusResponse {
 export interface ExchangeChunkMessage {
   channelId: ChannelId;
   sourceNodeId: NodeId;
-  encodedChunk: Buffer;
+  encodedChunk: Uint8Array;
 }
 
-export type ChunkReceivedCallback = (sourceNodeId: NodeId, encodedChunk: Buffer) => void;
+export type ChunkReceivedCallback = (sourceNodeId: NodeId, encodedChunk: Uint8Array) => void;
 
 export interface PendingChunk {
   sourceNodeId: NodeId;
-  data: Buffer;
+  data: Uint8Array;
 }
 
 export enum ControlMessageType {

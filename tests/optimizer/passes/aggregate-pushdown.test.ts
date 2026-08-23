@@ -1,177 +1,226 @@
 import { describe, it, expect } from 'vitest';
+import { parse } from '../../../src/parser/parser.js';
+import { Binder } from '../../../src/binder/binder.js';
+import { createLogicalPlan } from '../../../src/planner/logical-planner.js';
+import { Catalog } from '../../../src/catalog/catalog.js';
+import { defaultFunctionRegistry } from '../../../src/catalog/function-registry.js';
 import { AggregatePushdown } from '../../../src/optimizer/passes/aggregate-pushdown.js';
-import { PlanNodeType, LogicalAggregate, LogicalJoin, LogicalScan, JoinType } from '../../../src/planner/logical-plan.js';
+import { ColumnStatistics, TableStatistics } from '../../../src/catalog/statistics.js';
+import { PlanNodeType } from '../../../src/planner/logical-plan.js';
 import { BoundExprKind } from '../../../src/binder/expression-binder.js';
+import { exprKey } from '../../../src/binder/expr-key.js';
+import { PhysicalPlanner } from '../../../src/execution/physical-planner.js';
+import { totalPhysicalCost } from '../../../src/execution/physical-plan.js';
 
-function colRef(table, column) {
-  return { kind: BoundExprKind.COLUMN_REF, tableAlias: table, columnName: column };
+const FACT_ROWS = 6000000;
+const DIM_ROWS = 1500000;
+const SMALL_DIM_ROWS = 25;
+
+function createCatalog() {
+  const catalog = new Catalog();
+  catalog.registerTable('FACT', [
+    { name: 'ORDER_ID', dataType: 'INT32' },
+    { name: 'DIM_ID', dataType: 'INT32' },
+    { name: 'SHIPMODE', dataType: 'VARCHAR' },
+    { name: 'QTY', dataType: 'FLOAT64' },
+    { name: 'PRICE', dataType: 'FLOAT64' },
+  ]);
+  catalog.registerTable('DIM', [
+    { name: 'ORDER_ID', dataType: 'INT32' },
+    { name: 'STATUS', dataType: 'VARCHAR' },
+  ], { primaryKey: ['ORDER_ID'] });
+  catalog.registerTable('SMALLDIM', [
+    { name: 'DIM_ID', dataType: 'INT32' },
+    { name: 'DIM_NAME', dataType: 'VARCHAR' },
+  ], { primaryKey: ['DIM_ID'] });
+  return catalog;
 }
 
-function literal(value) {
-  return { kind: BoundExprKind.LITERAL, value };
+function col(ndv) {
+  return new ColumnStatistics({ ndv, min: 0, max: ndv });
 }
 
-function eqJoinCond(leftTable, leftCol, rightTable, rightCol) {
-  return {
-    kind: BoundExprKind.BINARY,
-    op: '=',
-    left: colRef(leftTable, leftCol),
-    right: colRef(rightTable, rightCol),
+function table(rowCount, columns) {
+  const map = new Map();
+  for (const [name, stats] of Object.entries(columns)) map.set(name.toUpperCase(), stats);
+  return new TableStatistics(rowCount, map);
+}
+
+function statistics() {
+  return new Map([
+    ['FACT', table(FACT_ROWS, {
+      ORDER_ID: col(DIM_ROWS), DIM_ID: col(SMALL_DIM_ROWS), SHIPMODE: col(7),
+      QTY: col(50), PRICE: col(100000),
+    })],
+    ['DIM', table(DIM_ROWS, { ORDER_ID: col(DIM_ROWS), STATUS: col(3) })],
+    ['SMALLDIM', table(SMALL_DIM_ROWS, { DIM_ID: col(SMALL_DIM_ROWS), DIM_NAME: col(SMALL_DIM_ROWS) })],
+  ]);
+}
+
+function logicalPlan(sql) {
+  const catalog = createCatalog();
+  return createLogicalPlan(new Binder(catalog, defaultFunctionRegistry).bind(parse(sql)));
+}
+
+function pushdown(sql, stats = statistics()) {
+  return new AggregatePushdown(stats).apply(logicalPlan(sql));
+}
+
+function physicalCost(plan, stats) {
+  return totalPhysicalCost(new PhysicalPlanner(stats).plan(plan));
+}
+
+function findNode(plan, type) {
+  const stack = [plan];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node) continue;
+    if (node.type === type) return node;
+    for (const child of node.children || []) stack.push(child);
+  }
+  return null;
+}
+
+function fired(plan) {
+  return findNode(plan, PlanNodeType.PARTIAL_AGGREGATE) !== null;
+}
+
+function finalAggregate(plan) {
+  return findNode(plan, PlanNodeType.FINAL_AGGREGATE);
+}
+
+function columnKeys(exprs) {
+  return exprs.map(expr => `${expr.tableAlias}.${expr.columnName}`.toUpperCase());
+}
+
+const PUSHABLE = `
+  SELECT f.ORDER_ID AS K, SUM(f.QTY) AS TOTAL
+  FROM FACT f JOIN DIM d ON d.ORDER_ID = f.ORDER_ID
+  GROUP BY f.ORDER_ID`;
+
+describe('AggregatePushdown fires on a plan the binder actually produces', () => {
+  it('splits the aggregate into a partial below the join and a final above', () => {
+    const final = finalAggregate(pushdown(PUSHABLE));
+
+    expect(final).not.toBeNull();
+    const join = final.children[0];
+    expect(join.type).toBe(PlanNodeType.JOIN);
+    expect(join.children.some(child => child.type === PlanNodeType.PARTIAL_AGGREGATE)).toBe(true);
+  });
+
+  it('reads the function name off the binder field, not a fabricated one', () => {
+    const partial = findNode(pushdown(PUSHABLE), PlanNodeType.PARTIAL_AGGREGATE);
+
+    expect(partial.aggregates[0].kind).toBe(BoundExprKind.AGGREGATE);
+    expect(partial.aggregates[0].name).toBe('SUM');
+    expect(partial.aggregates[0].func).toBe('SUM');
+  });
+
+  it('converts COUNT to a partial COUNT and a final SUM', () => {
+    const plan = pushdown(`
+      SELECT f.ORDER_ID AS K, COUNT(f.QTY) AS N
+      FROM FACT f JOIN DIM d ON d.ORDER_ID = f.ORDER_ID
+      GROUP BY f.ORDER_ID`);
+
+    expect(findNode(plan, PlanNodeType.PARTIAL_AGGREGATE).aggregates[0].func).toBe('COUNT');
+    expect(finalAggregate(plan).aggregates[0].func).toBe('SUM');
+  });
+
+  it('leaves the final aggregate resolvable under its original identity', () => {
+    const final = finalAggregate(pushdown(PUSHABLE));
+    const bound = new Binder(createCatalog(), defaultFunctionRegistry).bind(parse(PUSHABLE));
+    const untouched = findNode(createLogicalPlan(bound), PlanNodeType.AGGREGATE).aggregates[0];
+
+    expect(exprKey(final.aggregates[0])).toBe(exprKey(untouched));
+    expect(final.aggregates[0].args).toEqual(untouched.args);
+  });
+});
+
+describe('AggregatePushdown keeps the join key in the partial grouping', () => {
+  it('adds the join key when the group-by does not already contain it', () => {
+    const plan = pushdown(`
+      SELECT f.SHIPMODE AS M, SUM(f.QTY) AS TOTAL
+      FROM FACT f JOIN SMALLDIM s ON s.DIM_ID = f.DIM_ID
+      GROUP BY f.SHIPMODE`, new Map([
+      ['FACT', table(FACT_ROWS, { DIM_ID: col(2), SHIPMODE: col(7), QTY: col(50) })],
+      ['SMALLDIM', table(SMALL_DIM_ROWS, { DIM_ID: col(2), DIM_NAME: col(2) })],
+    ]));
+
+    const partial = findNode(plan, PlanNodeType.PARTIAL_AGGREGATE);
+    expect(partial).not.toBeNull();
+    expect(columnKeys(partial.groupBy)).toEqual(['F.SHIPMODE', 'F.DIM_ID']);
+    expect(columnKeys(finalAggregate(plan).groupBy)).toEqual(['F.SHIPMODE']);
+  });
+
+  it('leaves the grouping alone when it already covers the join key', () => {
+    const partial = findNode(pushdown(PUSHABLE), PlanNodeType.PARTIAL_AGGREGATE);
+    expect(columnKeys(partial.groupBy)).toEqual(['F.ORDER_ID']);
+  });
+});
+
+describe('AggregatePushdown declines when the rewrite would not pay', () => {
+  it('declines when the join filters the side it would aggregate', () => {
+    const plan = pushdown(`
+      SELECT f.ORDER_ID AS K, SUM(f.QTY) AS TOTAL
+      FROM FACT f JOIN SMALLDIM s ON s.DIM_ID = f.DIM_ID
+      GROUP BY f.ORDER_ID`);
+
+    expect(fired(plan)).toBe(false);
+  });
+
+  it('keeps the rewrite only when the physical cost actually drops', () => {
+    const stats = statistics();
+    const rewritten = pushdown(PUSHABLE, stats);
+
+    expect(fired(rewritten)).toBe(true);
+    expect(physicalCost(rewritten, stats)).toBeLessThan(physicalCost(logicalPlan(PUSHABLE), stats));
+  });
+
+  it('leaves the plan untouched when the rewrite would cost more', () => {
+    const filtering = `
+      SELECT f.ORDER_ID AS K, SUM(f.QTY) AS TOTAL
+      FROM FACT f JOIN SMALLDIM s ON s.DIM_ID = f.DIM_ID
+      GROUP BY f.ORDER_ID`;
+    const stats = statistics();
+
+    expect(fired(pushdown(filtering, stats))).toBe(false);
+    expect(physicalCost(pushdown(filtering, stats), stats))
+      .toBe(physicalCost(logicalPlan(filtering), stats));
+  });
+
+  it('declines when the input is too small to be worth a second aggregate', () => {
+    const small = new Map([
+      ['FACT', table(100, { ORDER_ID: col(2), QTY: col(50) })],
+      ['DIM', table(100, { ORDER_ID: col(100) })],
+    ]);
+    const plan = pushdown(PUSHABLE, small);
+
+    expect(fired(plan)).toBe(false);
+  });
+});
+
+describe('AggregatePushdown declines what it cannot decompose', () => {
+  const cases = {
+    'DISTINCT aggregates': `
+      SELECT f.ORDER_ID AS K, COUNT(DISTINCT f.QTY) AS N
+      FROM FACT f JOIN DIM d ON d.ORDER_ID = f.ORDER_ID GROUP BY f.ORDER_ID`,
+    'AVG, whose partial needs two columns': `
+      SELECT f.ORDER_ID AS K, AVG(f.QTY) AS A
+      FROM FACT f JOIN DIM d ON d.ORDER_ID = f.ORDER_ID GROUP BY f.ORDER_ID`,
+    'an outer join': `
+      SELECT f.ORDER_ID AS K, SUM(f.QTY) AS TOTAL
+      FROM FACT f LEFT JOIN DIM d ON d.ORDER_ID = f.ORDER_ID GROUP BY f.ORDER_ID`,
+    'a group-by spanning both sides': `
+      SELECT f.ORDER_ID AS K, d.STATUS AS S, SUM(f.QTY) AS TOTAL
+      FROM FACT f JOIN DIM d ON d.ORDER_ID = f.ORDER_ID GROUP BY f.ORDER_ID, d.STATUS`,
+    'an aggregate reading the other side': `
+      SELECT f.ORDER_ID AS K, MIN(d.STATUS) AS S
+      FROM FACT f JOIN DIM d ON d.ORDER_ID = f.ORDER_ID GROUP BY f.ORDER_ID`,
   };
-}
 
-function makeAgg(func, args, outputName, opts = {}) {
-  return { func, functionName: func, args, outputName, ...opts };
-}
-
-function makeInnerJoin(condition, leftTable, rightTable) {
-  return LogicalJoin(
-    JoinType.INNER,
-    condition,
-    LogicalScan(leftTable, [], leftTable),
-    LogicalScan(rightTable, [], rightTable)
-  );
-}
-
-describe('AggregatePushdown', () => {
-  const pass = new AggregatePushdown();
-
-  describe('pushes decomposable aggregates below inner join', () => {
-    it('pushes SUM aggregate when group-by is on left side', () => {
-      const join = makeInnerJoin(eqJoinCond('A', 'id', 'B', 'a_id'), 'A', 'B');
-      const plan = LogicalAggregate(
-        [colRef('A', 'category')],
-        [makeAgg('SUM', [colRef('A', 'amount')], 'total')],
-        join
-      );
-
-      const result = pass.apply(plan);
-
-      expect(result.type).toBe(PlanNodeType.AGGREGATE);
-      const innerJoin = result.children[0];
-      expect(innerJoin.type).toBe(PlanNodeType.JOIN);
-      const partialAgg = innerJoin.children[0];
-      expect(partialAgg.type).toBe(PlanNodeType.AGGREGATE);
-      expect(partialAgg.aggregates[0].func).toBe('SUM');
-      expect(partialAgg.aggregates[0]._isPartial).toBe(true);
+  for (const [name, sql] of Object.entries(cases)) {
+    it(`declines ${name}`, () => {
+      expect(fired(pushdown(sql))).toBe(false);
     });
-
-    it('pushes COUNT and converts final to SUM', () => {
-      const join = makeInnerJoin(eqJoinCond('A', 'id', 'B', 'a_id'), 'A', 'B');
-      const plan = LogicalAggregate(
-        [colRef('A', 'category')],
-        [makeAgg('COUNT', [literal(1)], 'cnt')],
-        join
-      );
-
-      const result = pass.apply(plan);
-      const finalAggs = result.aggregates;
-      expect(finalAggs[0].func).toBe('SUM');
-      expect(finalAggs[0]._isFinal).toBe(true);
-
-      const partialAgg = result.children[0].children[0];
-      expect(partialAgg.aggregates[0].func).toBe('COUNT');
-    });
-
-    it('pushes MIN and MAX preserving function names', () => {
-      const join = makeInnerJoin(eqJoinCond('A', 'id', 'B', 'a_id'), 'A', 'B');
-      const plan = LogicalAggregate(
-        [colRef('A', 'status')],
-        [
-          makeAgg('MIN', [colRef('A', 'val')], 'min_val'),
-          makeAgg('MAX', [colRef('A', 'val')], 'max_val'),
-        ],
-        join
-      );
-
-      const result = pass.apply(plan);
-      const partialAgg = result.children[0].children[0];
-      expect(partialAgg.aggregates[0].func).toBe('MIN');
-      expect(partialAgg.aggregates[1].func).toBe('MAX');
-      expect(result.aggregates[0].func).toBe('MIN');
-      expect(result.aggregates[1].func).toBe('MAX');
-    });
-  });
-
-  describe('skips non-decomposable aggregates', () => {
-    it('skips GROUP_CONCAT', () => {
-      const join = makeInnerJoin(eqJoinCond('A', 'id', 'B', 'a_id'), 'A', 'B');
-      const plan = LogicalAggregate(
-        [colRef('A', 'category')],
-        [makeAgg('GROUP_CONCAT', [colRef('A', 'name')], 'names')],
-        join
-      );
-
-      const result = pass.apply(plan);
-      expect(result.children[0].type).toBe(PlanNodeType.JOIN);
-      expect(result.children[0].children[0].type).toBe(PlanNodeType.SCAN);
-    });
-  });
-
-  describe('skips DISTINCT aggregates', () => {
-    it('does not push COUNT DISTINCT', () => {
-      const join = makeInnerJoin(eqJoinCond('A', 'id', 'B', 'a_id'), 'A', 'B');
-      const plan = LogicalAggregate(
-        [colRef('A', 'category')],
-        [makeAgg('COUNT', [colRef('A', 'val')], 'cnt', { distinct: true })],
-        join
-      );
-
-      const result = pass.apply(plan);
-      expect(result.children[0].type).toBe(PlanNodeType.JOIN);
-      expect(result.children[0].children[0].type).toBe(PlanNodeType.SCAN);
-    });
-  });
-
-  describe('skips when group-by columns span both join sides', () => {
-    it('does not push when grouping by columns from both tables', () => {
-      const join = makeInnerJoin(eqJoinCond('A', 'id', 'B', 'a_id'), 'A', 'B');
-      const plan = LogicalAggregate(
-        [colRef('A', 'category'), colRef('B', 'region')],
-        [makeAgg('SUM', [colRef('A', 'amount')], 'total')],
-        join
-      );
-
-      const result = pass.apply(plan);
-      expect(result.children[0].type).toBe(PlanNodeType.JOIN);
-      expect(result.children[0].children[0].type).toBe(PlanNodeType.SCAN);
-    });
-  });
-
-  describe('skips non-inner joins', () => {
-    it('does not push through LEFT join', () => {
-      const join = LogicalJoin(
-        JoinType.LEFT,
-        eqJoinCond('A', 'id', 'B', 'a_id'),
-        LogicalScan('A', [], 'A'),
-        LogicalScan('B', [], 'B')
-      );
-      const plan = LogicalAggregate(
-        [colRef('A', 'category')],
-        [makeAgg('SUM', [colRef('A', 'amount')], 'total')],
-        join
-      );
-
-      const result = pass.apply(plan);
-      expect(result.children[0].type).toBe(PlanNodeType.JOIN);
-      expect(result.children[0].children[0].type).toBe(PlanNodeType.SCAN);
-    });
-  });
-
-  describe('pushes to right side when group-by is on right', () => {
-    it('places partial aggregate on right child of join', () => {
-      const join = makeInnerJoin(eqJoinCond('A', 'id', 'B', 'a_id'), 'A', 'B');
-      const plan = LogicalAggregate(
-        [colRef('B', 'region')],
-        [makeAgg('SUM', [colRef('B', 'sales')], 'total')],
-        join
-      );
-
-      const result = pass.apply(plan);
-      const innerJoin = result.children[0];
-      expect(innerJoin.children[0].type).toBe(PlanNodeType.SCAN);
-      expect(innerJoin.children[1].type).toBe(PlanNodeType.AGGREGATE);
-      expect(innerJoin.children[1].aggregates[0]._isPartial).toBe(true);
-    });
-  });
+  }
 });

@@ -11,7 +11,6 @@ const DIST = join(ROOT, 'dist');
 
 const NODE_ENTRY = join(SRC, 'index.ts');
 const BROWSER_ENTRY = join(SRC, 'browser.ts');
-const BUFFER_SHIM = join(__dirname, 'buffer-shim.js');
 
 const NODE_OUTFILE = join(DIST, 'index.node.js');
 const BROWSER_OUTFILE = join(DIST, 'index.browser.js');
@@ -94,7 +93,6 @@ function buildBrowser() {
     outfile: BROWSER_OUTFILE,
     platform: 'browser',
     define: { global: 'globalThis' },
-    inject: [BUFFER_SHIM],
     plugins: [stubNodeSubsystemsPlugin],
   });
 }

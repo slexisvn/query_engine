@@ -206,7 +206,7 @@ export class ExchangeReceiver {
     }
   }
 
-  _handleChunk(sourceNodeId: NodeId, encodedChunk: Buffer): void {
+  _handleChunk(sourceNodeId: NodeId, encodedChunk: Uint8Array): void {
     try {
       const chunk = this._codec.decode(encodedChunk);
 

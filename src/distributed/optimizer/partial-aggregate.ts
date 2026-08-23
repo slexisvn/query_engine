@@ -2,8 +2,8 @@ import { LogicalPartialAggregate, LogicalFinalAggregate, LogicalExchange, type L
 import { PlanRewriter } from '../../planner/plan-rewriter.js';
 import { ExchangeType } from '../planner/fragment.js';
 import { DistributedRewritePass } from './distributed-pass.js';
+import { DECOMPOSABLE_FUNCTIONS, aggregateFunctionName } from '../../planner/aggregate-decomposition.js';
 import type { BoundExpr } from '../../binder/expression-binder.js';
-import type { AggregateDecomposition } from '../distributed-types.js';
 
 interface AggDescriptor {
   func?: string;
@@ -14,15 +14,6 @@ interface AggDescriptor {
   _emitColumns?: string[];
   _inputColumns?: string[];
 }
-
-const DECOMPOSABLE_FUNCTIONS = new Map<string, AggregateDecomposition>([
-  ['SUM', { partial: 'SUM', final: 'SUM' }],
-  ['COUNT', { partial: 'COUNT', final: 'SUM' }],
-  ['COUNT_STAR', { partial: 'COUNT_STAR', final: 'SUM' }],
-  ['MIN', { partial: 'MIN', final: 'MIN' }],
-  ['MAX', { partial: 'MAX', final: 'MAX' }],
-  ['AVG', { partial: 'AVG_PARTIAL', final: 'AVG_FINAL' }],
-]);
 
 export class PartialAggregatePass extends DistributedRewritePass {
   override get name(): string {
@@ -73,19 +64,14 @@ class PartialAggregateRewriter extends PlanRewriter {
     if (!aggregates || aggregates.length === 0) return (groupBy?.length ?? 0) > 0;
     return aggregates.every(agg => {
       if (agg.distinct) return false;
-      const funcName = this._normalizeFuncName(agg);
+      const funcName = aggregateFunctionName(agg);
       return DECOMPOSABLE_FUNCTIONS.has(funcName);
     });
   }
 
-  _normalizeFuncName(agg: AggDescriptor): string {
-    if (agg.isCountStar) return 'COUNT_STAR';
-    return (agg.func || agg.name || '').toUpperCase();
-  }
-
   _buildPartialAggregates(aggregates: AggDescriptor[]): AggDescriptor[] {
     return aggregates.map((agg, idx) => {
-      const funcName = this._normalizeFuncName(agg);
+      const funcName = aggregateFunctionName(agg);
       const decomp = DECOMPOSABLE_FUNCTIONS.get(funcName)!;
 
       if (funcName === 'AVG') {
@@ -107,7 +93,7 @@ class PartialAggregateRewriter extends PlanRewriter {
 
   _buildFinalAggregates(aggregates: AggDescriptor[]): AggDescriptor[] {
     return aggregates.map((agg, idx) => {
-      const funcName = this._normalizeFuncName(agg);
+      const funcName = aggregateFunctionName(agg);
       const decomp = DECOMPOSABLE_FUNCTIONS.get(funcName)!;
 
       if (funcName === 'AVG') {

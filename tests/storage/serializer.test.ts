@@ -216,10 +216,11 @@ describe('ChunkSerializer', () => {
       expect(restored.columns[0].get(0)).toBe(42);
     });
 
-    it('serialize output is a Buffer', () => {
+    it('serialize output is a platform-neutral Uint8Array, not a Node Buffer', () => {
       const chunk = makeChunk([{ type: DataType.INT32, values: [1] }]);
       const buf = ChunkSerializer.serialize(chunk);
-      expect(Buffer.isBuffer(buf)).toBe(true);
+      expect(buf).toBeInstanceOf(Uint8Array);
+      expect(Buffer.isBuffer(buf)).toBe(false);
     });
 
     it('TIMESTAMP column round-trips correctly', () => {
