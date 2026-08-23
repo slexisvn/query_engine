@@ -9,6 +9,8 @@ import {
   LogicalSort,
   LogicalAggregate,
   LogicalIndexScan,
+  LogicalTopN,
+  LogicalProject,
 } from '../../src/planner/logical-plan.js';
 import { colRef, lit, bin, eqJoin, scan, makeStats, planPhysical, annotate } from '../helpers/plan-fixtures.js';
 import { Config } from '../../src/config.js';
@@ -23,7 +25,7 @@ describe('PhysicalPlanner property derivation', () => {
   });
 
   it('ignores a sort order the plan claims but its shape does not support', () => {
-    const stats = makeStats({ A: { rowCount: 100000 }, B: { rowCount: 100000 } });
+    const stats = makeStats({ A: { rowCount: 100000, columns: { ID: { ndv: 100000 } } }, B: { rowCount: 100000, columns: { ID: { ndv: 100000 } } } });
     const left = { ...scan('A'), _sortedBy: [{ key: 'A.ID', direction: 'ASC' }] };
     const right = { ...scan('B'), _sortedBy: [{ key: 'B.ID', direction: 'ASC' }] };
 
@@ -33,7 +35,7 @@ describe('PhysicalPlanner property derivation', () => {
   });
 
   it('keeps the sort order a real Sort node establishes', () => {
-    const stats = makeStats({ A: { rowCount: 100000 }, B: { rowCount: 100000 } });
+    const stats = makeStats({ A: { rowCount: 100000, columns: { ID: { ndv: 100000 } } }, B: { rowCount: 100000, columns: { ID: { ndv: 100000 } } } });
     const left = LogicalSort([{ expr: colRef('A', 'id'), direction: 'ASC' }], scan('A'));
     const right = LogicalSort([{ expr: colRef('B', 'id'), direction: 'ASC' }], scan('B'));
 
@@ -52,7 +54,7 @@ describe('PhysicalPlanner join selection', () => {
   });
 
   it('chooses a merge join when both inputs are already sorted on the join keys', () => {
-    const stats = makeStats({ A: { rowCount: 100000 }, B: { rowCount: 100000 } });
+    const stats = makeStats({ A: { rowCount: 100000, columns: { ID: { ndv: 100000 } } }, B: { rowCount: 100000, columns: { ID: { ndv: 100000 } } } });
     const left = LogicalSort([{ expr: colRef('A', 'id'), direction: 'ASC' }], scan('A'));
     const right = LogicalSort([{ expr: colRef('B', 'id'), direction: 'ASC' }], scan('B'));
     const physical = planPhysical(LogicalJoin(JoinType.INNER, eqJoin('A', 'id', 'B', 'id'), left, right), stats);
@@ -61,7 +63,7 @@ describe('PhysicalPlanner join selection', () => {
   });
 
   it('reports no sort requirement when both merge inputs are already ordered', () => {
-    const stats = makeStats({ A: { rowCount: 100000 }, B: { rowCount: 100000 } });
+    const stats = makeStats({ A: { rowCount: 100000, columns: { ID: { ndv: 100000 } } }, B: { rowCount: 100000, columns: { ID: { ndv: 100000 } } } });
     const left = LogicalSort([{ expr: colRef('A', 'id'), direction: 'ASC' }], scan('A'));
     const right = LogicalSort([{ expr: colRef('B', 'id'), direction: 'ASC' }], scan('B'));
     const physical = planPhysical(LogicalJoin(JoinType.INNER, eqJoin('A', 'id', 'B', 'id'), left, right), stats);
@@ -118,7 +120,7 @@ describe('PhysicalPlanner join selection', () => {
   });
 
   it('chooses a hash join for a large non-equi join', () => {
-    const stats = makeStats({ A: { rowCount: 100000 }, B: { rowCount: 100000 } });
+    const stats = makeStats({ A: { rowCount: 100000, columns: { ID: { ndv: 100000 } } }, B: { rowCount: 100000, columns: { ID: { ndv: 100000 } } } });
     const condition = bin(colRef('A', 'id'), '<', colRef('B', 'id'));
     const physical = planPhysical(LogicalJoin(JoinType.INNER, condition, scan('A'), scan('B')), stats);
 
@@ -301,7 +303,7 @@ describe('PhysicalPlanner tree shape', () => {
 
 describe('PhysicalPlanner cost sensitivity', () => {
   it('prefers a cheaper plan when one side shrinks', () => {
-    const balanced = makeStats({ A: { rowCount: 100000 }, B: { rowCount: 100000 } });
+    const balanced = makeStats({ A: { rowCount: 100000, columns: { ID: { ndv: 100000 } } }, B: { rowCount: 100000, columns: { ID: { ndv: 100000 } } } });
     const skewed = makeStats({ A: { rowCount: 100000 }, B: { rowCount: 100 } });
     const logical = () => LogicalJoin(JoinType.INNER, eqJoin('A', 'id', 'B', 'id'), scan('A'), scan('B'));
 
@@ -309,7 +311,7 @@ describe('PhysicalPlanner cost sensitivity', () => {
   });
 
   it('costs a sorted merge join below the equivalent hash join', () => {
-    const stats = makeStats({ A: { rowCount: 200000 }, B: { rowCount: 200000 } });
+    const stats = makeStats({ A: { rowCount: 200000, columns: { ID: { ndv: 200000 } } }, B: { rowCount: 200000, columns: { ID: { ndv: 200000 } } } });
     const sortedJoin = LogicalJoin(
       JoinType.INNER,
       eqJoin('A', 'id', 'B', 'id'),
@@ -396,7 +398,7 @@ describe('PhysicalPlanner runtime filters', () => {
 });
 
 describe('PhysicalPlanner candidate enumeration', () => {
-  const planner = new PhysicalPlanner(makeStats({ A: { rowCount: 100000 }, B: { rowCount: 100000 } }));
+  const planner = new PhysicalPlanner(makeStats({ A: { rowCount: 100000, columns: { ID: { ndv: 100000 } } }, B: { rowCount: 100000, columns: { ID: { ndv: 100000 } } } }));
 
   function joinCandidates(logical, stats) {
     const annotated = annotate(logical, stats);
@@ -473,5 +475,114 @@ describe('PhysicalPlanner candidate enumeration', () => {
     const candidates = new PhysicalPlanner(stats).aggregateCandidates(annotated, children);
 
     expect(planPhysical(logical, stats).cost).toBeCloseTo(Math.min(...candidates.map(c => c.cost)), 6);
+  });
+});
+
+describe('PhysicalPlanner order satisfied by a merge join', () => {
+  const stats = () => makeStats({ A: { rowCount: 100000, columns: { ID: { ndv: 100000 } } }, B: { rowCount: 100000, columns: { ID: { ndv: 100000 } } } });
+  const ascOn = (table, column) => [{ expr: colRef(table, column), direction: 'ASC' }];
+  const ordered = (table) => LogicalSort(ascOn(table, 'id'), scan(table));
+  const mergeableJoin = () => LogicalJoin(JoinType.INNER, eqJoin('A', 'id', 'B', 'id'), ordered('A'), ordered('B'));
+
+  it('reaches a merge join from inputs that already carry the join order', () => {
+    expect(planPhysical(mergeableJoin(), stats()).type).toBe(PhysicalNodeType.MERGE_JOIN);
+  });
+
+  it('drops a Sort whose keys the merge join already delivers', () => {
+    const physical = planPhysical(LogicalSort(ascOn('A', 'id'), mergeableJoin()), stats());
+
+    expect(physical.type).toBe(PhysicalNodeType.MERGE_JOIN);
+  });
+
+  it('accepts the other side of the equi-join as the delivered order', () => {
+    const physical = planPhysical(LogicalSort(ascOn('B', 'id'), mergeableJoin()), stats());
+
+    expect(physical.type).toBe(PhysicalNodeType.MERGE_JOIN);
+  });
+
+  it('keeps the Sort when the requested direction is the opposite one', () => {
+    const descending = [{ expr: colRef('A', 'id'), direction: 'DESC' }];
+    const physical = planPhysical(LogicalSort(descending, mergeableJoin()), stats());
+
+    expect(physical.type).toBe(PhysicalNodeType.SORT);
+    expect(physical.children[0].type).toBe(PhysicalNodeType.MERGE_JOIN);
+  });
+
+  it('keeps the Sort when it orders by a column the join does not key on', () => {
+    const physical = planPhysical(LogicalSort(ascOn('A', 'val'), mergeableJoin()), stats());
+
+    expect(physical.type).toBe(PhysicalNodeType.SORT);
+    expect(physical.children[0].type).toBe(PhysicalNodeType.MERGE_JOIN);
+  });
+
+  it('keeps the Sort when it needs more keys than the join delivers', () => {
+    const twoKeys = [
+      { expr: colRef('A', 'id'), direction: 'ASC' },
+      { expr: colRef('A', 'val'), direction: 'ASC' },
+    ];
+    const physical = planPhysical(LogicalSort(twoKeys, mergeableJoin()), stats());
+
+    expect(physical.type).toBe(PhysicalNodeType.SORT);
+  });
+
+  it('keeps the Sort above an outer join because unmatched rows carry null keys', () => {
+    const outer = LogicalJoin(JoinType.LEFT, eqJoin('A', 'id', 'B', 'id'), ordered('A'), ordered('B'));
+    const physical = planPhysical(LogicalSort(ascOn('A', 'id'), outer), stats());
+
+    expect(physical.children[0].type).toBe(PhysicalNodeType.MERGE_JOIN);
+    expect(physical.type).toBe(PhysicalNodeType.SORT);
+  });
+
+  it('keeps the Sort above a hash join that delivers no order', () => {
+    const unordered = LogicalJoin(JoinType.INNER, eqJoin('A', 'id', 'B', 'id'), scan('A'), scan('B'));
+    const physical = planPhysical(LogicalSort(ascOn('A', 'id'), unordered), stats());
+
+    expect(physical.children[0].type).toBe(PhysicalNodeType.HASH_JOIN);
+    expect(physical.type).toBe(PhysicalNodeType.SORT);
+  });
+
+  it('sees through a projection between the sort and the merge join', () => {
+    const projected = LogicalProject([{ expr: colRef('A', 'id'), alias: 'ID' }], mergeableJoin());
+    const physical = planPhysical(LogicalSort(ascOn('A', 'id'), projected), stats());
+
+    expect(physical.type).toBe(PhysicalNodeType.PROJECT);
+    expect(physical.children[0].type).toBe(PhysicalNodeType.MERGE_JOIN);
+  });
+
+  it('degrades Top-N to a Limit when the merge join already delivers the order', () => {
+    const physical = planPhysical(LogicalTopN(ascOn('A', 'id'), 10, 0, mergeableJoin()), stats());
+
+    expect(physical.type).toBe(PhysicalNodeType.LIMIT);
+    expect(physical.logical.count).toBe(10);
+    expect(physical.children[0].type).toBe(PhysicalNodeType.MERGE_JOIN);
+  });
+
+  it('carries the Top-N offset onto the Limit it degrades to', () => {
+    const physical = planPhysical(LogicalTopN(ascOn('A', 'id'), 10, 25, mergeableJoin()), stats());
+
+    expect(physical.type).toBe(PhysicalNodeType.LIMIT);
+    expect(physical.logical.offset).toBe(25);
+  });
+
+  it('costs the degraded Limit below the Top-N it replaces', () => {
+    const degraded = planPhysical(LogicalTopN(ascOn('A', 'id'), 10, 0, mergeableJoin()), stats());
+    const kept = planPhysical(LogicalTopN(ascOn('A', 'val'), 10, 0, mergeableJoin()), stats());
+
+    expect(kept.type).toBe(PhysicalNodeType.TOP_N);
+    expect(degraded.cost).toBeLessThan(kept.cost);
+  });
+
+  it('keeps Top-N when it orders by a column the join does not key on', () => {
+    const physical = planPhysical(LogicalTopN(ascOn('A', 'val'), 10, 0, mergeableJoin()), stats());
+
+    expect(physical.type).toBe(PhysicalNodeType.TOP_N);
+  });
+
+  it('keeps a Sort that also selects rows rather than dropping its limit', () => {
+    const limiting = { ...LogicalSort(ascOn('A', 'id'), mergeableJoin()), limit: 5 };
+    const physical = planPhysical(limiting, stats());
+
+    expect(physical.type).toBe(PhysicalNodeType.SORT);
+    expect(physical.logical.limit).toBe(5);
   });
 });

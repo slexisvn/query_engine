@@ -4,6 +4,8 @@ import {
   type LogicalPlanNode,
   type LogicalJoinNode,
   type LogicalAggregateNode,
+  type LogicalOrderKey,
+  type SortedByEntry,
 } from '../planner/logical-plan.js';
 import {
   PhysicalNodeType,
@@ -14,10 +16,10 @@ import {
   type SortRequirement,
 } from './physical-plan.js';
 import { descriptorOf } from '../planner/plan-node-descriptor.js';
-import { DefaultCostModel } from '../planner/cost-model.js';
+import { DefaultCostModel, sortKeyClassOf } from '../planner/cost-model.js';
 import { Config } from '../config.js';
 import { chooseJoinBuildSide, isEquiJoinDedupable } from '../planner/join-build-side.js';
-import { extractEquiJoinKeys, columnKeyOf, isSortedBy, isSortedByPrefix } from '../planner/sort-properties.js';
+import { extractEquiJoinKeys, equiJoinKeyTypes, columnKeyOf, isSortedBy, isSortedByPrefix, satisfiesOrder, selectsRows } from '../planner/sort-properties.js';
 import { canUsePerfectHashAggregate, type AggregateStatsProvider } from '../planner/aggregate-strategy.js';
 import { PlanPropertyAnnotator } from '../planner/plan-properties.js';
 import type { BoundExpr } from '../binder/expression-binder.js';
@@ -26,6 +28,46 @@ import type { TableStats } from '../catalog/statistics.js';
 const DEFAULT_CARDINALITY = 1000;
 
 const NO_SORT_REQUIRED: SortRequirement = { left: false, right: false };
+
+const ORDER_PRESERVING_TYPES: ReadonlySet<PhysicalNodeType> = new Set([
+  PhysicalNodeType.FILTER,
+  PhysicalNodeType.PROJECT,
+  PhysicalNodeType.LIMIT,
+]);
+
+function ascendingOrder(keys: readonly string[]): SortedByEntry[] {
+  return keys.map(key => ({ key, direction: 'ASC' }));
+}
+
+function mergeJoinOutputOrders(logical: LogicalJoinNode): SortedByEntry[][] {
+  if (logical.joinType !== JoinType.INNER) return [];
+
+  const { leftKeys, rightKeys } = extractEquiJoinKeys(logical.condition);
+  if (leftKeys.length === 0) return [];
+
+  return [ascendingOrder(leftKeys), ascendingOrder(rightKeys)];
+}
+
+function providedSortOrders(node: PhysicalPlanNode): SortedByEntry[][] {
+  if (node.type === PhysicalNodeType.MERGE_JOIN) return mergeJoinOutputOrders(node.logical);
+
+  if (ORDER_PRESERVING_TYPES.has(node.type) && node.children.length > 0) {
+    return providedSortOrders(node.children[0]);
+  }
+
+  const annotated = node.logical._sortedBy;
+  return annotated && annotated.length > 0 ? [annotated] : [];
+}
+
+function orderAlreadyProvided(orderKeys: readonly LogicalOrderKey[], child: PhysicalPlanNode | undefined): boolean {
+  if (!child) return false;
+  return providedSortOrders(child).some(order => satisfiesOrder(order, orderKeys));
+}
+
+function groupOrderAlreadyProvided(groupKeys: (string | null)[], child: PhysicalPlanNode | undefined): boolean {
+  if (!child) return false;
+  return providedSortOrders(child).some(order => isSortedByPrefix(order, groupKeys));
+}
 
 export class PhysicalPlanner {
   costModel: DefaultCostModel;
@@ -48,6 +90,9 @@ export class PhysicalPlanner {
 
     if (physicalType === null) return this.planCostBased(node, children);
 
+    const satisfied = this.planSatisfiedOrder(node, children);
+    if (satisfied) return satisfied;
+
     return physicalOperator(physicalType, node, children, cardinalityOf(node), this.operatorCost(node, children));
   }
 
@@ -57,10 +102,29 @@ export class PhysicalPlanner {
     throw new Error(`No physical operator for plan node: ${node.type}`);
   }
 
-  operatorCost(node: LogicalPlanNode, children: PhysicalPlanNode[]): number {
+  planSatisfiedOrder(node: LogicalPlanNode, children: PhysicalPlanNode[]): PhysicalPlanNode | null {
+    if (node.type === PlanNodeType.SORT) {
+      if (selectsRows(node) || !orderAlreadyProvided(node.orderKeys, children[0])) return null;
+      return children[0];
+    }
+
+    if (node.type === PlanNodeType.TOP_N && orderAlreadyProvided(node.orderKeys, children[0])) {
+      return physicalOperator(
+        PhysicalNodeType.LIMIT,
+        node,
+        children,
+        cardinalityOf(node),
+        this.operatorCost(node, children, PlanNodeType.LIMIT),
+      );
+    }
+
+    return null;
+  }
+
+  operatorCost(node: LogicalPlanNode, children: PhysicalPlanNode[], costType: PlanNodeType = node.type): number {
     const cardinality = cardinalityOf(node);
     const inputCardinality = children[0]?.cardinality ?? cardinality;
-    return descriptorOf(node.type).cost(this.costModel, node, inputCardinality, cardinality);
+    return descriptorOf(costType).cost(this.costModel, node, inputCardinality, cardinality);
   }
 
   planJoin(node: LogicalJoinNode, children: PhysicalPlanNode[]): PhysicalPlanNode {
@@ -86,7 +150,8 @@ export class PhysicalPlanner {
         cardinality,
         hasEquiKeys
           ? this.costModel.hashJoinCost(buildCardinality, probeCardinality, cardinality)
-          : this.costModel.blockNestedLoopJoinCost(buildCardinality, probeCardinality, cardinality),
+          : this.costModel.hashBuildCost(buildCardinality)
+            + this.costModel.blockNestedLoopJoinCost(buildCardinality, probeCardinality, cardinality),
         buildSide,
         isEquiJoinDedupable(node.joinType, node.condition),
         NO_SORT_REQUIRED,
@@ -100,7 +165,7 @@ export class PhysicalPlanner {
         node,
         children,
         cardinality,
-        this.costModel.nestedLoopJoinCost(buildCardinality, probeCardinality),
+        this.costModel.blockNestedLoopJoinCost(buildCardinality, probeCardinality, cardinality),
         buildSide,
         false,
         NO_SORT_REQUIRED,
@@ -134,7 +199,14 @@ export class PhysicalPlanner {
       node,
       children,
       cardinality,
-      this.costModel.mergeJoinCostWithSorts(leftCard, rightCard, leftSorted, rightSorted, cardinality),
+      this.costModel.mergeJoinCostWithSorts(
+        leftCard,
+        rightCard,
+        leftSorted,
+        rightSorted,
+        cardinality,
+        sortKeyClassOf(equiJoinKeyTypes(node.condition)),
+      ),
       buildSide,
       false,
       { left: !leftSorted, right: !rightSorted },
@@ -160,7 +232,7 @@ export class PhysicalPlanner {
     ];
 
     const groupKeys = node.groupBy.map((expr: BoundExpr) => columnKeyOf(expr));
-    if (isSortedByPrefix(child._sortedBy, groupKeys)) {
+    if (groupOrderAlreadyProvided(groupKeys, children[0])) {
       candidates.push(physicalOperator(
         PhysicalNodeType.STREAM_AGGREGATE,
         node,

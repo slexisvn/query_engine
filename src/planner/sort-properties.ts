@@ -1,6 +1,7 @@
-import { BoundExprKind, type BoundExpr } from '../binder/expression-binder.js';
-import { PlanNodeType, type LogicalPlanNode, type SortedByEntry } from './logical-plan.js';
+import { BoundExprKind, getExprType, type BoundExpr } from '../binder/expression-binder.js';
+import { PlanNodeType, type LogicalOrderKey, type LogicalPlanNode, type LogicalSortNode, type SortedByEntry } from './logical-plan.js';
 import { splitConjuncts } from '../binder/conjuncts.js';
+import type { DataType } from '../storage/data-type.js';
 
 export interface EquiJoinKeys {
   leftKeys: string[];
@@ -27,6 +28,23 @@ export function extractEquiJoinKeys(condition: BoundExpr | null): EquiJoinKeys {
   }
 
   return { leftKeys, rightKeys };
+}
+
+export function equiJoinKeyTypes(condition: BoundExpr | null): (DataType | null)[] {
+  const types: (DataType | null)[] = [];
+
+  for (const pred of splitConjuncts(condition)) {
+    if (pred.kind !== BoundExprKind.BINARY || pred.op !== '=') continue;
+    if (columnKeyOf(pred.left) === null || columnKeyOf(pred.right) === null) continue;
+    types.push(getExprType(pred.left) ?? getExprType(pred.right) ?? null);
+  }
+
+  return types;
+}
+
+export function orderKeyTypes(orderKeys: readonly LogicalOrderKey[] | undefined): (DataType | null)[] {
+  if (!orderKeys) return [];
+  return orderKeys.map(key => getExprType(key.expr) ?? null);
 }
 
 export function isPureEquiJoin(condition: BoundExpr | null): boolean {
@@ -74,6 +92,24 @@ export function isSortedBy(actualKeys: SortedByEntry[] | undefined, requiredKeys
   for (let i = 0; i < requiredKeys.length; i++) {
     if (!sortKeyMatches(actualKeys[i], requiredKeys[i])) return false;
   }
+  return true;
+}
+
+export function selectsRows(node: LogicalSortNode): boolean {
+  return node.limit !== undefined || !!node.offset;
+}
+
+export function satisfiesOrder(provided: SortedByEntry[] | undefined, required: readonly LogicalOrderKey[]): boolean {
+  if (!provided || required.length === 0) return false;
+  if (provided.length < required.length) return false;
+
+  for (let i = 0; i < required.length; i++) {
+    const key = columnKeyOf(required[i].expr);
+    if (key === null) return false;
+    if (!sortKeyMatches(provided[i], key)) return false;
+    if (sortDirectionOf(provided[i]) !== (required[i].direction || 'ASC').toUpperCase()) return false;
+  }
+
   return true;
 }
 

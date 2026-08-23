@@ -13,8 +13,11 @@ const resolveWorkerCount = (): number => {
   return Math.max(1, getCpuCount() - 1);
 };
 
+const memoryLimitBytes = env('QE_MEMORY_LIMIT_BYTES', 1 << 28);
+const defaultRowWidthBytes = env('QE_DEFAULT_ROW_WIDTH_BYTES', 64);
+
 export const Config = {
-  memoryLimitBytes: env('QE_MEMORY_LIMIT_BYTES', 1 << 28),
+  memoryLimitBytes,
   variableWidthValueBytes: env('QE_VARIABLE_WIDTH_VALUE_BYTES', 32),
   materializedRowOverheadBytes: env('QE_MATERIALIZED_ROW_OVERHEAD_BYTES', 48),
   hashJoinPartitions: env('QE_HASH_JOIN_PARTITIONS', 16),
@@ -50,10 +53,21 @@ export const Config = {
   morselSize: env('QE_MORSEL_SIZE', 262144),
 
   defaultCardinality: env('QE_DEFAULT_CARDINALITY', 1000),
-  defaultRowWidthBytes: env('QE_DEFAULT_ROW_WIDTH_BYTES', 64),
+  defaultRowWidthBytes,
   defaultExistsSelectivity: envFloat('QE_DEFAULT_EXISTS_SELECTIVITY', 0.5),
   nestedLoopMaxRows: env('QE_NESTED_LOOP_MAX_ROWS', 50000),
-  costModelSpillThreshold: env('QE_COST_MODEL_SPILL_THRESHOLD', 200000),
+  costModelSpillThreshold: env('QE_COST_MODEL_SPILL_THRESHOLD', Math.floor(memoryLimitBytes / defaultRowWidthBytes)),
+  costTuple: envFloat('QE_COST_TUPLE', 1.0),
+  costOperator: envFloat('QE_COST_OPERATOR', 0.24),
+  costBuffer: envFloat('QE_COST_BUFFER', 2.6),
+  costRowAssembly: envFloat('QE_COST_ROW_ASSEMBLY', 5.77),
+  costHashProbe: envFloat('QE_COST_HASH_PROBE', 7.5),
+  costHashInsert: envFloat('QE_COST_HASH_INSERT', 37.76),
+  costIo: envFloat('QE_COST_IO', 17.4),
+  costComparison: envFloat('QE_COST_COMPARISON', 1.25),
+  costTextComparisonFactor: envFloat('QE_COST_TEXT_COMPARISON_FACTOR', 2.0),
+  costRadixPasses: envFloat('QE_COST_RADIX_PASSES', 4.0),
+  costCrossJoinPenalty: envFloat('QE_COST_CROSS_JOIN_PENALTY', 1000),
   statsSampleRows: env('QE_STATS_SAMPLE_ROWS', 30000),
   statsHistogramBuckets: env('QE_STATS_HISTOGRAM_BUCKETS', 64),
   statsMcvCount: env('QE_STATS_MCV_COUNT', 10),

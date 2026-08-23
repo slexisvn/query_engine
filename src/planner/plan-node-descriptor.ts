@@ -1,6 +1,7 @@
-import { PlanNodeType, type LogicalPlanNode, type LogicalTopNNode } from './logical-plan.js';
+import { PlanNodeType, type LogicalPlanNode, type LogicalSortNode, type LogicalTopNNode } from './logical-plan.js';
 import { PhysicalNodeType, type PhysicalOperatorNode } from '../execution/physical-plan.js';
-import type { DefaultCostModel } from './cost-model.js';
+import { sortKeyClassOf, type DefaultCostModel } from './cost-model.js';
+import { orderKeyTypes } from './sort-properties.js';
 
 export type RewriteMethod =
   | 'rewriteScan' | 'rewriteFilter' | 'rewriteProject' | 'rewriteJoin' | 'rewriteAggregate'
@@ -49,8 +50,10 @@ const COORDINATOR_ONLY: OperatorCapability = { input: InputRequirement.GLOBAL, o
 
 const outputCardinalityCost: OperatorCostRule = (costModel, _node, _inputCardinality, cardinality) => costModel.scanCost(cardinality);
 const inputFilterCost: OperatorCostRule = (costModel, _node, inputCardinality) => costModel.filterCost(inputCardinality);
-const inputSortCost: OperatorCostRule = (costModel, _node, inputCardinality) => costModel.sortCost(inputCardinality);
-const inputTopNCost: OperatorCostRule = (costModel, node, inputCardinality) => costModel.topNSortCost(inputCardinality, (node as LogicalTopNNode).count);
+const inputSortCost: OperatorCostRule = (costModel, node, inputCardinality) =>
+  costModel.sortCost(inputCardinality, sortKeyClassOf(orderKeyTypes((node as LogicalSortNode).orderKeys)));
+const inputTopNCost: OperatorCostRule = (costModel, node, inputCardinality) =>
+  costModel.topNSortCost(inputCardinality, (node as LogicalTopNNode).count, sortKeyClassOf(orderKeyTypes((node as LogicalTopNNode).orderKeys)));
 const inputHashAggregateCost: OperatorCostRule = (costModel, _node, inputCardinality) => costModel.hashAggregateCost(inputCardinality);
 
 const PLAN_NODES: Record<PlanNodeType, PlanNodeDescriptor> = {

@@ -285,4 +285,100 @@ describe('StatisticsCache', () => {
       expect(collected).toEqual(['Z']);
     });
   });
+
+  describe('concurrent collection is deduplicated', () => {
+    function deferredCollect() {
+      let release;
+      const gate = new Promise(resolve => { release = resolve; });
+      let calls = 0;
+      const collect = async (storage) => {
+        calls++;
+        await gate;
+        return makeFakeStats(storage.rowCount());
+      };
+      return { collect, release: () => release(), calls: () => calls };
+    }
+
+    it('runs collect once when several ensure() calls overlap on one table', async () => {
+      const original = StatisticsCollector.collect;
+      const { collect, release, calls } = deferredCollect();
+      StatisticsCollector.collect = collect;
+
+      try {
+        const cache = new StatisticsCache(makeMockCatalog({ ORDERS: 900 }));
+        const pending = [cache.ensure('ORDERS'), cache.ensure('orders'), cache.ensure('ORDERS')];
+        release();
+        const results = await Promise.all(pending);
+
+        expect(calls()).toBe(1);
+        expect(results.map(stats => stats.rowCount)).toEqual([900, 900, 900]);
+        expect(cache.generation).toBe(1);
+      } finally {
+        StatisticsCollector.collect = original;
+      }
+    });
+
+    it('collects each distinct table exactly once across overlapping ensureFor calls', async () => {
+      const original = StatisticsCollector.collect;
+      const { collect, release, calls } = deferredCollect();
+      StatisticsCollector.collect = collect;
+
+      try {
+        const cache = new StatisticsCache(makeMockCatalog({ ORDERS: 10, LINEITEM: 20 }));
+        const pending = [
+          cache.ensureFor(['ORDERS']),
+          cache.ensureFor(['ORDERS', 'LINEITEM']),
+          cache.ensureFor(['LINEITEM']),
+        ];
+        release();
+        await Promise.all(pending);
+
+        expect(calls()).toBe(2);
+        expect(cache.get('ORDERS').rowCount).toBe(10);
+        expect(cache.get('LINEITEM').rowCount).toBe(20);
+      } finally {
+        StatisticsCollector.collect = original;
+      }
+    });
+
+    it('re-collects after the in-flight entry settles and the table is invalidated', async () => {
+      const original = StatisticsCollector.collect;
+      let calls = 0;
+      StatisticsCollector.collect = async (storage) => {
+        calls++;
+        return makeFakeStats(storage.rowCount());
+      };
+
+      try {
+        const cache = new StatisticsCache(makeMockCatalog({ ORDERS: 42 }));
+        await cache.ensure('ORDERS');
+        await cache.ensure('ORDERS');
+        expect(calls).toBe(1);
+
+        cache.invalidate('ORDERS');
+        await cache.ensure('ORDERS');
+        expect(calls).toBe(2);
+      } finally {
+        StatisticsCollector.collect = original;
+      }
+    });
+
+    it('does not cache a rejected collection', async () => {
+      const original = StatisticsCollector.collect;
+      let calls = 0;
+      StatisticsCollector.collect = async () => {
+        calls++;
+        throw new Error('scan failed');
+      };
+
+      try {
+        const cache = new StatisticsCache(makeMockCatalog({ ORDERS: 7 }));
+        await expect(cache.ensure('ORDERS')).rejects.toThrow('scan failed');
+        await expect(cache.ensure('ORDERS')).rejects.toThrow('scan failed');
+        expect(calls).toBe(2);
+      } finally {
+        StatisticsCollector.collect = original;
+      }
+    });
+  });
 });

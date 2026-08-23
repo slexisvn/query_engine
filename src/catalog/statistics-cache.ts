@@ -17,11 +17,13 @@ export class StatisticsCache {
   catalog: CatalogLike;
   cache: Map<string, CacheEntry>;
   generation: number;
+  private readonly inFlight: Map<string, Promise<TableStatistics | undefined>>;
 
   constructor(catalog: CatalogLike) {
     this.catalog = catalog;
     this.cache = new Map();
     this.generation = 0;
+    this.inFlight = new Map();
   }
 
   get(tableName: string): TableStatistics | undefined {
@@ -47,27 +49,40 @@ export class StatisticsCache {
     this.generation++;
   }
 
-  async ensure(tableName: string): Promise<TableStatistics | undefined> {
+  ensure(tableName: string): Promise<TableStatistics | undefined> {
     const key = tableName.toUpperCase();
     const existing = this.get(key);
-    if (existing) return existing;
+    if (existing) return Promise.resolve(existing);
+
+    const pending = this.inFlight.get(key);
+    if (pending) return pending;
 
     const storage = this.catalog.getTableStorage(key);
-    if (!storage) return undefined;
+    if (!storage) return Promise.resolve(undefined);
 
-    const stats: TableStatistics = await StatisticsCollector.collect(storage);
-    this.set(key, stats);
-    return stats;
+    const collection = this.collectInto(key, storage);
+    this.inFlight.set(key, collection);
+    return collection;
   }
 
-  async ensureFor(tableNames: Iterable<string>): Promise<void> {
-    for (const name of tableNames) {
-      await this.ensure(name);
+  private async collectInto(key: string, storage: TableStorage): Promise<TableStatistics> {
+    try {
+      const stats: TableStatistics = await StatisticsCollector.collect(storage);
+      this.set(key, stats);
+      return stats;
+    } finally {
+      this.inFlight.delete(key);
     }
   }
 
+  async ensureFor(tableNames: Iterable<string>): Promise<void> {
+    await Promise.all([...tableNames].map(name => this.ensure(name)));
+  }
+
   invalidate(tableName: string): void {
-    if (this.cache.delete(tableName.toUpperCase())) this.generation++;
+    const key = tableName.toUpperCase();
+    this.inFlight.delete(key);
+    if (this.cache.delete(key)) this.generation++;
   }
 
   invalidateAll(): void {

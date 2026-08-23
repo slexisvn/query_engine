@@ -6,6 +6,7 @@ import {
   isPureEquiJoin,
   isSortedBy,
   isSortedByPrefix,
+  satisfiesOrder,
   sortDirectionOf,
   sortKeyMatches,
 } from '../../src/planner/sort-properties.js';
@@ -185,5 +186,52 @@ describe('inferSortOrder', () => {
     const scan = LogicalScan('a', ['id'], 'a');
     expect(scan.type).toBe(PlanNodeType.SCAN);
     expect(inferSortOrder(scan)).toEqual([]);
+  });
+});
+
+describe('satisfiesOrder', () => {
+  const asc = (table, column) => ({ expr: colRef(table, column), direction: 'ASC' });
+  const desc = (table, column) => ({ expr: colRef(table, column), direction: 'DESC' });
+
+  it('accepts a provided order that matches the required keys and directions', () => {
+    const provided = [{ key: 'A.ID', direction: 'ASC' }, { key: 'A.NAME', direction: 'ASC' }];
+    expect(satisfiesOrder(provided, [asc('a', 'id'), asc('a', 'name')])).toBe(true);
+  });
+
+  it('accepts a provided order longer than required because the prefix decides', () => {
+    const provided = [{ key: 'A.ID', direction: 'ASC' }, { key: 'A.NAME', direction: 'ASC' }];
+    expect(satisfiesOrder(provided, [asc('a', 'id')])).toBe(true);
+  });
+
+  it('rejects a provided order shorter than required', () => {
+    const provided = [{ key: 'A.ID', direction: 'ASC' }];
+    expect(satisfiesOrder(provided, [asc('a', 'id'), asc('a', 'name')])).toBe(false);
+  });
+
+  it('rejects a matching key whose direction differs', () => {
+    const provided = [{ key: 'A.ID', direction: 'ASC' }];
+    expect(satisfiesOrder(provided, [desc('a', 'id')])).toBe(false);
+  });
+
+  it('rejects keys that match only out of position', () => {
+    const provided = [{ key: 'A.NAME', direction: 'ASC' }, { key: 'A.ID', direction: 'ASC' }];
+    expect(satisfiesOrder(provided, [asc('a', 'id')])).toBe(false);
+  });
+
+  it('treats a missing direction on the required key as ASC', () => {
+    const provided = [{ key: 'A.ID', direction: 'ASC' }];
+    expect(satisfiesOrder(provided, [{ expr: colRef('a', 'id') }])).toBe(true);
+  });
+
+  it('rejects a required key that is not a bare column', () => {
+    const provided = [{ key: 'A.ID', direction: 'ASC' }];
+    const computed = { expr: bin(colRef('a', 'id'), '+', colRef('a', 'id')), direction: 'ASC' };
+    expect(satisfiesOrder(provided, [computed])).toBe(false);
+  });
+
+  it('rejects when nothing is provided or nothing is required', () => {
+    expect(satisfiesOrder(undefined, [asc('a', 'id')])).toBe(false);
+    expect(satisfiesOrder([], [asc('a', 'id')])).toBe(false);
+    expect(satisfiesOrder([{ key: 'A.ID', direction: 'ASC' }], [])).toBe(false);
   });
 });

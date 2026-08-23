@@ -158,7 +158,8 @@ describe('parallel radix hash-join matches serial', () => {
     serialEngine.close();
 
     Config.parallelJoinThreshold = 0;
-    const engine = new QueryEngine(buildCatalog());
+    const engine = new QueryEngine(buildCatalog(), { statistics: new Map() });
+    engine.executor.physicalPlanner.costModel.C_COMPARE = 1e7;
     engine.executor.setParallelContext(null, null, pool);
     let captured = null;
     const original = engine.executor._prepareParallelJoin.bind(engine.executor);

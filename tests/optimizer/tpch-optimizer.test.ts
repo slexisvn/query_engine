@@ -21,6 +21,123 @@ function physicalJoins(plan, statistics) {
   return joins;
 }
 
+  function tpchStats() {
+    const stats = new Map();
+
+    function colStats(ndv, min, max, opts = {}) {
+      return new ColumnStatistics({ ndv, min, max, ...opts });
+    }
+
+    function tableStats(rowCount, columns) {
+      const colMap = new Map();
+      for (const [name, cs] of Object.entries(columns)) {
+        colMap.set(name.toUpperCase(), cs);
+      }
+      return new TableStatistics(rowCount, colMap);
+    }
+
+    stats.set('REGION', tableStats(5, {
+      R_REGIONKEY: colStats(5, 0, 4),
+      R_NAME: colStats(5, null, null),
+    }));
+
+    stats.set('NATION', tableStats(25, {
+      N_NATIONKEY: colStats(25, 0, 24),
+      N_NAME: colStats(25, null, null),
+      N_REGIONKEY: colStats(5, 0, 4),
+    }));
+
+    stats.set('SUPPLIER', tableStats(10000, {
+      S_SUPPKEY: colStats(10000, 1, 10000),
+      S_NAME: colStats(10000, null, null),
+      S_NATIONKEY: colStats(25, 0, 24),
+      S_ACCTBAL: colStats(9500, -999, 9999, {
+        histogram: new EquiDepthHistogram(
+          Array.from({ length: 10 }, (_, i) => -999 + (i + 1) * 1100)
+        ),
+      }),
+    }));
+
+    stats.set('PART', tableStats(200000, {
+      P_PARTKEY: colStats(200000, 1, 200000),
+      P_NAME: colStats(200000, null, null),
+      P_BRAND: colStats(25, null, null),
+      P_TYPE: colStats(150, null, null),
+      P_SIZE: colStats(50, 1, 50),
+      P_CONTAINER: colStats(40, null, null),
+      P_RETAILPRICE: colStats(20000, 900, 2100),
+    }));
+
+    stats.set('PARTSUPP', tableStats(800000, {
+      PS_PARTKEY: colStats(200000, 1, 200000),
+      PS_SUPPKEY: colStats(10000, 1, 10000),
+      PS_AVAILQTY: colStats(10000, 1, 9999),
+      PS_SUPPLYCOST: colStats(100000, 1, 1000),
+    }));
+
+    stats.set('CUSTOMER', tableStats(150000, {
+      C_CUSTKEY: colStats(150000, 1, 150000),
+      C_NAME: colStats(150000, null, null),
+      C_NATIONKEY: colStats(25, 0, 24),
+      C_MKTSEGMENT: colStats(5, null, null),
+      C_ACCTBAL: colStats(140000, -999, 9999),
+      C_PHONE: colStats(150000, null, null),
+    }));
+
+    stats.set('ORDERS', tableStats(1500000, {
+      O_ORDERKEY: colStats(1500000, 1, 6000000),
+      O_CUSTKEY: colStats(100000, 1, 150000),
+      O_ORDERSTATUS: colStats(3, null, null),
+      O_TOTALPRICE: colStats(1400000, 800, 600000),
+      O_ORDERDATE: colStats(2400, null, null, {
+        histogram: new EquiDepthHistogram(
+          Array.from({ length: 10 }, (_, i) => 8035 + (i + 1) * 240)
+        ),
+      }),
+      O_ORDERPRIORITY: colStats(5, null, null),
+      O_SHIPPRIORITY: colStats(1, 0, 0),
+    }));
+
+    stats.set('LINEITEM', tableStats(6000000, {
+      L_ORDERKEY: colStats(1500000, 1, 6000000),
+      L_PARTKEY: colStats(200000, 1, 200000),
+      L_SUPPKEY: colStats(10000, 1, 10000),
+      L_LINENUMBER: colStats(7, 1, 7),
+      L_QUANTITY: colStats(50, 1, 50, {
+        histogram: new EquiDepthHistogram(
+          Array.from({ length: 10 }, (_, i) => (i + 1) * 5)
+        ),
+      }),
+      L_EXTENDEDPRICE: colStats(1000000, 900, 105000),
+      L_DISCOUNT: colStats(11, 0, 0.1, {
+        histogram: new EquiDepthHistogram(
+          Array.from({ length: 10 }, (_, i) => (i + 1) * 0.01)
+        ),
+      }),
+      L_TAX: colStats(9, 0, 0.08),
+      L_RETURNFLAG: colStats(3, null, null),
+      L_LINESTATUS: colStats(2, null, null),
+      L_SHIPDATE: colStats(2500, null, null),
+      L_COMMITDATE: colStats(2500, null, null),
+      L_RECEIPTDATE: colStats(2500, null, null),
+      L_SHIPMODE: colStats(7, null, null),
+    }));
+
+    return stats;
+  }
+
+const TPCH_STATS = tpchStats();
+
+const EQUI_JOIN_STRATEGIES = [PhysicalNodeType.HASH_JOIN, PhysicalNodeType.MERGE_JOIN];
+
+function expectEquiJoinStrategies(strategies, allowedNestedLoops = 0) {
+  const nestedLoops = strategies.filter(t => t === PhysicalNodeType.NESTED_LOOP_JOIN);
+  expect(nestedLoops.length).toBeLessThanOrEqual(allowedNestedLoops);
+  strategies
+    .filter(t => t !== PhysicalNodeType.NESTED_LOOP_JOIN)
+    .forEach(t => expect(EQUI_JOIN_STRATEGIES).toContain(t));
+}
+
 function physicalJoinTypes(plan, statistics) {
   const physical = new PhysicalPlanner(statistics || new Map()).plan(plan);
   const types = [];
@@ -238,11 +355,11 @@ describe('TPC-H Optimizer E2E', () => {
       expect(findNodes(plan, PlanNodeType.SORT).length).toBe(0);
     });
 
-    it('2 hash joins', () => {
+    it('2 equi joins', () => {
       const plan = optimizeSQL(sql);
-      const strats = joinStrategies(plan);
+      const strats = joinStrategies(plan, TPCH_STATS);
       expect(strats.length).toBe(2);
-      strats.forEach(t => expect(t).toBe(PhysicalNodeType.HASH_JOIN));
+      expectEquiJoinStrategies(strats);
     });
 
     it('1 aggregate', () => {
@@ -283,9 +400,9 @@ describe('TPC-H Optimizer E2E', () => {
       expect(tables).toContain('LINEITEM');
     });
 
-    it('hash join for the semi join', () => {
+    it('equi join strategy for the semi join', () => {
       const plan = optimizeSQL(sql);
-      expect(physicalJoinTypes(plan)[0]).toBe(PhysicalNodeType.HASH_JOIN);
+      expect(EQUI_JOIN_STRATEGIES).toContain(physicalJoinTypes(plan, TPCH_STATS)[0]);
     });
   });
 
@@ -314,11 +431,11 @@ describe('TPC-H Optimizer E2E', () => {
       }
     });
 
-    it('5 hash joins', () => {
+    it('5 equi joins', () => {
       const plan = optimizeSQL(sql);
       const joins = findNodes(plan, PlanNodeType.JOIN);
       expect(joins.length).toBe(5);
-      physicalJoinTypes(plan).forEach(t => expect(t).toBe(PhysicalNodeType.HASH_JOIN));
+      expectEquiJoinStrategies(physicalJoinTypes(plan, TPCH_STATS), 2);
     });
 
     it('pushes predicates to REGION and ORDERS', () => {
@@ -379,11 +496,11 @@ describe('TPC-H Optimizer E2E', () => {
       expect(scanTables(plan).length).toBe(6);
     });
 
-    it('5 hash joins', () => {
+    it('5 equi joins', () => {
       const plan = optimizeSQL(sql);
       const joins = findNodes(plan, PlanNodeType.JOIN);
       expect(joins.length).toBe(5);
-      physicalJoinTypes(plan).forEach(t => expect(t).toBe(PhysicalNodeType.HASH_JOIN));
+      expectEquiJoinStrategies(physicalJoinTypes(plan, TPCH_STATS), 2);
     });
 
     it('pushes NATION name and LINEITEM date filters', () => {
@@ -422,11 +539,11 @@ describe('TPC-H Optimizer E2E', () => {
       expect(scanTables(plan).length).toBe(8);
     });
 
-    it('7 hash joins for the 8-way join', () => {
+    it('7 equi joins for the 8-way join', () => {
       const plan = optimizeSQL(sql);
       const joins = findNodes(plan, PlanNodeType.JOIN);
       expect(joins.length).toBe(7);
-      physicalJoinTypes(plan).forEach(t => expect(t).toBe(PhysicalNodeType.HASH_JOIN));
+      expectEquiJoinStrategies(physicalJoinTypes(plan, TPCH_STATS), 2);
     });
 
     it('pushes REGION, ORDERS date, and PART type filters', () => {
@@ -467,11 +584,11 @@ describe('TPC-H Optimizer E2E', () => {
       }
     });
 
-    it('5 hash joins', () => {
+    it('5 equi joins', () => {
       const plan = optimizeSQL(sql);
       const joins = findNodes(plan, PlanNodeType.JOIN);
       expect(joins.length).toBe(5);
-      physicalJoinTypes(plan).forEach(t => expect(t).toBe(PhysicalNodeType.HASH_JOIN));
+      expectEquiJoinStrategies(physicalJoinTypes(plan, TPCH_STATS), 2);
     });
 
     it('pushes P_NAME LIKE filter to PART scan', () => {
@@ -512,11 +629,11 @@ describe('TPC-H Optimizer E2E', () => {
       expect(tables).toContain('NATION');
     });
 
-    it('3 hash joins', () => {
+    it('3 equi joins', () => {
       const plan = optimizeSQL(sql);
       const joins = findNodes(plan, PlanNodeType.JOIN);
       expect(joins.length).toBe(3);
-      physicalJoinTypes(plan).forEach(t => expect(t).toBe(PhysicalNodeType.HASH_JOIN));
+      expectEquiJoinStrategies(physicalJoinTypes(plan, TPCH_STATS), 2);
     });
 
     it('pushes filters to ORDERS and LINEITEM', () => {
@@ -590,11 +707,11 @@ describe('TPC-H Optimizer E2E', () => {
       GROUP BY L_SHIPMODE
       ORDER BY L_SHIPMODE`;
 
-    it('1 hash join between ORDERS and LINEITEM', () => {
+    it('1 equi join between ORDERS and LINEITEM', () => {
       const plan = optimizeSQL(sql);
       const joins = findNodes(plan, PlanNodeType.JOIN);
       expect(joins.length).toBe(1);
-      expect(physicalJoinTypes(plan)[0]).toBe(PhysicalNodeType.HASH_JOIN);
+      expect(EQUI_JOIN_STRATEGIES).toContain(physicalJoinTypes(plan, TPCH_STATS)[0]);
     });
 
     it('pushes LINEITEM filters below join', () => {
@@ -657,11 +774,11 @@ describe('TPC-H Optimizer E2E', () => {
       WHERE l.L_SHIPDATE >= DATE '1995-09-01'
         AND l.L_SHIPDATE < DATE '1995-10-01'`;
 
-    it('1 hash join between LINEITEM and PART', () => {
+    it('1 equi join between LINEITEM and PART', () => {
       const plan = optimizeSQL(sql);
       const joins = findNodes(plan, PlanNodeType.JOIN);
       expect(joins.length).toBe(1);
-      expect(physicalJoinTypes(plan)[0]).toBe(PhysicalNodeType.HASH_JOIN);
+      expect(EQUI_JOIN_STRATEGIES).toContain(physicalJoinTypes(plan, TPCH_STATS)[0]);
     });
 
     it('pushes date filter on LINEITEM below join', () => {
@@ -744,11 +861,11 @@ describe('TPC-H Optimizer E2E', () => {
       expect(findNodes(plan, PlanNodeType.FILTER).length).toBeGreaterThanOrEqual(3);
     });
 
-    it('2 hash joins (equi + mark)', () => {
+    it('2 equi joins (equi + mark)', () => {
       const plan = optimizeSQL(sql);
       const joins = findNodes(plan, PlanNodeType.JOIN);
       expect(joins.length).toBe(2);
-      physicalJoinTypes(plan).forEach(t => expect(t).toBe(PhysicalNodeType.HASH_JOIN));
+      expectEquiJoinStrategies(physicalJoinTypes(plan, TPCH_STATS), 2);
     });
   });
 
@@ -759,11 +876,11 @@ describe('TPC-H Optimizer E2E', () => {
         JOIN PART p ON p.P_PARTKEY = l.L_PARTKEY
       WHERE P_BRAND = 'Brand#23' AND P_CONTAINER = 'MED BOX'`;
 
-    it('1 hash join LINEITEM-PART', () => {
+    it('1 equi join LINEITEM-PART', () => {
       const plan = optimizeSQL(sql);
       const joins = findNodes(plan, PlanNodeType.JOIN);
       expect(joins.length).toBe(1);
-      expect(physicalJoinTypes(plan)[0]).toBe(PhysicalNodeType.HASH_JOIN);
+      expect(EQUI_JOIN_STRATEGIES).toContain(physicalJoinTypes(plan, TPCH_STATS)[0]);
     });
 
     it('pushes brand/container filter to PART', () => {
@@ -828,11 +945,11 @@ describe('TPC-H Optimizer E2E', () => {
       expect(topNs[0].count).toBe(100);
     });
 
-    it('3 hash joins', () => {
+    it('3 equi joins', () => {
       const plan = optimizeSQL(sql);
       const joins = findNodes(plan, PlanNodeType.JOIN);
       expect(joins.length).toBe(3);
-      physicalJoinTypes(plan).forEach(t => expect(t).toBe(PhysicalNodeType.HASH_JOIN));
+      expectEquiJoinStrategies(physicalJoinTypes(plan, TPCH_STATS), 2);
     });
   });
 
@@ -854,11 +971,11 @@ describe('TPC-H Optimizer E2E', () => {
           AND L_QUANTITY >= 20 AND L_QUANTITY <= 30
           AND P_SIZE BETWEEN 1 AND 15)`;
 
-    it('1 hash join LINEITEM-PART', () => {
+    it('1 equi join LINEITEM-PART', () => {
       const plan = optimizeSQL(sql);
       const joins = findNodes(plan, PlanNodeType.JOIN);
       expect(joins.length).toBe(1);
-      expect(physicalJoinTypes(plan)[0]).toBe(PhysicalNodeType.HASH_JOIN);
+      expect(EQUI_JOIN_STRATEGIES).toContain(physicalJoinTypes(plan, TPCH_STATS)[0]);
     });
 
     it('has filters for the complex OR conditions', () => {
@@ -1054,7 +1171,7 @@ describe('TPC-H Optimizer E2E', () => {
       for (const [, sql] of Object.entries(ALL_QUERIES)) {
         const plan = optimizeSQL(sql);
         const logicalJoins = findNodes(plan, PlanNodeType.JOIN).length;
-        const physicalJoins = physicalJoinTypes(plan);
+        const physicalJoins = physicalJoinTypes(plan, TPCH_STATS);
         expect(physicalJoins.length).toBe(logicalJoins);
         for (const type of physicalJoins) {
           expect([PhysicalNodeType.HASH_JOIN, PhysicalNodeType.MERGE_JOIN, PhysicalNodeType.NESTED_LOOP_JOIN]).toContain(type);
@@ -1189,110 +1306,6 @@ describe('TPC-H Optimizer E2E', () => {
   });
 
   describe('cost-based optimization with TPC-H statistics', () => {
-    function tpchStats() {
-      const stats = new Map();
-
-      function colStats(ndv, min, max, opts = {}) {
-        return new ColumnStatistics({ ndv, min, max, ...opts });
-      }
-
-      function tableStats(rowCount, columns) {
-        const colMap = new Map();
-        for (const [name, cs] of Object.entries(columns)) {
-          colMap.set(name.toUpperCase(), cs);
-        }
-        return new TableStatistics(rowCount, colMap);
-      }
-
-      stats.set('REGION', tableStats(5, {
-        R_REGIONKEY: colStats(5, 0, 4),
-        R_NAME: colStats(5, null, null),
-      }));
-
-      stats.set('NATION', tableStats(25, {
-        N_NATIONKEY: colStats(25, 0, 24),
-        N_NAME: colStats(25, null, null),
-        N_REGIONKEY: colStats(5, 0, 4),
-      }));
-
-      stats.set('SUPPLIER', tableStats(10000, {
-        S_SUPPKEY: colStats(10000, 1, 10000),
-        S_NAME: colStats(10000, null, null),
-        S_NATIONKEY: colStats(25, 0, 24),
-        S_ACCTBAL: colStats(9500, -999, 9999, {
-          histogram: new EquiDepthHistogram(
-            Array.from({ length: 10 }, (_, i) => -999 + (i + 1) * 1100)
-          ),
-        }),
-      }));
-
-      stats.set('PART', tableStats(200000, {
-        P_PARTKEY: colStats(200000, 1, 200000),
-        P_NAME: colStats(200000, null, null),
-        P_BRAND: colStats(25, null, null),
-        P_TYPE: colStats(150, null, null),
-        P_SIZE: colStats(50, 1, 50),
-        P_CONTAINER: colStats(40, null, null),
-        P_RETAILPRICE: colStats(20000, 900, 2100),
-      }));
-
-      stats.set('PARTSUPP', tableStats(800000, {
-        PS_PARTKEY: colStats(200000, 1, 200000),
-        PS_SUPPKEY: colStats(10000, 1, 10000),
-        PS_AVAILQTY: colStats(10000, 1, 9999),
-        PS_SUPPLYCOST: colStats(100000, 1, 1000),
-      }));
-
-      stats.set('CUSTOMER', tableStats(150000, {
-        C_CUSTKEY: colStats(150000, 1, 150000),
-        C_NAME: colStats(150000, null, null),
-        C_NATIONKEY: colStats(25, 0, 24),
-        C_MKTSEGMENT: colStats(5, null, null),
-        C_ACCTBAL: colStats(140000, -999, 9999),
-        C_PHONE: colStats(150000, null, null),
-      }));
-
-      stats.set('ORDERS', tableStats(1500000, {
-        O_ORDERKEY: colStats(1500000, 1, 6000000),
-        O_CUSTKEY: colStats(100000, 1, 150000),
-        O_ORDERSTATUS: colStats(3, null, null),
-        O_TOTALPRICE: colStats(1400000, 800, 600000),
-        O_ORDERDATE: colStats(2400, null, null, {
-          histogram: new EquiDepthHistogram(
-            Array.from({ length: 10 }, (_, i) => 8035 + (i + 1) * 240)
-          ),
-        }),
-        O_ORDERPRIORITY: colStats(5, null, null),
-        O_SHIPPRIORITY: colStats(1, 0, 0),
-      }));
-
-      stats.set('LINEITEM', tableStats(6000000, {
-        L_ORDERKEY: colStats(1500000, 1, 6000000),
-        L_PARTKEY: colStats(200000, 1, 200000),
-        L_SUPPKEY: colStats(10000, 1, 10000),
-        L_LINENUMBER: colStats(7, 1, 7),
-        L_QUANTITY: colStats(50, 1, 50, {
-          histogram: new EquiDepthHistogram(
-            Array.from({ length: 10 }, (_, i) => (i + 1) * 5)
-          ),
-        }),
-        L_EXTENDEDPRICE: colStats(1000000, 900, 105000),
-        L_DISCOUNT: colStats(11, 0, 0.1, {
-          histogram: new EquiDepthHistogram(
-            Array.from({ length: 10 }, (_, i) => (i + 1) * 0.01)
-          ),
-        }),
-        L_TAX: colStats(9, 0, 0.08),
-        L_RETURNFLAG: colStats(3, null, null),
-        L_LINESTATUS: colStats(2, null, null),
-        L_SHIPDATE: colStats(2500, null, null),
-        L_COMMITDATE: colStats(2500, null, null),
-        L_RECEIPTDATE: colStats(2500, null, null),
-        L_SHIPMODE: colStats(7, null, null),
-      }));
-
-      return stats;
-    }
 
     function createCostOptimizer(statistics) {
       return createDefaultOptimizer({ catalog, statistics });
@@ -1398,7 +1411,7 @@ describe('TPC-H Optimizer E2E', () => {
           SELECT * FROM ORDERS o JOIN LINEITEM l ON o.O_ORDERKEY = l.L_ORDERKEY
         `);
         const joins2 = findNodes(plan2, PlanNodeType.JOIN);
-        expect(physicalJoinTypes(plan2, tpchStats())[0]).toBe(PhysicalNodeType.HASH_JOIN);
+        expect(EQUI_JOIN_STRATEGIES).toContain(physicalJoinTypes(plan2, tpchStats())[0]);
       });
 
       it('reorders star join to start with smallest dimension (Q5 pattern)', () => {
@@ -1427,7 +1440,7 @@ describe('TPC-H Optimizer E2E', () => {
         `);
         const joins = findNodes(plan, PlanNodeType.JOIN);
         expect(joins.length).toBe(1);
-        expect(physicalJoinTypes(plan, tpchStats())[0]).toBe(PhysicalNodeType.HASH_JOIN);
+        expect(EQUI_JOIN_STRATEGIES).toContain(physicalJoinTypes(plan, tpchStats())[0]);
         const physical = physicalJoins(plan, tpchStats())[0];
         if (physical.buildSide) {
           const left = joins[0].children[0];

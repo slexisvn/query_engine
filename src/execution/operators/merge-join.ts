@@ -38,12 +38,21 @@ function isNullJoinKey(key: JoinKey): boolean {
 }
 
 export function mergeJoinSortKeys(keyExtractors: CompiledExpr[]): SortKey[] {
+  const keys: SortKey[] = keyExtractors.map((extract) => ({ eval: extract, direction: 'ASC', nullsFirst: true }));
+  if (keyExtractors.length === 1) return keys;
+
   const nullMarker: SortKey = {
-    eval: (chunk, rowIdx) => (isNullJoinKey(keyExtractors.map((extract) => extract(chunk, rowIdx))) ? 0 : 1),
+    eval: (chunk, rowIdx) => {
+      for (const extract of keyExtractors) {
+        const value = extract(chunk, rowIdx);
+        if (value === null || value === undefined) return 0;
+      }
+      return 1;
+    },
     direction: 'ASC',
     nullsFirst: true,
   };
-  return [nullMarker, ...keyExtractors.map((extract) => ({ eval: extract, direction: 'ASC', nullsFirst: true }))];
+  return [nullMarker, ...keys];
 }
 
 function compareScalars(a: EvalValue, b: EvalValue): number {
@@ -119,13 +128,41 @@ class SortedRowCursor {
   }
 }
 
-async function collectGroup(cursor: SortedRowCursor, key: JoinKey): Promise<JoinRow[]> {
-  const group: JoinRow[] = [];
+async function collectGroup(cursor: SortedRowCursor, key: JoinKey, group: JoinRow[]): Promise<JoinRow[]> {
+  group.length = 0;
   while (cursor.current && !isNullJoinKey(cursor.current.key) && compareJoinKeys(cursor.current.key, key) === 0) {
     group.push(cursor.current);
     await cursor.advance();
   }
   return group;
+}
+
+function concatRows(left: ColumnValue[], right: ColumnValue[]): ColumnValue[] {
+  const combined = new Array<ColumnValue>(left.length + right.length);
+  for (let i = 0; i < left.length; i++) combined[i] = left[i];
+  for (let i = 0; i < right.length; i++) combined[left.length + i] = right[i];
+  return combined;
+}
+
+function appendValue(row: ColumnValue[], value: ColumnValue): ColumnValue[] {
+  const combined = new Array<ColumnValue>(row.length + 1);
+  for (let i = 0; i < row.length; i++) combined[i] = row[i];
+  combined[row.length] = value;
+  return combined;
+}
+
+function rowWithNullsAfter(row: ColumnValue[], padding: number): ColumnValue[] {
+  const combined = new Array<ColumnValue>(row.length + padding);
+  for (let i = 0; i < row.length; i++) combined[i] = row[i];
+  for (let i = 0; i < padding; i++) combined[row.length + i] = null;
+  return combined;
+}
+
+function rowWithNullsBefore(row: ColumnValue[], padding: number): ColumnValue[] {
+  const combined = new Array<ColumnValue>(padding + row.length);
+  for (let i = 0; i < padding; i++) combined[i] = null;
+  for (let i = 0; i < row.length; i++) combined[padding + i] = row[i];
+  return combined;
 }
 
 export class MergeJoinOperator {
@@ -139,6 +176,8 @@ export class MergeJoinOperator {
   conditionEvaluator: CompiledExpr | null;
 
   private output: ColumnValue[][];
+  private readonly buildGroupScratch: JoinRow[] = [];
+  private readonly probeGroupScratch: JoinRow[] = [];
   private adapter: RowAdapter | null;
   private evaluateCondition: RowEvaluator | null;
   private buildHasNullKey: boolean;
@@ -228,8 +267,8 @@ export class MergeJoinOperator {
         await probe.advance();
       } else {
         const groupKey = build.current.key;
-        const buildGroup = await collectGroup(build, groupKey);
-        const probeGroup = await collectGroup(probe, groupKey);
+        const buildGroup = await collectGroup(build, groupKey, this.buildGroupScratch);
+        const probeGroup = await collectGroup(probe, groupKey, this.probeGroupScratch);
         this.emitGroup(buildGroup, probeGroup);
       }
 
@@ -260,7 +299,7 @@ export class MergeJoinOperator {
         if (this.joinType === JoinType.SEMI && matched) this.output.push(probeRow.row);
         else if (this.joinType === JoinType.ANTI && !matched) this.output.push(probeRow.row);
         else if (this.emitsMark) {
-          this.output.push([...probeRow.row, matched ? true : (sawUnknown ? null : this.unmatchedMark)]);
+          this.output.push(appendValue(probeRow.row, matched ? true : (sawUnknown ? null : this.unmatchedMark)));
         }
       }
       return;
@@ -269,7 +308,7 @@ export class MergeJoinOperator {
     if (this.emitsSingleMatch) {
       for (const probeRow of probeGroup) {
         const match = this.firstMatch(buildGroup, probeRow).row;
-        this.output.push(match ? [...match.row, ...probeRow.row] : this.probeWithNullBuild(probeRow));
+        this.output.push(match ? concatRows(match.row, probeRow.row) : this.probeWithNullBuild(probeRow));
       }
       return;
     }
@@ -280,7 +319,7 @@ export class MergeJoinOperator {
       for (const probeRow of probeGroup) {
         this.bindProbe(probeRow);
         if (this.boundConditionValue() !== true) continue;
-        this.output.push([...buildRow.row, ...probeRow.row]);
+        this.output.push(concatRows(buildRow.row, probeRow.row));
         matchedAny = true;
       }
       if (!matchedAny) this.emitUnmatchedBuild(buildRow);
@@ -327,7 +366,7 @@ export class MergeJoinOperator {
 
   emitUnmatchedBuild(buildRow: JoinRow): void {
     if (!this.keepsUnmatchedBuild) return;
-    this.output.push([...buildRow.row, ...new Array<ColumnValue>(this.probeColCount).fill(null)]);
+    this.output.push(rowWithNullsAfter(buildRow.row, this.probeColCount));
   }
 
   emitUnmatchedProbe(probeRow: JoinRow, mark: ColumnValue): void {
@@ -336,7 +375,7 @@ export class MergeJoinOperator {
       return;
     }
     if (this.emitsMark) {
-      this.output.push([...probeRow.row, mark]);
+      this.output.push(appendValue(probeRow.row, mark));
       return;
     }
     if (this.joinType === JoinType.FULL || this.emitsSingleMatch) {
@@ -345,7 +384,7 @@ export class MergeJoinOperator {
   }
 
   probeWithNullBuild(probeRow: JoinRow): ColumnValue[] {
-    return [...new Array<ColumnValue>(this.buildColCount).fill(null), ...probeRow.row];
+    return rowWithNullsBefore(probeRow.row, this.buildColCount);
   }
 
   *drain(): Generator<DataChunk> {

@@ -780,3 +780,59 @@ describe('MergeJoinOperator memory safety', () => {
     for (const chunk of chunks) expect(chunk.size).toBeLessThanOrEqual(Config.flushBatchSize);
   });
 });
+
+describe('mergeJoinSortKeys', () => {
+  const chunkWithNulls = () => makeChunk([
+    { type: DataType.INT32, values: [5, null, 1] },
+    { type: DataType.INT32, values: [7, 8, null] },
+  ]);
+
+  it('emits a single sort key for a single join key so radix sorting stays reachable', () => {
+    const keys = mergeJoinSortKeys([keyAt(0)]);
+
+    expect(keys).toHaveLength(1);
+    expect(keys[0].direction).toBe('ASC');
+    expect(keys[0].nullsFirst).toBe(true);
+  });
+
+  it('leads null join keys so the merge loop can peel them off the front', async () => {
+    const chunk = chunkWithNulls();
+    const sortOp = new SortOperator(mergeJoinSortKeys([keyAt(0)]), null, 0, new SpillManager(new MemoryStorage()));
+    await sortOp.consume(chunk);
+
+    const ordered = [];
+    for await (const sorted of sortOp.stream()) {
+      for (let row = 0; row < sorted.size; row++) ordered.push(sorted.getValue(row, 0));
+    }
+
+    expect(ordered).toEqual([null, 1, 5]);
+  });
+
+  it('prepends a null marker for composite keys so a null in any part leads', async () => {
+    const keys = mergeJoinSortKeys([keyAt(0), keyAt(1)]);
+    expect(keys).toHaveLength(3);
+
+    const chunk = chunkWithNulls();
+    const sortOp = new SortOperator(keys, null, 0, new SpillManager(new MemoryStorage()));
+    await sortOp.consume(chunk);
+
+    const ordered = [];
+    for await (const sorted of sortOp.stream()) {
+      for (let row = 0; row < sorted.size; row++) {
+        ordered.push([sorted.getValue(row, 0), sorted.getValue(row, 1)]);
+      }
+    }
+
+    expect(ordered.slice(0, 2).every(([a, b]) => a === null || b === null)).toBe(true);
+    expect(ordered[2]).toEqual([5, 7]);
+  });
+
+  it('evaluates the composite null marker without allocating a key array per row', () => {
+    const marker = mergeJoinSortKeys([keyAt(0), keyAt(1)])[0];
+    const chunk = chunkWithNulls();
+
+    expect(marker.eval(chunk, 0)).toBe(1);
+    expect(marker.eval(chunk, 1)).toBe(0);
+    expect(marker.eval(chunk, 2)).toBe(0);
+  });
+});
