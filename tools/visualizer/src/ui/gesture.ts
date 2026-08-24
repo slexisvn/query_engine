@@ -1,5 +1,5 @@
 export const MIN_ZOOM = 0.2;
-export const MAX_ZOOM = 3;
+export const MAX_ZOOM = 16;
 
 export interface Point {
   x: number;

@@ -117,7 +117,7 @@ export function PlanGraph({ frame, t, spotlight, legend, caption, onSelect }: Pl
 
   const onWheel = useCallback((event: React.WheelEvent<SVGSVGElement>) => {
     const at = toCanvasSpace(event.currentTarget, event);
-    setViewport(current => zoomAbout(current, 1 - event.deltaY * ZOOM_WHEEL_STEP, at));
+    setViewport(current => zoomAbout(current, Math.exp(-event.deltaY * ZOOM_WHEEL_STEP), at));
   }, []);
 
   const onPointerDown = useCallback((event: React.PointerEvent<SVGSVGElement>) => {
