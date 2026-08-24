@@ -1,9 +1,11 @@
-import type { LogicalPlanNode, PlanNodeType } from '../planner/logical-plan.js';
+import { ExchangeType, type LogicalPlanNode, type PlanNodeType } from '../planner/logical-plan.js';
 import type { DataChunk } from '../storage/chunk.js';
 import type { ColumnValue, DataType } from '../storage/data-type.js';
 import type { BoundExpr } from '../binder/expression-binder.js';
 import type { ExecSchema, ExecColumn } from '../execution/execution-types.js';
 import type { FragmentSpec, JoinSpec } from '../execution/fragment-spec.js';
+
+export { ExchangeType };
 
 export type NodeId = string;
 export type ChannelId = string;
@@ -33,13 +35,6 @@ export enum DistributionStrategy {
   BROADCAST_LEFT = 'broadcast_left',
   BROADCAST_RIGHT = 'broadcast_right',
   SHUFFLE = 'shuffle',
-}
-
-export enum ExchangeType {
-  HASH_SHUFFLE = 'hash_shuffle',
-  BROADCAST = 'broadcast',
-  GATHER = 'gather',
-  PASSTHROUGH = 'passthrough',
 }
 
 export enum FragmentState {

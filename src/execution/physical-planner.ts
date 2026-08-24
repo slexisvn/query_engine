@@ -122,9 +122,11 @@ export class PhysicalPlanner {
   }
 
   operatorCost(node: LogicalPlanNode, children: PhysicalPlanNode[], costType: PlanNodeType = node.type): number {
+    const cost = descriptorOf(costType).cost;
+    if (cost === null) throw new Error(`No cost rule for plan node: ${costType}`);
     const cardinality = cardinalityOf(node);
-    const inputCardinality = children[0]?.cardinality ?? cardinality;
-    return descriptorOf(costType).cost(this.costModel, node, inputCardinality, cardinality);
+    const inputCardinalities = children.length > 0 ? children.map(child => child.cardinality) : [cardinality];
+    return cost(this.costModel, node, inputCardinalities, cardinality);
   }
 
   planJoin(node: LogicalJoinNode, children: PhysicalPlanNode[]): PhysicalPlanNode {

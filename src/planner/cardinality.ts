@@ -1,6 +1,11 @@
 import { BoundExprKind, type BoundExpr, type BoundColumnRefNode, type BoundLiteralNode, type BoundBinaryNode, type BoundBetweenNode, type BoundLikeNode, type BoundInListNode, type BoundIsNullNode, type BoundExistsNode } from '../binder/expression-binder.js';
 import type { BoundQuery } from '../binder/binder.js';
-import { PlanNodeType, JoinType, type LogicalPlanNode } from './logical-plan.js';
+import {
+  PlanNodeType, JoinType, SetOpType,
+  type LogicalPlanNode, type LogicalAggregateNode, type LogicalLimitNode, type LogicalTopNNode,
+  type LogicalFilterNode, type LogicalJoinNode, type LogicalScanNode, type LogicalSetOpNode,
+  type LogicalSortNode, type LogicalMergeExchangeNode, type LogicalExchangeReceiveNode,
+} from './logical-plan.js';
 import { createLogicalPlan } from './logical-planner.js';
 import { toNumericValue } from '../storage/data-type.js';
 import { Config } from '../config.js';
@@ -35,6 +40,77 @@ const JOIN_CARDINALITY_RULES: Record<JoinType, JoinCardinalityRule> = {
   [JoinType.SINGLE]: (_e, l) => l,
 };
 
+type SetOpCombineRule = (leftCard: number, rightCard: number) => number;
+
+const SET_OP_COMBINE_RULES: Record<SetOpType, SetOpCombineRule> = {
+  [SetOpType.UNION]: (left, right) => left + right,
+  [SetOpType.INTERSECT]: (left, right) => Math.min(left, right),
+  [SetOpType.EXCEPT]: (left) => left,
+};
+
+export type CardinalityRule = (
+  estimator: DefaultCardinalityEstimator,
+  node: LogicalPlanNode,
+  inputCardinalities: readonly number[],
+) => number;
+
+function cappedBy(limit: number | null | undefined, card: number): number {
+  return limit ? Math.min(limit, card) : card;
+}
+
+function distinctRows(card: number): number {
+  return Math.max(1, Math.round(Math.sqrt(card)));
+}
+
+const scanRule: CardinalityRule = (estimator, node) => estimator.estimateScan((node as LogicalScanNode).table);
+
+const aggregateRule: CardinalityRule = (estimator, node, inputs) => {
+  const groupBy = (node as LogicalAggregateNode).groupBy ?? [];
+  return estimator.estimateAggregate(inputs[0], groupBy.length, groupBy);
+};
+
+const countedRule: CardinalityRule = (_estimator, node, inputs) =>
+  cappedBy((node as LogicalLimitNode | LogicalTopNNode).count, inputs[0]);
+
+const CARDINALITY_RULES: Partial<Record<PlanNodeType, CardinalityRule>> = {
+  [PlanNodeType.SCAN]: scanRule,
+  [PlanNodeType.INDEX_SCAN]: scanRule,
+  [PlanNodeType.FILTER]: (estimator, node, inputs) =>
+    estimator.estimateFilter(inputs[0], (node as LogicalFilterNode).condition),
+  [PlanNodeType.JOIN]: (estimator, node, inputs) => {
+    const join = node as LogicalJoinNode;
+    return estimator.estimateJoinOf(join.joinType, inputs[0], inputs[1], join.condition);
+  },
+  [PlanNodeType.AGGREGATE]: aggregateRule,
+  [PlanNodeType.PARTIAL_AGGREGATE]: aggregateRule,
+  [PlanNodeType.FINAL_AGGREGATE]: aggregateRule,
+  [PlanNodeType.LIMIT]: countedRule,
+  [PlanNodeType.TOP_N]: countedRule,
+  [PlanNodeType.SORT]: (_estimator, node, inputs) => cappedBy((node as LogicalSortNode).limit, inputs[0]),
+  [PlanNodeType.MERGE_EXCHANGE]: (_estimator, node, inputs) => cappedBy((node as LogicalMergeExchangeNode).limit, inputs[0]),
+  [PlanNodeType.DISTINCT]: (_estimator, _node, inputs) => distinctRows(inputs[0]),
+  [PlanNodeType.SET_OP]: (_estimator, node, inputs) => {
+    const setOp = node as LogicalSetOpNode;
+    const combined = SET_OP_COMBINE_RULES[setOp.op](inputs[0], inputs[1]);
+    return setOp.all ? combined : Math.min(combined, Math.max(inputs[0], inputs[1]));
+  },
+  [PlanNodeType.CTE_ANCHOR]: (_estimator, _node, inputs) => inputs[1],
+  [PlanNodeType.EXCHANGE_RECEIVE]: (_estimator, node) =>
+    (node as LogicalExchangeReceiveNode).sourceCardinality ?? Config.defaultCardinality,
+  [PlanNodeType.SINGLE_ROW]: () => 1,
+  [PlanNodeType.EMPTY]: () => 0,
+};
+
+export function estimateNodeCardinality(
+  estimator: DefaultCardinalityEstimator,
+  node: LogicalPlanNode,
+  inputCardinalities: readonly number[],
+): number {
+  const rule = CARDINALITY_RULES[node.type];
+  if (rule) return rule(estimator, node, inputCardinalities);
+  return inputCardinalities.length > 0 ? inputCardinalities[0] : Config.defaultCardinality;
+}
+
 export class DefaultCardinalityEstimator {
   stats: StatsProvider;
   subqueryCardinalities: WeakMap<BoundQuery, number>;
@@ -51,37 +127,8 @@ export class DefaultCardinalityEstimator {
 
   estimatePlan(node?: LogicalPlanNode | null): number {
     if (!node) return Config.defaultCardinality;
-
-    switch (node.type) {
-      case PlanNodeType.SCAN:
-        return this.estimateScan(node.table);
-      case PlanNodeType.FILTER:
-        return this.estimateFilter(this.estimatePlan(node.children[0]), node.condition);
-      case PlanNodeType.PROJECT:
-      case PlanNodeType.SORT:
-      case PlanNodeType.DISTINCT:
-      case PlanNodeType.MATERIALIZE:
-        return this.estimatePlan(node.children?.[0]);
-      case PlanNodeType.LIMIT: {
-        const childCard = this.estimatePlan(node.children?.[0]);
-        return Math.min(node.count || childCard, childCard);
-      }
-      case PlanNodeType.JOIN:
-        return this.estimateJoinOf(
-          node.joinType,
-          this.estimatePlan(node.children[0]),
-          this.estimatePlan(node.children[1]),
-          node.condition,
-        );
-      case PlanNodeType.AGGREGATE:
-      case PlanNodeType.PARTIAL_AGGREGATE:
-      case PlanNodeType.FINAL_AGGREGATE:
-        return this.estimateAggregate(this.estimatePlan(node.children[0]), node.groupBy?.length || 0, node.groupBy);
-      case PlanNodeType.EMPTY:
-        return 0;
-      default:
-        return node.children?.length ? this.estimatePlan(node.children[0]) : Config.defaultCardinality;
-    }
+    const inputs = (node.children ?? []).map(child => this.estimatePlan(child));
+    return estimateNodeCardinality(this, node, inputs);
   }
 
   estimateFilter(inputCard: number, predicate: BoundExpr | null): number {

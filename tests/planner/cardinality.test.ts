@@ -1,7 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { DefaultCardinalityEstimator } from '../../src/planner/cardinality.js';
 import { BoundExprKind } from '../../src/binder/expression-binder.js';
-import { PlanNodeType, JoinType } from '../../src/planner/logical-plan.js';
+import {
+  PlanNodeType, JoinType, SetOpType, SubqueryType,
+  LogicalScan, LogicalIndexScan, LogicalFilter, LogicalProject, LogicalJoin, LogicalAggregate,
+  LogicalPartialAggregate, LogicalFinalAggregate, LogicalSort, LogicalTopN, LogicalLimit,
+  LogicalDistinct, LogicalSetOp, LogicalCTEScan, LogicalCTEAnchor, LogicalDependentJoin,
+  LogicalMaterialize, LogicalWindow, LogicalExchange, LogicalMergeExchange,
+  LogicalExchangeReceive, LogicalSingleRow,
+} from '../../src/planner/logical-plan.js';
+import { PlanProperties } from '../../src/optimizer/passes/plan-properties.js';
 import { EquiDepthHistogram, createMcv } from '../../src/catalog/statistics.js';
 import { Binder } from '../../src/binder/binder.js';
 import { Catalog } from '../../src/catalog/catalog.js';
@@ -86,15 +94,25 @@ describe('DefaultCardinalityEstimator', () => {
       expect(est.estimatePlan(plan)).toBe(3);
     });
 
-    it('handles PROJECT/SORT/DISTINCT as pass-through', () => {
+    it('handles PROJECT/SORT as pass-through', () => {
       const est = new DefaultCardinalityEstimator(makeStats());
-      for (const type of [PlanNodeType.PROJECT, PlanNodeType.SORT, PlanNodeType.DISTINCT]) {
+      for (const type of [PlanNodeType.PROJECT, PlanNodeType.SORT]) {
         const plan = {
           type,
           children: [{ type: PlanNodeType.SCAN, table: 'orders' }],
         };
         expect(est.estimatePlan(plan)).toBe(10000);
       }
+    });
+
+    it('shrinks a DISTINCT below its input', () => {
+      const est = new DefaultCardinalityEstimator(makeStats());
+      const plan = {
+        type: PlanNodeType.DISTINCT,
+        children: [{ type: PlanNodeType.SCAN, table: 'orders' }],
+      };
+
+      expect(est.estimatePlan(plan)).toBe(100);
     });
 
     it('handles EMPTY node', () => {
@@ -741,6 +759,124 @@ describe('DefaultCardinalityEstimator', () => {
       const est = new DefaultCardinalityEstimator(new Map());
       const pred = makeBinary(makeColRef('A', 'id'), '=', makeLiteral(5));
       expect(est.extractEquiPredicates(pred)).toHaveLength(0);
+    });
+  });
+});
+
+const ORDERS_COLUMNS = ['ID', 'STATUS', 'AMOUNT'];
+
+function scanNode() {
+  return LogicalScan('ORDERS', ORDERS_COLUMNS, 'ORDERS');
+}
+
+function planFixtureFor(type) {
+  const key = { expr: makeColRef('ORDERS', 'ID') };
+  const window = { kind: BoundExprKind.WINDOW, name: 'ROW_NUMBER', args: [], partitionBy: [], orderBy: [key], frame: null };
+
+  switch (type) {
+    case PlanNodeType.SCAN: return scanNode();
+    case PlanNodeType.INDEX_SCAN:
+      return LogicalIndexScan('ORDERS', 'ORDERS', 'ORDERS_ID', 'ID', 'point', 1, null, null, true, true, ORDERS_COLUMNS);
+    case PlanNodeType.FILTER:
+      return LogicalFilter(makeBinary(makeColRef('ORDERS', 'ID'), '=', makeLiteral(7)), scanNode());
+    case PlanNodeType.PROJECT: return LogicalProject([makeColRef('ORDERS', 'ID')], scanNode());
+    case PlanNodeType.JOIN:
+      return LogicalJoin(JoinType.INNER, makeBinary(makeColRef('ORDERS', 'ID'), '=', makeColRef('ORDERS', 'ID')), scanNode(), scanNode());
+    case PlanNodeType.AGGREGATE: return LogicalAggregate([makeColRef('ORDERS', 'STATUS')], [], scanNode());
+    case PlanNodeType.PARTIAL_AGGREGATE: return LogicalPartialAggregate([makeColRef('ORDERS', 'STATUS')], [], scanNode());
+    case PlanNodeType.FINAL_AGGREGATE: return LogicalFinalAggregate([makeColRef('ORDERS', 'STATUS')], [], [], scanNode());
+    case PlanNodeType.SORT: return LogicalSort([key], scanNode());
+    case PlanNodeType.TOP_N: return LogicalTopN([key], 25, 0, scanNode());
+    case PlanNodeType.LIMIT: return LogicalLimit(25, 0, scanNode());
+    case PlanNodeType.DISTINCT: return LogicalDistinct(scanNode());
+    case PlanNodeType.SET_OP: return LogicalSetOp(SetOpType.UNION, scanNode(), scanNode(), true);
+    case PlanNodeType.CTE_SCAN: return LogicalCTEScan('C', 1);
+    case PlanNodeType.CTE_ANCHOR: return LogicalCTEAnchor('C', 1, scanNode(), LogicalLimit(25, 0, scanNode()));
+    case PlanNodeType.DEPENDENT_JOIN:
+      return LogicalDependentJoin(scanNode(), scanNode(), [], SubqueryType.EXISTS, null);
+    case PlanNodeType.MATERIALIZE: return LogicalMaterialize(scanNode());
+    case PlanNodeType.EMPTY: return { type: PlanNodeType.EMPTY, children: [scanNode()] };
+    case PlanNodeType.WINDOW: return LogicalWindow([window], scanNode());
+    case PlanNodeType.EXCHANGE: return LogicalExchange('hash_shuffle', [], 8, scanNode());
+    case PlanNodeType.MERGE_EXCHANGE: return LogicalMergeExchange([key], 25, scanNode());
+    case PlanNodeType.EXCHANGE_RECEIVE: return LogicalExchangeReceive([1]);
+    case PlanNodeType.SINGLE_ROW: return LogicalSingleRow();
+    default: throw new Error(`No cardinality fixture for ${type}`);
+  }
+}
+
+describe('cardinality estimation agrees across the estimators that use it', () => {
+  const stats = makeStats();
+
+  it('gives the same answer whether a plan is walked or annotated, for every node type', () => {
+    const disagreed = [];
+
+    for (const type of Object.values(PlanNodeType)) {
+      const plan = planFixtureFor(type);
+      const walked = new DefaultCardinalityEstimator(stats).estimatePlan(plan);
+      const annotated = new PlanProperties(stats).apply(plan)._cardinality;
+
+      if (walked !== annotated) disagreed.push({ type, walked, annotated });
+    }
+
+    expect(disagreed).toEqual([]);
+  });
+
+  describe('nodes whose row count is not their first child', () => {
+    const cardinalityOf = (plan) => new DefaultCardinalityEstimator(stats).estimatePlan(plan);
+
+    it('emits exactly one row from a FROM-less select', () => {
+      expect(cardinalityOf(LogicalSingleRow())).toBe(1);
+    });
+
+    it('emits nothing from a subtree the optimizer proved empty', () => {
+      expect(cardinalityOf({ type: PlanNodeType.EMPTY, children: [scanNode()] })).toBe(0);
+    });
+
+    it('emits the consumer rows of a CTE anchor, not the producer rows', () => {
+      const anchor = LogicalCTEAnchor('C', 1, scanNode(), LogicalLimit(25, 0, scanNode()));
+
+      expect(cardinalityOf(anchor)).toBe(25);
+    });
+
+    it('adds both branches of a UNION ALL', () => {
+      expect(cardinalityOf(LogicalSetOp(SetOpType.UNION, scanNode(), scanNode(), true))).toBe(20000);
+    });
+
+    it('keeps a deduplicating UNION at or below the sum of its branches', () => {
+      const deduped = cardinalityOf(LogicalSetOp(SetOpType.UNION, scanNode(), scanNode(), false));
+
+      expect(deduped).toBe(10000);
+    });
+
+    it('caps an INTERSECT at its smaller branch', () => {
+      const small = LogicalLimit(40, 0, scanNode());
+      const intersect = LogicalSetOp(SetOpType.INTERSECT, scanNode(), small, false);
+
+      expect(cardinalityOf(intersect)).toBe(40);
+    });
+
+    it('caps a merge exchange at the limit it pushes down', () => {
+      expect(cardinalityOf(LogicalMergeExchange([{ expr: makeColRef('ORDERS', 'ID') }], 25, scanNode()))).toBe(25);
+    });
+  });
+
+  describe('a split aggregate groups on both halves', () => {
+    const cardinalityOf = (plan) => new DefaultCardinalityEstimator(stats).estimatePlan(plan);
+    const groupBy = [makeColRef('ORDERS', 'STATUS')];
+
+    it('reduces rows through a partial aggregate exactly as a whole one does', () => {
+      const whole = cardinalityOf(LogicalAggregate(groupBy, [], scanNode()));
+      const partial = cardinalityOf(LogicalPartialAggregate(groupBy, [], scanNode()));
+
+      expect(partial).toBe(whole);
+      expect(partial).toBeLessThan(cardinalityOf(scanNode()));
+    });
+
+    it('does not grow rows back through the final aggregate', () => {
+      const split = LogicalFinalAggregate(groupBy, [], [], LogicalPartialAggregate(groupBy, [], scanNode()));
+
+      expect(cardinalityOf(split)).toBe(cardinalityOf(LogicalAggregate(groupBy, [], scanNode())));
     });
   });
 });

@@ -107,6 +107,12 @@ type ExchangePlacementCtorArg = ConstructorParameters<typeof ExchangePlacement>[
 type ExchangePlacementStatsArg = ConstructorParameters<typeof ExchangePlacement>[1];
 type PrunerPartitionMapArg = Parameters<PartitionPruner['prune']>[2];
 
+function receivedRows(source: LogicalPlanNode, recipients: number = 1): number | undefined {
+  const cardinality = source._cardinality;
+  if (cardinality === undefined) return undefined;
+  return Math.ceil(cardinality / Math.max(1, recipients));
+}
+
 function exchangeInputsOf(fragmentIds: FragmentId[], exchangeType: ExchangeType): ExchangeInput[] {
   return fragmentIds.map(sourceFragmentId => ({ sourceFragmentId, exchangeType }));
 }
@@ -178,13 +184,13 @@ export class DistributedPlanner {
             targetNodes: [nodeId],
             exchangeInputs: [],
             outputPartitioning: { exchangeType: 'gather', partitionCount: workerNodes.length } as OutputPartitioningLocal as OutputPartitioning,
-            estimatedCardinality: Math.ceil((node._cardinality || 0) / workerNodes.length),
+            estimatedCardinality: receivedRows(node, workerNodes.length) ?? 0,
           });
           this._fragments.push(wf);
           fragmentIds.push(wf.fragmentId);
           exchangeInputs.push({ sourceFragmentId: wf.fragmentId, exchangeType: ExchangeType.GATHER });
         }
-        return { plan: LogicalExchangeReceive(fragmentIds, this._joinOutputSchema(node) as ColumnInfo[]), exchangeInputs };
+        return { plan: LogicalExchangeReceive(fragmentIds, this._joinOutputSchema(node) as ColumnInfo[], receivedRows(node)), exchangeInputs };
       }
     }
 
@@ -202,13 +208,13 @@ export class DistributedPlanner {
           targetNodes: [nodeId],
           exchangeInputs: [],
           outputPartitioning: { exchangeType: 'gather', partitionCount: workerNodes.length } as OutputPartitioningLocal as OutputPartitioning,
-          estimatedCardinality: Math.ceil((node._cardinality || 0) / workerNodes.length),
+          estimatedCardinality: receivedRows(node, workerNodes.length) ?? 0,
         });
         this._fragments.push(wf);
         fragmentIds.push(wf.fragmentId);
         exchangeInputs.push({ sourceFragmentId: wf.fragmentId, exchangeType: ExchangeType.GATHER });
       }
-      return { plan: LogicalExchangeReceive(fragmentIds, this._deriveSubtreeSchema(node) as ColumnInfo[]), exchangeInputs };
+      return { plan: LogicalExchangeReceive(fragmentIds, this._deriveSubtreeSchema(node) as ColumnInfo[], receivedRows(node)), exchangeInputs };
     }
 
     const children = getChildren(node);
@@ -268,14 +274,14 @@ export class DistributedPlanner {
     const broadcastIds = this._spawnFragments(smallChild, smallWorkers, [],
       () => ({ exchangeType: 'broadcast', targetNodes: bigWorkers } as OutputPartitioningLocal as OutputPartitioning));
     const broadcastInputs = exchangeInputsOf(broadcastIds, ExchangeType.BROADCAST);
-    const recv = LogicalExchangeReceive(broadcastIds, this._deriveSubtreeSchema(smallChild) as ColumnInfo[]);
+    const recv = LogicalExchangeReceive(broadcastIds, this._deriveSubtreeSchema(smallChild) as ColumnInfo[], receivedRows(smallChild));
     const joinPlan = setChildren(node, broadcastLeft ? [recv, bigChild] : [bigChild, recv]);
 
     const joinIds = this._spawnFragments(joinPlan, bigWorkers, broadcastInputs,
       () => ({ exchangeType: 'gather', partitionCount: bigWorkers.length } as OutputPartitioningLocal as OutputPartitioning));
 
     return {
-      plan: LogicalExchangeReceive(joinIds, this._joinOutputSchema(node) as ColumnInfo[]),
+      plan: LogicalExchangeReceive(joinIds, this._joinOutputSchema(node) as ColumnInfo[], receivedRows(node)),
       exchangeInputs: exchangeInputsOf(joinIds, ExchangeType.GATHER),
     };
   }
@@ -336,15 +342,15 @@ export class DistributedPlanner {
     const leftInputs = exchangeInputsOf(leftFragIds, ExchangeType.HASH_SHUFFLE);
     const rightInputs = exchangeInputsOf(rightFragIds, ExchangeType.HASH_SHUFFLE);
     const joinPlan = setChildren(node, [
-      LogicalExchangeReceive(leftFragIds, leftSchema as ColumnInfo[]),
-      LogicalExchangeReceive(rightFragIds, rightSchema as ColumnInfo[]),
+      LogicalExchangeReceive(leftFragIds, leftSchema as ColumnInfo[], receivedRows(leftChild, joinWorkerCount)),
+      LogicalExchangeReceive(rightFragIds, rightSchema as ColumnInfo[], receivedRows(rightChild, joinWorkerCount)),
     ]);
 
     const joinIds = this._spawnFragments(joinPlan, joinWorkers, [...leftInputs, ...rightInputs],
       () => ({ exchangeType: 'gather', partitionCount: joinWorkerCount } as OutputPartitioningLocal as OutputPartitioning));
 
     return {
-      plan: LogicalExchangeReceive(joinIds, this._joinOutputSchema(node) as ColumnInfo[]),
+      plan: LogicalExchangeReceive(joinIds, this._joinOutputSchema(node) as ColumnInfo[], receivedRows(node)),
       exchangeInputs: exchangeInputsOf(joinIds, ExchangeType.GATHER),
     };
   }
@@ -600,7 +606,7 @@ export class DistributedPlanner {
           exchangeType: node.exchangeType || 'gather',
           partitionCount: workerNodes.length,
         } as OutputPartitioningLocal as OutputPartitioning,
-        estimatedCardinality: Math.ceil((node._cardinality || 0) / workerNodes.length),
+        estimatedCardinality: receivedRows(node, workerNodes.length) ?? 0,
       });
       this._fragments.push(workerFragment);
       fragmentIds.push(workerFragment.fragmentId);
@@ -611,7 +617,7 @@ export class DistributedPlanner {
       });
     }
 
-    const receiveNode = LogicalExchangeReceive(fragmentIds, this._deriveSubtreeSchema(workerPlan) as ColumnInfo[]);
+    const receiveNode = LogicalExchangeReceive(fragmentIds, this._deriveSubtreeSchema(workerPlan) as ColumnInfo[], receivedRows(node) ?? receivedRows(workerPlan));
 
     return { plan: receiveNode, exchangeInputs, workerNodes: [] };
   }

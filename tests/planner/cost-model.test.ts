@@ -54,9 +54,64 @@ describe('DefaultCostModel', () => {
     });
   });
 
+  describe('bufferCost', () => {
+    it('costs more per row than reading those rows without holding them', () => {
+      expect(model.bufferCost(1000)).toBeGreaterThan(model.scanCost(1000));
+    });
+
+    it('scales linearly until the resident set outgrows memory', () => {
+      const model = new DefaultCostModel({ spillThreshold: 1e9 });
+
+      expect(model.bufferCost(2000)).toBeCloseTo(model.bufferCost(1000) * 2, 5);
+    });
+
+    it('charges the spill penalty once the buffer outgrows memory', () => {
+      const spilling = new DefaultCostModel({ spillThreshold: 100 });
+      const resident = new DefaultCostModel({ spillThreshold: 1e9 });
+
+      expect(spilling.bufferCost(10000)).toBeGreaterThan(resident.bufferCost(10000));
+    });
+  });
+
+  describe('rowCopyCost', () => {
+    it('costs more per row than reading a row in place', () => {
+      expect(model.rowCopyCost(1000)).toBeGreaterThan(model.scanCost(1000));
+    });
+
+    it('scales linearly with the rows copied', () => {
+      expect(model.rowCopyCost(2000)).toBeCloseTo(model.rowCopyCost(1000) * 2, 5);
+    });
+  });
+
+  describe('mergeStreamsCost', () => {
+    it('charges more comparisons per row as the stream count grows', () => {
+      expect(model.mergeStreamsCost(1000, 64)).toBeGreaterThan(model.mergeStreamsCost(1000, 4));
+    });
+
+    it('charges a two-way merge no less than a single stream that needs no merging', () => {
+      expect(model.mergeStreamsCost(1000, 1)).toBe(model.mergeStreamsCost(1000, 2));
+    });
+
+    it('grows logarithmically in the stream count, not linearly', () => {
+      const fourWay = model.mergeStreamsCost(1000, 4);
+      const sixteenWay = model.mergeStreamsCost(1000, 16);
+
+      expect(sixteenWay).toBeCloseTo(fourWay * 2, 5);
+    });
+
+    it('charges more for text keys than for numeric ones', () => {
+      expect(model.mergeStreamsCost(1000, 8, SortKeyClass.TEXT))
+        .toBeGreaterThan(model.mergeStreamsCost(1000, 8, SortKeyClass.NUMERIC));
+    });
+  });
+
   describe('sortCost', () => {
     it('returns zero for single element', () => {
       expect(model.sortCost(1)).toBe(0);
+    });
+
+    it('costs more than merely buffering the rows it orders', () => {
+      expect(model.sortCost(1000)).toBeGreaterThan(model.bufferCost(1000));
     });
 
     it('grows super-linearly (n log n)', () => {

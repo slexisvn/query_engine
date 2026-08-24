@@ -8,6 +8,7 @@ import { PlanNodeType, LogicalScan, LogicalFilter, LogicalProject, LogicalJoin, 
 import { ExchangeType } from '../../../src/distributed/planner/fragment.js';
 import { BoundExprKind } from '../../../src/binder/expression-binder.js';
 import { resetFragmentIdCounter } from '../../../src/distributed/planner/fragment.js';
+import { PhysicalPlanner } from '../../../src/execution/physical-planner.js';
 
 function colRef(table, col) {
   return { kind: BoundExprKind.COLUMN_REF, tableAlias: table, columnName: col };
@@ -338,6 +339,105 @@ describe('DistributedPlanner', () => {
 
     it('gathers below an aggregate rather than sending the aggregate to the workers', () => {
       expect(receiveSchemaFor(LogicalAggregate([], [], projectOf(['A'])))).toEqual(['A']);
+    });
+  });
+
+  describe('what an exchange receive reports it will receive', () => {
+    const SCHEMAS = {
+      ORDERS: [{ name: 'ID', dataType: 'INT32', tableAlias: 'ORDERS' }],
+      LINEITEM: [{ name: 'ORDER_ID', dataType: 'INT32', tableAlias: 'LINEITEM' }],
+    };
+
+    function catalog() {
+      return {
+        getTableStorage: (table) => {
+          const schema = SCHEMAS[table.toUpperCase()];
+          return schema ? { getSchema: () => schema } : null;
+        },
+      };
+    }
+
+    function plannerWithCatalog() {
+      return new DistributedPlanner(pm, cm, new Map(), catalog());
+    }
+
+    function receivesIn(node, found = []) {
+      if (node.type === PlanNodeType.EXCHANGE_RECEIVE) found.push(node);
+      for (const child of node.children ?? []) receivesIn(child, found);
+      return found;
+    }
+
+    function allReceives(plan) {
+      return plan.fragments.flatMap(fragment => receivesIn(fragment.planRoot));
+    }
+
+    function shuffleJoin(leftCardinality, rightCardinality, joinCardinality) {
+      const left = LogicalScan('ORDERS', ['ID'], 'ORDERS');
+      left._cardinality = leftCardinality;
+      const right = LogicalScan('LINEITEM', ['ORDER_ID'], 'LINEITEM');
+      right._cardinality = rightCardinality;
+      const join = LogicalJoin(
+        JoinType.INNER,
+        { kind: BoundExprKind.BINARY, op: '=', left: colRef('ORDERS', 'ID'), right: colRef('LINEITEM', 'ORDER_ID') },
+        left,
+        right,
+      );
+      join._cardinality = joinCardinality;
+      join._distributionStrategy = 'shuffle';
+      return join;
+    }
+
+    it('reports the whole subtree when a gather collects every worker', () => {
+      const scan = LogicalScan('ORDERS', ['ID'], 'ORDERS');
+      scan._cardinality = 90000;
+
+      const plan = new DistributedPlanner(pm, cm).fragmentize(LogicalExchange(ExchangeType.GATHER, [], 0, scan));
+
+      expect(allReceives(plan).map(node => node.sourceCardinality)).toEqual([90000]);
+    });
+
+    it('reports one worker share on each side of a hash shuffle', () => {
+      const plan = plannerWithCatalog().fragmentize(shuffleJoin(100000, 400000, 400000));
+      const workers = cm.getWorkerNodes().length;
+      const joinFragment = plan.fragments.find(fragment => fragment.planRoot.type === PlanNodeType.JOIN);
+
+      const shares = receivesIn(joinFragment.planRoot).map(node => node.sourceCardinality);
+
+      expect(shares).toEqual([100000 / workers, 400000 / workers]);
+    });
+
+    it('reports the gathered join result whole, not per worker', () => {
+      const plan = plannerWithCatalog().fragmentize(shuffleJoin(100000, 400000, 400000));
+      const root = plan.getRootFragment();
+
+      expect(receivesIn(root.planRoot).map(node => node.sourceCardinality)).toEqual([400000]);
+    });
+
+    it('rounds a worker share up so a shuffled row is never lost to the estimate', () => {
+      const plan = plannerWithCatalog().fragmentize(shuffleJoin(5, 5, 5));
+
+      for (const receive of allReceives(plan)) {
+        expect(receive.sourceCardinality).toBeGreaterThan(0);
+      }
+    });
+
+    it('leaves the row count unstated when the subtree carries no estimate', () => {
+      const scan = LogicalScan('ORDERS', ['ID'], 'ORDERS');
+
+      const plan = new DistributedPlanner(pm, cm).fragmentize(LogicalExchange(ExchangeType.GATHER, [], 0, scan));
+
+      for (const receive of allReceives(plan)) {
+        expect(receive.sourceCardinality).toBeUndefined();
+      }
+    });
+
+    it('costs a shuffle join fragment by the rows it actually receives', () => {
+      const plan = plannerWithCatalog().fragmentize(shuffleJoin(100000, 400000, 400000));
+      const joinFragment = plan.fragments.find(fragment => fragment.planRoot.type === PlanNodeType.JOIN);
+      const physical = new PhysicalPlanner().plan(joinFragment.planRoot);
+
+      expect(physical.children.map(child => child.cardinality))
+        .toEqual([100000 / cm.getWorkerNodes().length, 400000 / cm.getWorkerNodes().length]);
     });
   });
 

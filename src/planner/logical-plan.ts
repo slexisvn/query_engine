@@ -31,6 +31,13 @@ export enum PlanNodeType {
   SINGLE_ROW = 'SingleRow',
 }
 
+export enum ExchangeType {
+  HASH_SHUFFLE = 'hash_shuffle',
+  BROADCAST = 'broadcast',
+  GATHER = 'gather',
+  PASSTHROUGH = 'passthrough',
+}
+
 export enum SetOpType {
   UNION = 'UNION',
   INTERSECT = 'INTERSECT',
@@ -202,7 +209,7 @@ export interface LogicalMaterializeNode extends PlanNodeBase {
 
 export interface LogicalExchangeNode extends PlanNodeBase {
   type: PlanNodeType.EXCHANGE;
-  exchangeType: string;
+  exchangeType: ExchangeType;
   partitionKeys: BoundExpr[];
   partitionCount: number;
   children: LogicalPlanNode[];
@@ -234,6 +241,7 @@ export interface LogicalExchangeReceiveNode extends PlanNodeBase {
   type: PlanNodeType.EXCHANGE_RECEIVE;
   sourceFragmentIds: number[];
   schema: ColumnInfo[];
+  sourceCardinality?: number;
   children: LogicalPlanNode[];
 }
 
@@ -356,7 +364,7 @@ export function LogicalMaterialize(child: LogicalPlanNode): LogicalMaterializeNo
   return { type: PlanNodeType.MATERIALIZE, children: [child] };
 }
 
-export function LogicalExchange(exchangeType: string, partitionKeys: BoundExpr[] | null | undefined, partitionCount: number | null | undefined, child: LogicalPlanNode): LogicalExchangeNode {
+export function LogicalExchange(exchangeType: ExchangeType, partitionKeys: BoundExpr[] | null | undefined, partitionCount: number | null | undefined, child: LogicalPlanNode): LogicalExchangeNode {
   return {
     type: PlanNodeType.EXCHANGE,
     exchangeType,
@@ -394,13 +402,14 @@ export function LogicalMergeExchange(orderKeys: LogicalOrderKey[], limit: number
   };
 }
 
-export function LogicalExchangeReceive(sourceFragmentIds: number[], schema?: ColumnInfo[]): LogicalExchangeReceiveNode {
-  return {
+export function LogicalExchangeReceive(sourceFragmentIds: number[], schema?: ColumnInfo[], sourceCardinality?: number): LogicalExchangeReceiveNode {
+  const node: LogicalExchangeReceiveNode = {
     type: PlanNodeType.EXCHANGE_RECEIVE,
     sourceFragmentIds,
     schema: schema || [],
     children: [],
   };
+  return sourceCardinality === undefined ? node : { ...node, sourceCardinality };
 }
 
 export function LogicalSingleRow(): LogicalSingleRowNode {

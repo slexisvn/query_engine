@@ -76,17 +76,28 @@ export class DefaultCostModel {
     return card * (this.C_TUPLE + this.C_OPERATOR);
   }
 
+  bufferCost(card: number): number {
+    return card * (this.C_TUPLE + this.C_BUFFER) + this.spillPenalty(card, card);
+  }
+
+  rowCopyCost(card: number): number {
+    return card * (this.C_TUPLE + this.C_ROW);
+  }
+
+  mergeStreamsCost(card: number, streams: number, keyClass: SortKeyClass = SortKeyClass.NUMERIC): number {
+    return card * Math.log2(Math.max(2, streams)) * this.comparisonCost(keyClass);
+  }
+
   comparisonCost(keyClass: SortKeyClass): number {
     return keyClass === SortKeyClass.TEXT ? this.C_COMPARE * this.C_TEXT : this.C_COMPARE;
   }
 
   sortCost(card: number, keyClass: SortKeyClass = SortKeyClass.NUMERIC): number {
     if (card <= 1) return 0;
-    const buffered = card * (this.C_TUPLE + this.C_BUFFER);
     const ordered = keyClass === SortKeyClass.RADIX && card >= Config.radixSortMinRows
       ? card * this.C_OPERATOR * this.RADIX_PASSES
       : card * Math.log2(card) * this.comparisonCost(keyClass);
-    return buffered + ordered + this.spillPenalty(card, card);
+    return this.bufferCost(card) + ordered;
   }
 
   topNSortCost(card: number, limit: number, keyClass: SortKeyClass = SortKeyClass.NUMERIC): number {
