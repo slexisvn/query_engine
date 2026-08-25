@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  IDENTITY,
   MAX_ZOOM,
+  MIN_READABLE_SCALE,
   MIN_ZOOM,
   applyGesture,
   clampZoom,
   gestureOf,
+  homeViewport,
   zoomAbout,
 } from '../../src/ui/gesture.js';
 import type { Point, Viewport } from '../../src/ui/gesture.js';
@@ -90,5 +93,31 @@ describe('applyGesture', () => {
     const to = gestureOf([{ x: 50, y: 0 }]);
 
     expect(applyGesture(view, from, to).zoom).toBe(1.2);
+  });
+});
+
+describe('home viewport', () => {
+  const wide = { x: -600, y: -40, width: 1200, height: 700 };
+  const pane = { width: 820, height: 740 };
+
+  it('leaves a plan that already fits at natural size alone', () => {
+    expect(homeViewport({ x: 0, y: 0, width: 400, height: 300 }, pane)).toEqual(IDENTITY);
+  });
+
+  it('zooms a plan that would otherwise render below the readable floor', () => {
+    const view = homeViewport(wide, pane);
+    const fit = Math.min(pane.width / wide.width, pane.height / wide.height);
+    expect(fit).toBeLessThan(MIN_READABLE_SCALE);
+    expect(fit * view.zoom).toBeCloseTo(MIN_READABLE_SCALE, 6);
+  });
+
+  it('keeps the top of the tree where it was', () => {
+    const view = homeViewport(wide, pane);
+    const topCentre = { x: wide.x + wide.width / 2, y: wide.y };
+    expect(contentUnder(view, topCentre)).toEqual(topCentre);
+  });
+
+  it('stays at rest until it has been measured', () => {
+    expect(homeViewport(wide, { width: 0, height: 0 })).toEqual(IDENTITY);
   });
 });

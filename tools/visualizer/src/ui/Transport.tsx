@@ -5,6 +5,7 @@ export interface TransportProps {
   playing: boolean;
   speed: number;
   animated: boolean;
+  scrubbable: boolean;
   spotlight: boolean;
   hasPrevious: boolean;
   hasNext: boolean;
@@ -21,54 +22,64 @@ export function Transport(props: TransportProps) {
   return (
     <div className="transport">
       <div className="transport-buttons">
-        <button type="button" onClick={props.onPrevious} disabled={!props.hasPrevious} title="Previous pass (Left arrow)">
-          ◀
+        <button type="button" onClick={props.onPrevious} disabled={!props.hasPrevious} title="Previous pass (Left arrow)" aria-label="Previous pass">
+          ⏮
         </button>
-        <button type="button" onClick={props.onPlayPause} title="Play through the remaining passes (Space)">
+        <button type="button" onClick={props.onPlayPause} title="Play through the remaining passes (Space)" aria-label={props.playing ? 'Pause' : 'Play through the remaining passes'}>
           {props.playing ? '❚❚' : '▶'}
         </button>
-        <button type="button" onClick={props.onNext} disabled={!props.hasNext} title="Next pass (Right arrow)">
-          ▶
+        <button type="button" onClick={props.onNext} disabled={!props.hasNext} title="Next pass (Right arrow)" aria-label="Next pass">
+          ⏭
         </button>
-        <button type="button" onClick={props.onReplay} title="Replay this pass (R)">
+        <button type="button" onClick={props.onReplay} disabled={!props.scrubbable} title="Replay this pass (R)" aria-label="Replay this pass">
           ⟲
         </button>
       </div>
 
-      <input
-        className="transport-scrub"
-        type="range"
-        min={0}
-        max={1}
-        step={0.001}
-        value={props.t}
-        onChange={event => props.onScrub(Number(event.target.value))}
-        disabled={!props.animated}
-        aria-label="Scrub the transition"
-      />
-
-      <div className="transport-options">
-        <select
-          className="transport-speed"
-          value={props.speed}
-          onChange={event => props.onSpeed(Number(event.target.value))}
-          disabled={!props.animated}
-          aria-label="Playback speed"
-          title="Playback speed"
-        >
-          {SPEEDS.map(speed => (
-            <option key={speed} value={speed}>{speed}× speed</option>
-          ))}
-        </select>
-        <label title="Dim the nodes this pass did not touch">
+      {props.scrubbable ? (
+        <div className="transport-scrubber">
+          <span>before</span>
           <input
-            type="checkbox"
-            checked={props.spotlight}
-            onChange={event => props.onSpotlight(event.target.checked)}
+            className="transport-scrub"
+            type="range"
+            min={0}
+            max={1}
+            step={0.001}
+            value={props.t}
+            onChange={event => props.onScrub(Number(event.target.value))}
+            disabled={!props.animated}
+            aria-label="Scrub the transition from before the pass to after it"
           />
-          spotlight
-        </label>
-      </div>
+          <span>after</span>
+        </div>
+      ) : (
+        <p className="transport-note">Text view shows the finished rewrite — switch to Tree to scrub through it.</p>
+      )}
+
+      {props.scrubbable ? (
+        <div className="transport-options">
+          <select
+            className="transport-speed"
+            value={props.speed}
+            onChange={event => props.onSpeed(Number(event.target.value))}
+            disabled={!props.animated}
+            aria-label="Playback speed"
+            title="Playback speed"
+          >
+            {SPEEDS.map(speed => (
+              <option key={speed} value={speed}>{speed}× speed</option>
+            ))}
+          </select>
+          <label title="Dim the nodes this pass did not touch">
+            <input
+              type="checkbox"
+              checked={props.spotlight}
+              onChange={event => props.onSpotlight(event.target.checked)}
+            />
+            spotlight
+          </label>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import {
   buildStatistics,
   createDemoCatalog,
   dropSampleTables,
+  loadSampleData,
   registerSampleTables,
   DEFAULT_ROW_COUNTS,
   DEMO_SCHEMA,
@@ -30,6 +31,7 @@ export interface TableEntry {
   kind: TableKind;
   columns: ColumnSchema[];
   rowCount: number;
+  dataRows: number;
   indexed: readonly string[];
   preview: readonly ResultRow[];
 }
@@ -39,6 +41,7 @@ export type ResultRow = Record<string, ColumnValue>;
 export interface RunSuccess {
   ok: true;
   columns: string[];
+  rowKeys: string[];
   rows: ResultRow[];
   total: number;
   truncated: boolean;
@@ -77,10 +80,12 @@ function messageOf(error: unknown): string {
 
 export class Workspace {
   readonly engine: QueryEngine;
+  readonly ready: Promise<void>;
   version = 0;
 
   private rowCounts: RowCounts = DEFAULT_ROW_COUNTS;
   private sampleLoaded = true;
+  private sampleDataRows: RowCounts = {};
   private readonly imported = new Map<string, TableEntry>();
   private readonly importedStats = new Map<string, TableStats>();
   private cachedStatistics: Map<string, TableStats> | null = null;
@@ -88,6 +93,16 @@ export class Workspace {
   constructor() {
     const options: EngineOptions = { storageBackend: new MemoryStorageBackend() };
     this.engine = new QueryEngine(createDemoCatalog(), options);
+    this.ready = this.loadSampleRows();
+  }
+
+  private async loadSampleRows(): Promise<void> {
+    this.sampleDataRows = await loadSampleData(this.engine);
+    this.invalidate();
+  }
+
+  get sampleDataTotal(): number {
+    return Object.values(this.sampleDataRows).reduce((total, count) => total + count, 0);
   }
 
   get catalog(): Catalog {
@@ -120,6 +135,7 @@ export class Workspace {
       kind: 'sample',
       columns: this.catalog.getTable(name)?.columns ?? [],
       rowCount: this.rowCounts[name] ?? 0,
+      dataRows: this.sampleDataRows[name] ?? 0,
       indexed: INDEXED_COLUMNS[name] ?? [],
       preview: [],
     }));
@@ -164,6 +180,7 @@ export class Workspace {
         kind: 'imported',
         columns,
         rowCount: rows.length,
+        dataRows: rows.length,
         indexed: [],
         preview: rows.slice(0, PREVIEW_ROW_CAP),
       };
@@ -184,7 +201,7 @@ export class Workspace {
     return { ok: true, table };
   }
 
-  dropTable(name: string): void {
+  async dropTable(name: string): Promise<void> {
     if (!this.imported.has(name)) return;
     this.catalog.dropTable(name);
     this.imported.delete(name);
@@ -193,6 +210,8 @@ export class Workspace {
     if (this.imported.size === 0 && !this.sampleLoaded) {
       registerSampleTables(this.catalog);
       this.sampleLoaded = true;
+      await this.loadSampleRows();
+      return;
     }
 
     this.invalidate();
@@ -207,6 +226,7 @@ export class Workspace {
   }
 
   async run(sql: string): Promise<RunOutcome> {
+    await this.ready;
     const missing = this.tablesWithoutData(sql);
     if (missing.length > 0) return { ok: false, reason: 'no-data', tables: missing };
 
@@ -218,6 +238,7 @@ export class Workspace {
       return {
         ok: true,
         columns: result.columns,
+        rowKeys: 'rowKeys' in result && result.rowKeys ? result.rowKeys : result.columns,
         rows: rows.slice(0, RESULT_ROW_CAP),
         total: rows.length,
         truncated: rows.length > RESULT_ROW_CAP,

@@ -24,13 +24,15 @@ export function Pager({ page, pageCount, from, to, total, unit, note, onPage }: 
         {formatCount(from)}–{formatCount(to)} of {formatCount(total)} {unit}
         {note ? ` (${note})` : ''}
       </span>
-      <div className="pager-buttons">
-        <button type="button" onClick={() => onPage(0)} disabled={page === 0} title="First page">«</button>
-        <button type="button" onClick={() => onPage(page - 1)} disabled={page === 0} title="Previous page">‹</button>
-        <span className="pager-position">{page + 1} / {pageCount}</span>
-        <button type="button" onClick={() => onPage(page + 1)} disabled={page + 1 >= pageCount} title="Next page">›</button>
-        <button type="button" onClick={() => onPage(pageCount - 1)} disabled={page + 1 >= pageCount} title="Last page">»</button>
-      </div>
+      {pageCount <= 1 ? null : (
+        <div className="pager-buttons">
+          <button type="button" onClick={() => onPage(0)} disabled={page === 0} title="First page" aria-label="First page">«</button>
+          <button type="button" onClick={() => onPage(page - 1)} disabled={page === 0} title="Previous page" aria-label="Previous page">‹</button>
+          <span className="pager-position">{page + 1} / {pageCount}</span>
+          <button type="button" onClick={() => onPage(page + 1)} disabled={page + 1 >= pageCount} title="Next page" aria-label="Next page">›</button>
+          <button type="button" onClick={() => onPage(pageCount - 1)} disabled={page + 1 >= pageCount} title="Last page" aria-label="Last page">»</button>
+        </div>
+      )}
     </div>
   );
 }

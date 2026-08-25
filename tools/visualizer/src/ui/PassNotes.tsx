@@ -9,7 +9,7 @@ export function PassNotes({ step }: PassNotesProps) {
   if (!step) {
     return (
       <section className="pass-notes empty">
-        <p>Pick a pass on the left to see what it does and watch the plan change.</p>
+        <p>Pick a pass above to see what it does and watch the plan change.</p>
       </section>
     );
   }

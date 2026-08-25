@@ -6,6 +6,8 @@ import { sizePlanNode } from './ui/node-sizer.js';
 import { traceQuery } from './engine/trace.js';
 import { Workspace } from './engine/workspace.js';
 import { DEFAULT_EXAMPLE } from './content/examples.js';
+import { CompileError } from './ui/CompileError.js';
+import { HelpPanel } from './ui/HelpPanel.js';
 import { JsonView } from './ui/JsonView.js';
 import { PaneRail } from './ui/PaneRail.js';
 import { PassList } from './ui/PassList.js';
@@ -32,6 +34,9 @@ import type { StageKind } from './ui/StageRail.js';
 
 const MORPH_DURATION_MS = 700;
 const COMPACT_LAYOUT = '(max-width: 1000px)';
+const TYPING_TAGS = /^(INPUT|TEXTAREA|SELECT)$/;
+const ACTIVATES_ON_SPACE = /^(BUTTON|A|SUMMARY)$/;
+const FAILED_BADGE = { text: 'error', tone: 'error' } as const;
 
 type PlanTab = 'tree' | 'text';
 
@@ -89,16 +94,29 @@ export function App() {
   const [running, setRunning] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const compact = useMediaQuery(COMPACT_LAYOUT);
+
+  useEffect(() => {
+    let live = true;
+    void workspace.ready.then(() => {
+      if (!live) return;
+      setCatalogVersion(workspace.version);
+      setSubmission(current => ({ ...current, version: workspace.version }));
+    });
+    return () => { live = false; };
+  }, [workspace]);
+
   const statistics = useMemo(() => workspace.statistics(), [workspace, catalogVersion]);
   const tables = useMemo(() => workspace.tables(), [workspace, catalogVersion]);
   const rowCounts = useMemo(() => workspace.sampleRowCounts(), [workspace, catalogVersion]);
   const usesSampleSchema = useMemo(() => workspace.usesSampleSchema, [workspace, catalogVersion]);
   const loadedRows = useMemo(
-    () => tables.reduce((total, table) => (table.kind === 'imported' ? total + table.rowCount : total), 0),
+    () => tables.reduce((total, table) => total + table.dataRows, 0),
     [tables],
   );
+  const tableNames = useMemo(() => tables.map(table => table.name), [tables]);
 
   const outcome = useMemo(
     () => traceQuery(submission.sql, workspace.catalog, submission.statistics),
@@ -226,10 +244,10 @@ export function App() {
         return;
       }
       const target = event.target as HTMLElement | null;
-      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      if (target && (target.isContentEditable || TYPING_TAGS.test(target.tagName))) return;
       if (event.key === 'ArrowRight') { event.preventDefault(); goNext(); }
       else if (event.key === 'ArrowLeft') { event.preventDefault(); goPrevious(); }
-      else if (event.key === ' ') { event.preventDefault(); togglePlay(); }
+      else if (event.key === ' ' && !(target && ACTIVATES_ON_SPACE.test(target.tagName))) { event.preventDefault(); togglePlay(); }
       else if (event.key === 'r' || event.key === 'R') { event.preventDefault(); tween.play(); }
     };
     window.addEventListener('keydown', onKey);
@@ -239,6 +257,10 @@ export function App() {
   const changedTotal = optimize?.steps.filter(candidate => candidate.changed).length ?? 0;
   const showsPlan = stage === 'plan' || stage === 'optimize';
   const stale = sql !== submission.sql || catalogVersion !== submission.version;
+  const failedPhase = outcome.ok ? null : outcome.error.phase;
+  const estimatedRows = optimize === null
+    ? null
+    : optimize.snapshots[optimize.snapshots.length - 1].display._cardinality ?? null;
 
   return (
     <div className={`app${sidebarOpen ? '' : ' sidebar-collapsed'}${compact ? ' compact' : ''}`} data-pane={pane}>
@@ -247,12 +269,14 @@ export function App() {
         sidebarOpen={sidebarOpen}
         running={running}
         stale={stale}
+        neverRun={result === null}
         usesSampleSchema={usesSampleSchema}
         tableCount={tables.length}
         loadedRows={loadedRows}
         onSql={setSql}
         onToggleSidebar={() => setSidebarOpen(open => !open)}
         onRun={() => void runQuery()}
+        onHelp={() => setHelpOpen(true)}
       />
 
       <div className="app-body">
@@ -263,20 +287,19 @@ export function App() {
             </div>
 
             {outcome.ok ? null : (
-              <p className="compile-error">
-                <strong>{outcome.error.phase} error.</strong> {outcome.error.message}
-              </p>
+              <CompileError error={outcome.error} sql={submission.sql} tables={tableNames} stale={stale} />
             )}
 
             <SchemaPanel
               tables={tables}
               usesSampleSchema={usesSampleSchema}
+              dataRows={loadedRows}
               rowCounts={rowCounts}
               statistics={statistics}
               importError={importError}
               importing={importing}
               onImport={files => void importFiles(files)}
-              onDrop={table => { workspace.dropTable(table); setCatalogVersion(workspace.version); }}
+              onDrop={table => void workspace.dropTable(table).then(() => setCatalogVersion(workspace.version))}
               onRowCountChange={(table, rowCount) => { workspace.setRowCount(table, rowCount); setCatalogVersion(workspace.version); }}
               onResetRowCounts={() => { workspace.resetRowCounts(); setCatalogVersion(workspace.version); }}
             />
@@ -286,6 +309,7 @@ export function App() {
         <section className="panel panel-middle">
           {trace && trace.subjects.length > 1 ? (
             <div className="subject-picker">
+              <span className="stage-caption">plan for</span>
               {trace.subjects.map((candidate, index) => (
                 <button
                   key={candidate.name}
@@ -320,9 +344,13 @@ export function App() {
             <StageRail
               selected={stage}
               badges={{
-                plan: optimize ? { text: `${optimize.snapshots[0].nodes} nodes` } : undefined,
+                parse: failedPhase === 'parse' ? FAILED_BADGE : undefined,
+                bind: failedPhase === 'bind' ? FAILED_BADGE : undefined,
+                plan: failedPhase === 'plan'
+                  ? FAILED_BADGE
+                  : optimize ? { text: `${optimize.snapshots[0].nodes} nodes` } : undefined,
                 optimize: optimize ? { text: `${changedTotal}/${optimize.steps.length}` } : undefined,
-                results: result === null
+                results: !outcome.ok || result === null
                   ? undefined
                   : result.ok ? { text: formatCount(result.total) } : { text: 'error', tone: 'error' },
               }}
@@ -340,9 +368,13 @@ export function App() {
           </div>
 
           {stage === 'results' ? (
-            <ResultsView outcome={result} running={running} onRun={() => void runQuery()} />
+            <ResultsView outcome={result} estimated={estimatedRows} running={running} onRun={() => void runQuery()} />
           ) : !trace ? (
-            <div className="stage-summary"><p>No plan yet.</p></div>
+            <div className="stage-summary">
+              {outcome.ok
+                ? <p>No plan yet.</p>
+                : <CompileError error={outcome.error} sql={submission.sql} tables={tableNames} stale={stale} />}
+            </div>
           ) : stage === 'parse' ? (
             <JsonView title="Abstract syntax tree" subtitle="What the parser produced from the SQL text." value={trace.compiled.statement} />
           ) : stage === 'bind' ? (
@@ -381,6 +413,7 @@ export function App() {
                   playing={chaining || tween.playing}
                   speed={speed}
                   animated={!reducedMotion}
+                  scrubbable={tab === 'tree'}
                   spotlight={spotlight}
                   hasPrevious={lastChangedBefore(optimize.steps, stepIndex) !== null || (!hideNoops && stepIndex > 0)}
                   hasNext={firstChangedFrom(optimize.steps, stepIndex + 1) !== null || (!hideNoops && stepIndex + 1 < optimize.steps.length)}
@@ -396,12 +429,12 @@ export function App() {
 
               {selected ? (
                 <section className="node-inspector">
-                  <h4>{selected.title}</h4>
-                  {selected.detail ? <code>{selected.detail}</code> : null}
-                  <p>
-                    estimated rows {formatCount(selected.cardinality)}
-                    <button type="button" onClick={() => setSelected(null)}>close</button>
-                  </p>
+                  <h4>
+                    {selected.title}
+                    <button type="button" aria-label="Close the node details" onClick={() => setSelected(null)}>×</button>
+                  </h4>
+                  {selected.fullDetail ? <code>{selected.fullDetail}</code> : null}
+                  <p>planner estimate: {formatCount(selected.cardinality)} rows</p>
                 </section>
               ) : null}
             </>
@@ -419,6 +452,8 @@ export function App() {
           onSelect={setPane}
         />
       ) : null}
+
+      {helpOpen ? <HelpPanel onClose={() => setHelpOpen(false)} /> : null}
     </div>
   );
 }

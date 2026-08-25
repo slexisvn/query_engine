@@ -17,14 +17,10 @@ export function formatCount(value: number | null | undefined): string {
   return `${Math.round(value)}`;
 }
 
-export function formatSigned(value: number | null | undefined): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
-  if (value === 0) return '0';
-  return `${value > 0 ? '+' : '-'}${formatCount(Math.abs(value))}`;
-}
-
 export function percentChange(from: number | null, to: number | null): number | null {
-  if (from === null || to === null || !Number.isFinite(from) || !Number.isFinite(to) || from === 0) return null;
+  if (from === null || to === null || !Number.isFinite(from) || !Number.isFinite(to)) return null;
+  // Free before and free after is a 0% move; free before and costly after has no percentage at all.
+  if (from === 0) return to === 0 ? 0 : null;
   return ((to - from) / from) * 100;
 }
 

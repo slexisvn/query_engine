@@ -100,14 +100,14 @@ export class Binder {
   catalog: CatalogLike;
   functionRegistry: FunctionRegistryLike;
   cteScopes: Map<string, CteInfo>;
-  aggregatesFound: BE.BoundExpr[];
+  aggregatesFound: Map<string, BE.BoundExpr>;
   params: readonly BE.LiteralValue[];
 
   constructor(catalog: CatalogLike, functionRegistry: FunctionRegistryLike, params: readonly BE.LiteralValue[] = []) {
     this.catalog = catalog;
     this.functionRegistry = functionRegistry;
     this.cteScopes = new Map();
-    this.aggregatesFound = [];
+    this.aggregatesFound = new Map();
     this.params = params;
   }
 
@@ -159,7 +159,7 @@ export class Binder {
     }
 
     const savedAggregates = this.aggregatesFound;
-    this.aggregatesFound = [];
+    this.aggregatesFound = new Map();
     let outputColumns: OutputColumn[] = [];
 
     const boundSelectItems = this.bindSelectItems(node.selectItems, fromScope);
@@ -197,7 +197,7 @@ export class Binder {
       }));
     }
 
-    const aggregates = [...this.aggregatesFound];
+    const aggregates = [...this.aggregatesFound.values()];
     this.aggregatesFound = savedAggregates;
 
     this.checkGroupingCoverage(groupBy, aggregates, boundSelectItems, orderBy);
@@ -643,7 +643,10 @@ export class Binder {
     this.checkAggregateArgument(node.name, args);
     const resultType = this.inferAggregateType(node.name, args);
     const bound = BE.BoundAggregate(node.name, args, node.distinct, resultType);
-    this.aggregatesFound.push(bound);
+    const key = exprKey(bound);
+    const existing = this.aggregatesFound.get(key);
+    if (existing) return existing as BE.BoundAggregateNode;
+    this.aggregatesFound.set(key, bound);
     return bound;
   }
 

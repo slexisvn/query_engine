@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { edgeOpacityAt, edgePath, nodeStyleAt } from '../engine/morph.js';
 import {
   DETAIL_LINE_HEIGHT,
@@ -9,8 +9,8 @@ import {
   rowsLabel,
 } from './node-sizer.js';
 import { DETAIL_FONT, ROWS_FONT, TITLE_FONT } from './text-metrics.js';
-import { IDENTITY, applyGesture, gestureOf, zoomAbout } from './gesture.js';
-import type { Gesture, Point, Viewport } from './gesture.js';
+import { applyGesture, gestureOf, homeViewport, zoomAbout } from './gesture.js';
+import type { Gesture, Point, Size, Viewport } from './gesture.js';
 import type { MorphFrame, NodeStyle } from '../engine/morph.js';
 import type { PlanViewNode } from '../engine/plan-view.js';
 
@@ -45,7 +45,18 @@ function PlanNode({ style, status, onSelect }: { style: NodeStyle; status: strin
   const rows = rowsLabel(content);
 
   return (
-    <g className={`plan-node status-${status}`} onClick={onSelect}>
+    <g
+      className={`plan-node status-${status}`}
+      role="button"
+      tabIndex={0}
+      aria-label={`${content.title}${content.fullDetail ? `, ${content.fullDetail}` : ''}`}
+      onClick={onSelect}
+      onKeyDown={event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        onSelect();
+      }}
+    >
       <rect
         x={-style.width / 2}
         y={-style.height / 2}
@@ -90,9 +101,37 @@ function toCanvasSpace(svg: SVGSVGElement, event: { clientX: number; clientY: nu
 }
 
 export function PlanGraph({ frame, t, spotlight, legend, caption, onSelect }: PlanGraphProps) {
-  const [viewport, setViewport] = useState<Viewport>(IDENTITY);
+  const [moved, setMoved] = useState<Viewport | null>(null);
+  const [size, setSize] = useState<Size>({ width: 0, height: 0 });
+  const shell = useRef<HTMLDivElement>(null);
   const pointers = useRef(new Map<number, Point>());
   const anchor = useRef<{ gesture: Gesture; view: Viewport } | null>(null);
+
+  useLayoutEffect(() => {
+    const element = shell.current;
+    if (!element) return;
+
+    const measure = () => {
+      const box = element.getBoundingClientRect();
+      setSize(current => (current.width === box.width && current.height === box.height
+        ? current
+        : { width: box.width, height: box.height }));
+    };
+
+    measure();
+    window.addEventListener('resize', measure);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    observer?.observe(element);
+
+    return () => {
+      window.removeEventListener('resize', measure);
+      observer?.disconnect();
+    };
+  }, []);
+
+  const home = useMemo(() => homeViewport(frame.viewBox, size), [frame.viewBox, size]);
+  const viewport = moved ?? home;
+  const setViewport = setMoved;
   const live = useRef(viewport);
   live.current = viewport;
 
@@ -112,12 +151,12 @@ export function PlanGraph({ frame, t, spotlight, legend, caption, onSelect }: Pl
 
   const zoomBy = useCallback((factor: number) => {
     const centre = { x: viewBox.x + viewBox.width / 2, y: viewBox.y + viewBox.height / 2 };
-    setViewport(current => zoomAbout(current, factor, centre));
+    setViewport(zoomAbout(live.current, factor, centre));
   }, [viewBox]);
 
   const onWheel = useCallback((event: React.WheelEvent<SVGSVGElement>) => {
     const at = toCanvasSpace(event.currentTarget, event);
-    setViewport(current => zoomAbout(current, Math.exp(-event.deltaY * ZOOM_WHEEL_STEP), at));
+    setViewport(zoomAbout(live.current, Math.exp(-event.deltaY * ZOOM_WHEEL_STEP), at));
   }, []);
 
   const onPointerDown = useCallback((event: React.PointerEvent<SVGSVGElement>) => {
@@ -140,7 +179,7 @@ export function PlanGraph({ frame, t, spotlight, legend, caption, onSelect }: Pl
   }, [reanchor]);
 
   return (
-    <div className="plan-graph">
+    <div className="plan-graph" ref={shell}>
       <svg
         viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
         preserveAspectRatio="xMidYMid meet"
@@ -149,7 +188,7 @@ export function PlanGraph({ frame, t, spotlight, legend, caption, onSelect }: Pl
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
-        onDoubleClick={() => setViewport(IDENTITY)}
+        onDoubleClick={() => setViewport(null)}
       >
         <g transform={`translate(${viewport.x} ${viewport.y}) scale(${viewport.zoom})`}>
           {frame.edges.map(edge => {
@@ -187,7 +226,7 @@ export function PlanGraph({ frame, t, spotlight, legend, caption, onSelect }: Pl
       <div className="graph-controls">
         <button type="button" onClick={() => zoomBy(ZOOM_BUTTON_STEP)} title="Zoom in">+</button>
         <button type="button" onClick={() => zoomBy(1 / ZOOM_BUTTON_STEP)} title="Zoom out">−</button>
-        <button type="button" onClick={() => setViewport(IDENTITY)} title="Fit the plan (double-click the canvas)">fit</button>
+        <button type="button" onClick={() => setViewport(null)} title="Fit the plan (double-click the canvas)">fit</button>
       </div>
 
       {legend ? (

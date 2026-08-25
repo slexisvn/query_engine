@@ -1,6 +1,7 @@
 import { LogicalPlanner, createLogicalPlan } from '../../src/planner/logical-planner.js';
 import { PlanNodeType, JoinType } from '../../src/planner/logical-plan.js';
 import { BoundExprKind } from '../../src/binder/expression-binder.js';
+import { exprKey } from '../../src/binder/expr-key.js';
 import { Binder } from '../../src/binder/binder.js';
 import { Catalog } from '../../src/catalog/catalog.js';
 import { FunctionRegistry } from '../../src/catalog/function-registry.js';
@@ -137,6 +138,31 @@ describe('plan structure', () => {
     expect(agg).toBeDefined();
     expect(agg.groupBy).toEqual([]);
     expect(agg.aggregates).toHaveLength(2);
+  });
+
+  it('binds an aggregate shared by SELECT and HAVING to a single aggregate output', () => {
+    const plan = planSQL(`
+      SELECT u.dept, SUM(u.age) AS total
+      FROM users u
+      GROUP BY u.dept
+      HAVING u.dept = 'eng' AND SUM(u.age) > 100
+    `);
+
+    const agg = find(plan, PlanNodeType.AGGREGATE);
+    expect(agg.aggregates).toHaveLength(1);
+
+    const having = find(plan, PlanNodeType.FILTER);
+    const aggConjunct = conjunctsOf(having.condition).find(c => c.left.kind === BoundExprKind.AGGREGATE);
+    expect(aggConjunct.left).toBe(agg.aggregates[0]);
+
+    const proj = find(plan, PlanNodeType.PROJECT);
+    expect(exprKey(proj.expressions[1])).toBe(exprKey(agg.aggregates[0]));
+  });
+
+  it('keeps distinct aggregates over the same column as separate outputs', () => {
+    const plan = planSQL('SELECT dept, MIN(age), SUM(age) FROM users GROUP BY dept HAVING SUM(age) > 100');
+    const agg = find(plan, PlanNodeType.AGGREGATE);
+    expect(agg.aggregates.map(a => a.name)).toEqual(['MIN', 'SUM']);
   });
 
   it('LIMIT with OFFSET stores both values', () => {

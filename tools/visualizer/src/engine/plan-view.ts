@@ -6,6 +6,8 @@ import type { BoundExpr } from '@engine/binder/expression-binder.js';
 
 export const ROOT_PATH = 'r';
 
+export const SHOWN_SCAN_COLUMNS = 3;
+
 const SCAN_TYPES: ReadonlySet<PlanNodeType> = new Set([PlanNodeType.SCAN, PlanNodeType.INDEX_SCAN]);
 
 export interface PlanViewNode {
@@ -14,6 +16,7 @@ export interface PlanViewNode {
   label: string;
   title: string;
   detail: string;
+  fullDetail: string;
   cardinality: number | null;
   node: LogicalPlanNode;
   children: PlanViewNode[];
@@ -43,7 +46,13 @@ interface ScanFields {
   pruningFilter?: BoundExpr;
 }
 
-function labelOf(node: LogicalPlanNode): string {
+function readsClause(columns: readonly ColumnInfo[], shown: number | null): string {
+  const names = columns.map(column => column.name);
+  if (shown === null || names.length <= shown) return `reads ${names.join(', ')}`;
+  return `reads ${names.slice(0, shown).join(', ')} +${names.length - shown} more`;
+}
+
+function labelOf(node: LogicalPlanNode, shownColumns: number | null): string {
   const base = formatNode(node);
   if (!SCAN_TYPES.has(node.type)) return base;
 
@@ -51,21 +60,22 @@ function labelOf(node: LogicalPlanNode): string {
   const parts: string[] = [];
 
   const columns = scan.columns ?? [];
-  if (columns.length > 0) parts.push(`reads ${columns.map(column => column.name).join(', ')}`);
+  if (columns.length > 0) parts.push(readsClause(columns, shownColumns));
   if (scan.pruningFilter) parts.push(`skips blocks that fail ${formatExpression(scan.pruningFilter)}`);
 
   return parts.length === 0 ? base : `${base} (${parts.join(' · ')})`;
 }
 
 export function toPlanView(node: LogicalPlanNode, path: string = ROOT_PATH): PlanViewNode {
-  const label = labelOf(node);
-  const { title, detail } = splitLabel(label);
+  const label = labelOf(node, null);
+  const { title, detail } = splitLabel(labelOf(node, SHOWN_SCAN_COLUMNS));
   return {
     path,
     type: node.type,
     label,
     title,
     detail,
+    fullDetail: splitLabel(label).detail,
     cardinality: node._cardinality ?? null,
     node,
     children: getChildren(node).map((child, index) => toPlanView(child, `${path}.${index}`)),

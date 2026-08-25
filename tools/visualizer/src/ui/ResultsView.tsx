@@ -10,11 +10,12 @@ const MS_DECIMALS = 1;
 
 export interface ResultsViewProps {
   outcome: RunOutcome | null;
+  estimated: number | null;
   running: boolean;
   onRun: () => void;
 }
 
-function ResultTable({ outcome }: { outcome: RunSuccess }) {
+function ResultTable({ outcome, estimated }: { outcome: RunSuccess; estimated: number | null }) {
   const [page, setPage] = useState(0);
   const pageCount = pageCountOf(outcome.rows.length, PAGE_SIZE);
 
@@ -30,9 +31,16 @@ function ResultTable({ outcome }: { outcome: RunSuccess }) {
           {formatCount(outcome.total)} {outcome.total === 1 ? 'row' : 'rows'}
           {outcome.truncated ? ` · kept the first ${formatCount(RESULT_ROW_CAP)}` : ''}
         </span>
-        <span className="results-timing">{outcome.ms.toFixed(MS_DECIMALS)} ms</span>
+        <span>
+          {estimated === null ? null : (
+            <span className="results-estimate" title="What the planner expected before it ran">
+              planner estimated {formatCount(estimated)} ·{' '}
+            </span>
+          )}
+          <span className="results-timing">{outcome.ms.toFixed(MS_DECIMALS)} ms</span>
+        </span>
       </header>
-      <DataGrid columns={outcome.columns} rows={visible} firstRowNumber={from + 1} />
+      <DataGrid columns={outcome.columns} keys={outcome.rowKeys} rows={visible} firstRowNumber={from + 1} />
       <Pager
         page={page}
         pageCount={pageCount}
@@ -46,7 +54,7 @@ function ResultTable({ outcome }: { outcome: RunSuccess }) {
   );
 }
 
-export function ResultsView({ outcome, running, onRun }: ResultsViewProps) {
+export function ResultsView({ outcome, estimated, running, onRun }: ResultsViewProps) {
   if (running) {
     return <div className="results-placeholder"><p>Running the query…</p></div>;
   }
@@ -99,7 +107,7 @@ export function ResultsView({ outcome, running, onRun }: ResultsViewProps) {
 
   return (
     <div className="results-view">
-      <ResultTable outcome={outcome} />
+      <ResultTable outcome={outcome} estimated={estimated} />
     </div>
   );
 }

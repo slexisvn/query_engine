@@ -1,9 +1,23 @@
 export const MIN_ZOOM = 0.2;
 export const MAX_ZOOM = 16;
 
+export const MIN_READABLE_SCALE = 0.9;
+
 export interface Point {
   x: number;
   y: number;
+}
+
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface Size {
+  width: number;
+  height: number;
 }
 
 export interface Viewport {
@@ -55,4 +69,13 @@ export function applyGesture(view: Viewport, from: Gesture, to: Gesture): Viewpo
   const factor = from.spread > 0 && to.spread > 0 ? to.spread / from.spread : 1;
   const zoomed = zoomAbout(view, factor, from);
   return { zoom: zoomed.zoom, x: zoomed.x + (to.x - from.x), y: zoomed.y + (to.y - from.y) };
+}
+
+export function homeViewport(viewBox: Rect, size: Size): Viewport {
+  if (size.width <= 0 || size.height <= 0 || viewBox.width <= 0 || viewBox.height <= 0) return IDENTITY;
+
+  const fit = Math.min(size.width / viewBox.width, size.height / viewBox.height);
+  if (fit >= MIN_READABLE_SCALE) return IDENTITY;
+
+  return zoomAbout(IDENTITY, MIN_READABLE_SCALE / fit, { x: viewBox.x + viewBox.width / 2, y: viewBox.y });
 }

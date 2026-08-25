@@ -145,3 +145,23 @@ describe('QueryResult', () => {
     });
   });
 });
+
+describe('duplicate output column names', () => {
+  const chunk = () => makeChunk([
+    { type: 'INT32', values: [1, 2] },
+    { type: 'INT32', values: [30, 40] },
+  ]);
+
+  it('keeps every column instead of letting the last one win', async () => {
+    const result = new QueryResult(['ID', 'ID'], mockSink([chunk()]));
+    expect(await result.toArray()).toEqual([{ ID: 1, ID_2: 30 }, { ID: 2, ID_2: 40 }]);
+  });
+
+  it('reports the query column names unchanged', () => {
+    expect(new QueryResult(['ID', 'ID'], mockSink([])).columns).toEqual(['ID', 'ID']);
+  });
+
+  it('exposes the keys the rows are actually indexed by', () => {
+    expect(new QueryResult(['ID', 'ID', 'ID'], mockSink([])).rowKeys).toEqual(['ID', 'ID_2', 'ID_3']);
+  });
+});

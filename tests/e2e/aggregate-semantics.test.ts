@@ -140,6 +140,33 @@ describe('aggregate semantics', () => {
     });
   });
 
+  describe('aggregates repeated across clauses', () => {
+    it('reads the same value in SELECT and HAVING', async () => {
+      const rows = await runQuery('SELECT DEPT, SUM(SAL) AS S FROM EMP GROUP BY DEPT HAVING SUM(SAL) > 300');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ DEPT: null, S: 500 }]));
+    });
+
+    it('keeps each aggregate on its own column when HAVING repeats only some of them', async () => {
+      const rows = await runQuery(
+        'SELECT DEPT, MIN(SAL) AS MN, SUM(SAL) AS S FROM EMP GROUP BY DEPT HAVING SUM(SAL) > 250 AND MIN(SAL) < 400');
+      expect(sortedRows(rows)).toEqual(sortedRows([
+        { DEPT: 10, MN: 100, S: 300 },
+        { DEPT: 20, MN: 300, S: 300 },
+      ]));
+    });
+
+    it('still pushes the non-aggregate half of HAVING below the aggregate', async () => {
+      const rows = await runQuery('SELECT DEPT, SUM(SAL) AS S FROM EMP GROUP BY DEPT HAVING DEPT = 20 AND SUM(SAL) > 250');
+      expect(sortedRows(rows)).toEqual(sortedRows([{ DEPT: 20, S: 300 }]));
+    });
+
+    it('reads the same value in SELECT, HAVING and ORDER BY', async () => {
+      const rows = await runQuery(
+        'SELECT DEPT, COUNT(*) AS C FROM EMP GROUP BY DEPT HAVING COUNT(*) > 1 ORDER BY COUNT(*) DESC, DEPT');
+      expect(rows).toEqual([{ DEPT: 10, C: 2 }, { DEPT: 20, C: 2 }]);
+    });
+  });
+
   describe('grouping coverage', () => {
     it('rejects a projected column that is neither grouped nor aggregated', async () => {
       await expect(runQuery('SELECT NAME, COUNT(*) AS C FROM EMP GROUP BY DEPT'))

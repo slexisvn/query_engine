@@ -12,6 +12,7 @@ const PREVIEW_PAGE_SIZE = 25;
 export interface SchemaPanelProps {
   tables: readonly TableEntry[];
   usesSampleSchema: boolean;
+  dataRows: number;
   rowCounts: RowCounts;
   statistics: Map<string, TableStats>;
   importError: string | null;
@@ -145,12 +146,16 @@ export function SchemaPanel(props: SchemaPanelProps) {
 
       {props.usesSampleSchema ? (
         <>
-          <h4 className="schema-group">Sample schema <span>— estimates, no rows</span></h4>
+          <h4 className="schema-group">Sample schema <span>— TPC-H</span></h4>
           <p className="schema-hint">
-            Change a row count and every cost-based pass re-decides. Import a CSV and your tables take
-            over the catalog.
+            Plans against the row-count estimates below; runs against {formatCount(props.dataRows)} real
+            sample rows. Change an estimate and every cost-based pass re-decides. Import a CSV and your
+            tables take over the catalog.
           </p>
           <ul className="schema-tables">{props.tables.map(renderTable)}</ul>
+          {edited ? (
+            <p className="schema-edited">Estimates edited — the optimizer is planning for a catalog this size.</p>
+          ) : null}
           <button type="button" className="schema-reset" onClick={props.onResetRowCounts} disabled={!edited}>
             reset estimates
           </button>

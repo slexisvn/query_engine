@@ -3,6 +3,7 @@ import type { ResultRow } from '../engine/workspace.js';
 
 export interface DataGridProps {
   columns: readonly string[];
+  keys?: readonly string[];
   rows: readonly ResultRow[];
   types?: Readonly<Record<string, string>>;
   firstRowNumber: number;
@@ -25,8 +26,9 @@ function renderCell(value: unknown): string {
   return String(value);
 }
 
-export function DataGrid({ columns, rows, types, firstRowNumber, compact }: DataGridProps) {
-  const numeric = useMemo(() => numericColumns(columns, rows), [columns, rows]);
+export function DataGrid({ columns, keys, rows, types, firstRowNumber, compact }: DataGridProps) {
+  const lookup = keys ?? columns;
+  const numeric = useMemo(() => numericColumns(lookup, rows), [lookup, rows]);
 
   return (
     <div className={`data-grid${compact ? ' compact' : ''}`}>
@@ -34,8 +36,8 @@ export function DataGrid({ columns, rows, types, firstRowNumber, compact }: Data
         <thead>
           <tr>
             <th className="row-number" scope="col">#</th>
-            {columns.map(column => (
-              <th key={column} scope="col" className={numeric.has(column) ? 'numeric' : ''}>
+            {columns.map((column, index) => (
+              <th key={lookup[index]} scope="col" className={numeric.has(lookup[index]) ? 'numeric' : ''}>
                 {column}
                 {types?.[column] ? <span className="column-type">{types[column]}</span> : null}
               </th>
@@ -46,11 +48,11 @@ export function DataGrid({ columns, rows, types, firstRowNumber, compact }: Data
           {rows.map((row, index) => (
             <tr key={index}>
               <td className="row-number">{firstRowNumber + index}</td>
-              {columns.map(column => {
-                const value = row[column];
+              {lookup.map(key => {
+                const value = row[key];
                 const empty = value === null || value === undefined;
                 return (
-                  <td key={column} className={`${numeric.has(column) ? 'numeric' : ''}${empty ? ' empty' : ''}`}>
+                  <td key={key} className={`${numeric.has(key) ? 'numeric' : ''}${empty ? ' empty' : ''}`}>
                     {renderCell(value)}
                   </td>
                 );

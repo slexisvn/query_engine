@@ -46,11 +46,25 @@ describe('PlanProperties cardinality', () => {
     expect(annotate(scan('UNKNOWN'))._cardinality).toBeGreaterThan(0);
   });
 
-  it('reads index scan cardinality from statistics', () => {
-    const stats = makeStats({ A: { rowCount: 900 } });
+  it('costs a point index scan by the distinct values of the indexed column', () => {
+    const stats = makeStats({ A: { rowCount: 900, columns: { id: { ndv: 900 } } } });
     const indexScan = LogicalIndexScan('A', 'A', 'A_idx', 'id', 'point', 1, null, null, true, true, ['id']);
 
-    expect(annotate(indexScan, stats)._cardinality).toBe(900);
+    expect(annotate(indexScan, stats)._cardinality).toBe(1);
+  });
+
+  it('does not read a point index scan as if it scanned the whole table', () => {
+    const stats = makeStats({ A: { rowCount: 900, columns: { id: { ndv: 90 } } } });
+    const indexScan = LogicalIndexScan('A', 'A', 'A_idx', 'id', 'point', 1, null, null, true, true, ['id']);
+
+    expect(annotate(indexScan, stats)._cardinality).toBe(10);
+  });
+
+  it('costs a bounded index range from the column bounds', () => {
+    const stats = makeStats({ A: { rowCount: 1000, columns: { id: { ndv: 1000, min: 0, max: 100 } } } });
+    const indexScan = LogicalIndexScan('A', 'A', 'A_idx', 'id', 'range', null, 0, 25, true, true, ['id']);
+
+    expect(annotate(indexScan, stats)._cardinality).toBe(250);
   });
 
   it('shrinks cardinality through a filter', () => {

@@ -39,9 +39,17 @@ describe('plan view labels', () => {
     expect(balanced(aggregate.detail)).toBe(true);
   });
 
-  it('lists the columns a scan reads', () => {
+  it('shortens a long column list for the tree but keeps it whole elsewhere', () => {
     const scan = nodeTitled('SELECT C_NAME FROM CUSTOMER', 'Seq Scan on CUSTOMER as CUSTOMER');
-    expect(scan.detail).toBe('reads C_CUSTKEY, C_NAME, C_ADDRESS, C_NATIONKEY, C_PHONE, C_ACCTBAL, C_MKTSEGMENT, C_COMMENT');
+    expect(scan.detail).toBe('reads C_CUSTKEY, C_NAME, C_ADDRESS +5 more');
+    expect(scan.fullDetail).toBe('reads C_CUSTKEY, C_NAME, C_ADDRESS, C_NATIONKEY, C_PHONE, C_ACCTBAL, C_MKTSEGMENT, C_COMMENT');
+    expect(scan.label).toContain('C_COMMENT');
+  });
+
+  it('leaves a short column list alone', () => {
+    const scan = nodeTitled('SELECT R_NAME FROM REGION', 'Seq Scan on REGION as REGION');
+    expect(scan.detail).toBe('reads R_REGIONKEY, R_NAME, R_COMMENT');
+    expect(scan.detail).toBe(scan.fullDetail);
   });
 
   it('shows a pruned scan reading fewer columns', () => {

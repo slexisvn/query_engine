@@ -3,11 +3,12 @@ import type { BoundQuery } from '../binder/binder.js';
 import {
   PlanNodeType, JoinType, SetOpType,
   type LogicalPlanNode, type LogicalAggregateNode, type LogicalLimitNode, type LogicalTopNNode,
-  type LogicalFilterNode, type LogicalJoinNode, type LogicalScanNode, type LogicalSetOpNode,
+  type LogicalFilterNode, type LogicalIndexScanNode, type LogicalJoinNode, type LogicalScanNode, type LogicalSetOpNode,
   type LogicalSortNode, type LogicalMergeExchangeNode, type LogicalExchangeReceiveNode,
 } from './logical-plan.js';
 import { createLogicalPlan } from './logical-planner.js';
 import { toNumericValue } from '../storage/data-type.js';
+import type { ColumnValue } from '../storage/data-type.js';
 import { Config } from '../config.js';
 import type { ColumnStats, HistogramLike, Mcv, StatsProvider, TableStats } from '../catalog/statistics.js';
 export type { ColumnStats, HistogramLike, Mcv, StatsProvider, TableStats };
@@ -15,6 +16,37 @@ export type { ColumnStats, HistogramLike, Mcv, StatsProvider, TableStats };
 const MIN_SELECTIVITY = 0.0001;
 const DEFAULT_CORRELATION = 0.5;
 const DEFAULT_NDV = 100;
+const DEFAULT_RANGE_SELECTIVITY = 0.33;
+
+type Comparable = NonNullable<BoundLiteralNode['value']>;
+
+const LITERAL_COMPARISONS: Readonly<Record<string, (left: Comparable, right: Comparable) => boolean>> = {
+  '=': (left, right) => left === right,
+  '!=': (left, right) => left !== right,
+  '<>': (left, right) => left !== right,
+  '<': (left, right) => left < right,
+  '<=': (left, right) => left <= right,
+  '>': (left, right) => left > right,
+  '>=': (left, right) => left >= right,
+};
+
+/**
+ * True or false for a predicate that depends on no column at all — `1 = 1`, `1 = 0`, a bare TRUE.
+ * Returns null when the predicate is not constant, so the caller falls back to statistics.
+ */
+function constantTruth(predicate: BoundExpr): boolean | null {
+  if (predicate.kind === BoundExprKind.LITERAL) {
+    return typeof predicate.value === 'boolean' ? predicate.value : null;
+  }
+  if (predicate.kind !== BoundExprKind.BINARY) return null;
+
+  const { left, right } = predicate;
+  if (left?.kind !== BoundExprKind.LITERAL || right?.kind !== BoundExprKind.LITERAL) return null;
+  if (left.value === null || right.value === null) return null;
+
+  const compare = LITERAL_COMPARISONS[predicate.op];
+  return compare ? compare(left.value, right.value) : null;
+}
 
 export interface EquiPred {
   left: BoundExpr;
@@ -74,7 +106,7 @@ const countedRule: CardinalityRule = (_estimator, node, inputs) =>
 
 const CARDINALITY_RULES: Partial<Record<PlanNodeType, CardinalityRule>> = {
   [PlanNodeType.SCAN]: scanRule,
-  [PlanNodeType.INDEX_SCAN]: scanRule,
+  [PlanNodeType.INDEX_SCAN]: (estimator, node) => estimator.estimateIndexScan(node as LogicalIndexScanNode),
   [PlanNodeType.FILTER]: (estimator, node, inputs) =>
     estimator.estimateFilter(inputs[0], (node as LogicalFilterNode).condition),
   [PlanNodeType.JOIN]: (estimator, node, inputs) => {
@@ -125,6 +157,39 @@ export class DefaultCardinalityEstimator {
     return tableStats ? tableStats.rowCount : Config.defaultCardinality;
   }
 
+  /**
+   * An index scan carries its own predicate in `scanKey` / `scanLow` / `scanHigh`. Costing it as a
+   * full table read would make the selective access path look like the expensive one.
+   */
+  estimateIndexScan(node: LogicalIndexScanNode): number {
+    const rows = this.estimateScan(node.table);
+    const stats = this.stats.get(node.table.toUpperCase())?.columnStats?.get(node.columnName.toUpperCase()) ?? null;
+    const fraction = node.scanType === 'point'
+      ? 1 / Math.max(1, Math.min(stats?.ndv ?? DEFAULT_NDV, rows))
+      : this.indexRangeFraction(node, stats);
+
+    return Math.max(1, Math.round(rows * Math.max(MIN_SELECTIVITY, Math.min(1, fraction))));
+  }
+
+  private indexRangeFraction(node: LogicalIndexScanNode, stats: ColumnStats | null): number {
+    if (!stats) return DEFAULT_RANGE_SELECTIVITY;
+
+    const below = (bound: ColumnValue, fallback: number): number => {
+      if (bound === null || bound === undefined) return fallback;
+      if (stats.histogram) return stats.histogram.estimateLessThan(bound);
+      const min = toNumericValue(stats.min);
+      const max = toNumericValue(stats.max);
+      const value = toNumericValue(bound);
+      if (min === null || max === null || value === null || max <= min) return fallback;
+      return Math.max(0, Math.min(1, (value - min) / (max - min)));
+    };
+
+    const low = below(node.scanLow, 0);
+    const high = below(node.scanHigh, 1);
+    if (high <= low) return DEFAULT_RANGE_SELECTIVITY;
+    return (high - low) * (1 - (stats.nullFraction || 0));
+  }
+
   estimatePlan(node?: LogicalPlanNode | null): number {
     if (!node) return Config.defaultCardinality;
     const inputs = (node.children ?? []).map(child => this.estimatePlan(child));
@@ -153,8 +218,28 @@ export class DefaultCardinalityEstimator {
     for (const pred of equiPreds) {
       selectivity *= this.estimateEquiJoinSelectivity(pred.left, pred.right, leftCard, rightCard);
     }
+    // Anything the join tests beyond the equalities still throws rows away.
+    for (const residual of this.residualConjuncts(condition)) {
+      selectivity *= this.estimateSelectivity(residual);
+    }
 
     return Math.max(1, Math.round(leftCard * rightCard * selectivity));
+  }
+
+  residualConjuncts(condition: BoundExpr | null, into: BoundExpr[] = []): BoundExpr[] {
+    if (!condition) return into;
+
+    if (condition.kind === BoundExprKind.BINARY && condition.op === 'AND') {
+      this.residualConjuncts(condition.left, into);
+      this.residualConjuncts(condition.right, into);
+      return into;
+    }
+
+    const isEquiJoin = condition.kind === BoundExprKind.BINARY && condition.op === '='
+      && condition.left?.kind === BoundExprKind.COLUMN_REF
+      && condition.right?.kind === BoundExprKind.COLUMN_REF;
+    if (!isEquiJoin) into.push(condition);
+    return into;
   }
 
   estimateEquiJoinSelectivity(leftExpr: BoundExpr, rightExpr: BoundExpr, leftCard: number, rightCard: number): number {
@@ -274,6 +359,9 @@ export class DefaultCardinalityEstimator {
 
   estimateSelectivity(predicate: BoundExpr | null): number {
     if (!predicate) return 1.0;
+
+    const constant = constantTruth(predicate);
+    if (constant !== null) return constant ? 1.0 : MIN_SELECTIVITY;
 
     switch (predicate.kind) {
       case BoundExprKind.BINARY: {

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { formatCount, formatPercent, formatSigned, percentChange } from './format.js';
+import { formatCount, formatPercent, percentChange } from './format.js';
 import type { OptimizeTrace, PassStep } from '../engine/trace.js';
 
 const MAX_BAR_SHARE = 46;
@@ -21,6 +21,11 @@ interface IterationGroup {
 interface StageGroup {
   stage: string;
   iterations: IterationGroup[];
+}
+
+function repeatsStageName(group: StageGroup): boolean {
+  const steps = group.iterations.flatMap(iteration => iteration.steps);
+  return steps.length === 1 && steps[0].pass === group.stage;
 }
 
 function groupSteps(steps: readonly PassStep[]): StageGroup[] {
@@ -95,7 +100,7 @@ export function PassList({ optimize, selectedStep, onSelect, hideNoops, onHideNo
       <ol className="pass-groups">
         {groups.map((group, groupIndex) => (
           <li key={`${group.stage}-${groupIndex}`} className="pass-stage">
-            <h4>{group.stage}</h4>
+            {repeatsStageName(group) ? null : <h4>{group.stage}</h4>}
             {group.iterations.map(iteration => (
               <div key={iteration.iteration} className="pass-iteration">
                 {group.iterations.length > 1 || iteration.iteration > 0 ? (
@@ -118,7 +123,7 @@ export function PassList({ optimize, selectedStep, onSelect, hideNoops, onHideNo
                       {step.changed ? (
                         <>
                           <span className="pass-metrics">
-                            <span className="delta-nodes">{formatSigned(to.nodes - from.nodes)} nodes</span>
+                            <span className="delta-nodes">{from.nodes} → {to.nodes} nodes</span>
                             {costShift === null ? null : (
                               <span className={`delta-cost ${bar.tone}`}>{formatPercent(costShift)} cost</span>
                             )}

@@ -57,7 +57,7 @@ export const PASS_NOTES: Readonly<Record<string, PassNote>> = {
   JoinReorder: {
     title: 'Join Reorder',
     summary: 'Enumerates join orders over the join hypergraph (DPhyp, falling back to greedy on large graphs) and keeps the cheapest.',
-    why: 'Join order decides intermediate cardinality, and intermediate cardinality decides runtime. This is where table statistics earn their keep.',
+    why: 'Join order decides intermediate cardinality, and intermediate cardinality decides runtime. This is where table statistics earn their keep. The percentage beside this row is a second opinion: the pass chooses with its own cost model over the join graph, while the bar re-prices the finished plan through the physical planner. When the tree visibly moves and the bar still reads 0%, the two models simply agree on the price.',
     trigger: 'A three-table or larger join where one table is far more selective',
   },
   JoinElimination: {
@@ -117,7 +117,7 @@ export const PASS_NOTES: Readonly<Record<string, PassNote>> = {
   JoinResidualSplit: {
     title: 'Join Residual Split',
     summary: 'Separates a join condition into equi-join conjuncts and a residual filter above the join, for OR predicates spanning both sides.',
-    why: 'A join keeps only the part it can hash on. Leaving a cross-side OR inside the condition would force a nested loop.',
+    why: 'A join keeps only the part it can hash on. Leaving a cross-side OR inside the condition would force a nested loop. Expect the estimate to tick up rather than down: the cost model prices the plan it is handed as a hash join either way, so it charges for the new Filter without ever charging for the nested loop this pass avoided.',
     trigger: 'ON a.K = b.K AND (a.X > 1 OR b.Y > 1)',
   },
   PlanProperties: {

@@ -474,8 +474,21 @@ describe('Binder', () => {
     });
 
     it('tracks aggregates from HAVING clause', () => {
+      const bound = bind('SELECT name, COUNT(*) FROM users GROUP BY name HAVING SUM(age) > 5');
+      expect(bound.aggregates.map(agg => agg.name)).toEqual(['COUNT_STAR', 'SUM']);
+    });
+
+    it('binds an aggregate repeated between SELECT and HAVING once', () => {
       const bound = bind('SELECT name, COUNT(*) FROM users GROUP BY name HAVING COUNT(*) > 5');
-      expect(bound.aggregates.length).toBeGreaterThanOrEqual(2);
+      expect(bound.aggregates).toHaveLength(1);
+      expect(bound.aggregates[0]).toBe(bound.selectItems[1].expr);
+      expect(bound.having.left).toBe(bound.selectItems[1].expr);
+    });
+
+    it('keeps aggregates that differ only by DISTINCT separate', () => {
+      const bound = bind('SELECT COUNT(name), COUNT(DISTINCT name) FROM users');
+      expect(bound.aggregates).toHaveLength(2);
+      expect(bound.aggregates.map(agg => agg.distinct)).toEqual([false, true]);
     });
   });
 

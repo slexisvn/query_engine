@@ -116,6 +116,15 @@ export function aggregateLogical(node: PhysicalPlanNode): LogicalAggregateNode {
 }
 
 export function totalPhysicalCost(node: PhysicalPlanNode): number {
+  // An empty node keeps its child only to borrow a schema from it; that subtree never runs.
+  if (node.type === PhysicalNodeType.EMPTY) return node.cost;
+
+  // A dependent join re-runs its inner side once per outer row, so that subtree is not paid for once.
+  if (node.type === PhysicalNodeType.DEPENDENT_JOIN && node.children.length === 2) {
+    const [outer, inner] = node.children;
+    return node.cost + totalPhysicalCost(outer) + Math.max(1, outer.cardinality) * totalPhysicalCost(inner);
+  }
+
   let total = node.cost;
   for (const child of node.children) total += totalPhysicalCost(child);
   return total;

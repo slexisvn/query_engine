@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { PREVIEW_ROW_CAP, RESULT_ROW_CAP, Workspace } from '../../src/engine/workspace.js';
+import { DEFAULT_ROW_COUNTS } from '../../src/engine/demo-catalog.js';
 
 const SALES_CSV = [
   'region,amount,sold_on,note',
@@ -153,10 +154,19 @@ describe('running a query', () => {
     expect(outcome.ok && Number.isFinite(outcome.ms)).toBe(true);
   });
 
-  it('reports a sample table as having no data instead of returning nothing', async () => {
+  it('runs the bundled examples against real sample rows', async () => {
     const workspace = new Workspace();
     const outcome = await workspace.run('SELECT C_NAME FROM CUSTOMER');
-    expect(outcome.ok ? null : outcome).toMatchObject({ reason: 'no-data', tables: ['CUSTOMER'] });
+    expect(outcome.ok && outcome.total).toBeGreaterThan(0);
+  });
+
+  it('keeps the planning estimate independent of the rows it runs against', async () => {
+    const workspace = new Workspace();
+    await workspace.ready;
+    const customer = workspace.tables().find(table => table.name === 'CUSTOMER');
+    expect(customer?.rowCount).toBe(DEFAULT_ROW_COUNTS.CUSTOMER);
+    expect(customer?.dataRows).toBeGreaterThan(0);
+    expect(customer?.dataRows).toBeLessThan(DEFAULT_ROW_COUNTS.CUSTOMER);
   });
 
   it('reports a runtime failure as an error', async () => {

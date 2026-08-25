@@ -1,7 +1,10 @@
 import { createTPCHCatalog, TPCH_TABLES } from '@engine/catalog/tpch-schema.js';
 import { BTreeIndex } from '@engine/storage/btree.js';
 import { ColumnStatistics, TableStatistics } from '@engine/catalog/statistics.js';
+import { Table } from '@engine/storage/table.js';
 import { byteWidthFor, dateToEpochDays, DataType } from '@engine/storage/data-type.js';
+import { buildSampleRows } from './sample-data.js';
+import type { QueryEngine } from '@engine/engine/query-engine.js';
 import type { Catalog } from '@engine/catalog/catalog.js';
 import type { TableStats } from '@engine/catalog/statistics.js';
 import type { ColumnSchema, ColumnValue } from '@engine/storage/data-type.js';
@@ -156,6 +159,47 @@ export function registerSampleTables(catalog: Catalog): void {
       if (column) catalog.registerIndex(tableName, columnName, new BTreeIndex(column.dataType));
     }
   }
+}
+
+async function fillIndexes(catalog: Catalog, name: string, storage: Table): Promise<void> {
+  const columns = TPCH_TABLES[name].columns;
+
+  for (const columnName of INDEXED_COLUMNS[name] ?? []) {
+    const columnIndex = columns.findIndex(candidate => candidate.name === columnName);
+    const btree = catalog.getIndexForColumn(name, columnName);
+    if (columnIndex === -1 || !btree) continue;
+
+    for (const pageId of storage.pageIds) {
+      const chunk = await storage.pageCache.fetchPage(pageId, true);
+      if (!chunk) continue;
+      for (let rowIndex = 0; rowIndex < chunk.size; rowIndex++) {
+        const key = chunk.columns[columnIndex].get(rowIndex);
+        if (key !== null && key !== undefined) btree.insert(key, { pageId, rowIndex });
+      }
+    }
+
+    storage.registerIndex(columnIndex, btree);
+  }
+}
+
+export async function loadSampleData(engine: QueryEngine): Promise<RowCounts> {
+  const rows = buildSampleRows();
+  const loaded: Record<string, number> = {};
+
+  for (const [name, table] of Object.entries(TPCH_TABLES)) {
+    const tableRows = rows[name] ?? [];
+    const pageStore = engine.storageBackend.createPageStore(engine.tempManager.allocate('buffer', name));
+    const storage = new Table(name, table.columns, pageStore);
+
+    await storage.insertRows(tableRows.map(row => table.columns.map(column => row[column.name] ?? null)));
+    await storage.flush();
+
+    engine.catalog.registerTableStorage(name, storage);
+    await fillIndexes(engine.catalog, name, storage);
+    loaded[name] = tableRows.length;
+  }
+
+  return loaded;
 }
 
 export function dropSampleTables(catalog: Catalog): void {

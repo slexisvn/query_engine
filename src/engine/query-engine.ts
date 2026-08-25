@@ -137,6 +137,7 @@ interface DDLResult {
 interface RunRowsResult {
   rows: Record<string, ColumnValue>[];
   columns: string[];
+  rowKeys?: string[];
 }
 
 const DATAFRAME_TABLE_PREFIX = '__DF';
@@ -427,7 +428,7 @@ ${physicalPlanToString(physical)}`;
       this.executor.cteDefinitions = cteMap;
       const { sink, columnNames } = await this.executor.execute(plan, outputColumns as ExecutorColumns);
       const result = new QueryResult(columnNames, sink);
-      return { rows: await result.toArray(), columns: columnNames };
+      return { rows: await result.toArray(), columns: columnNames, rowKeys: result.rowKeys };
     } finally {
       this._activeCancel = null;
     }

@@ -6,12 +6,14 @@ export interface TopBarProps {
   sidebarOpen: boolean;
   running: boolean;
   stale: boolean;
+  neverRun: boolean;
   usesSampleSchema: boolean;
   tableCount: number;
   loadedRows: number;
   onSql: (sql: string) => void;
   onToggleSidebar: () => void;
   onRun: () => void;
+  onHelp: () => void;
 }
 
 export function TopBar(props: TopBarProps) {
@@ -46,21 +48,27 @@ export function TopBar(props: TopBarProps) {
               <option key={example.name} value={example.name}>{example.name}</option>
             ))}
           </select>
-          <p className="top-bar-teaches">{current?.teaches ?? 'Edit the SQL, then press Run to plan and execute it.'}</p>
+          <p className="top-bar-teaches" title={current?.teaches}>
+            {current?.teaches ?? 'Edit the SQL, then press Run to plan and execute it.'}
+          </p>
         </>
       ) : (
         <p className="top-bar-teaches">Querying your own data. Remove every import to get the sample schema and its examples back.</p>
       )}
 
       <span className="catalog-summary">
-        {props.stale
+        {props.stale && !props.neverRun
           ? 'out of date — press Run'
-          : `${props.tableCount} tables · ${props.loadedRows === 0 ? 'no data loaded' : `${formatCount(props.loadedRows)} rows loaded`}`}
+          : `${props.tableCount} tables · ${formatCount(props.loadedRows)} rows`}
       </span>
+
+      <button type="button" className="help-button" onClick={props.onHelp} title="What this tool shows">
+        ?
+      </button>
 
       <button
         type="button"
-        className={`run-button${props.stale ? ' stale' : ''}`}
+        className={`run-button${props.stale || props.neverRun ? ' stale' : ''}`}
         onClick={props.onRun}
         disabled={props.running}
         title={props.stale ? 'Everything on the right is from the last run' : 'Plan and run the query'}
