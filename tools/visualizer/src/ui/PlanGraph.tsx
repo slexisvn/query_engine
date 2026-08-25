@@ -9,7 +9,7 @@ import {
   rowsLabel,
 } from './node-sizer.js';
 import { DETAIL_FONT, ROWS_FONT, TITLE_FONT } from './text-metrics.js';
-import { applyGesture, gestureOf, homeViewport, zoomAbout } from './gesture.js';
+import { MIN_READABLE_SCALE, applyGesture, gestureOf, homeViewport, zoomAbout } from './gesture.js';
 import type { Gesture, Point, Size, Viewport } from './gesture.js';
 import type { MorphFrame, NodeStyle } from '../engine/morph.js';
 import type { PlanViewNode } from '../engine/plan-view.js';
@@ -19,6 +19,7 @@ const DETAIL_BASELINE = 11;
 const ZOOM_WHEEL_STEP = 0.0015;
 const ZOOM_BUTTON_STEP = 1.25;
 const QUIET_OPACITY = 0.28;
+const FIT_WHOLE_SCALE = 0;
 
 const LEGEND: readonly { status: string; label: string }[] = [
   { status: 'moved', label: 'moved' },
@@ -32,6 +33,7 @@ export interface PlanGraphProps {
   t: number;
   spotlight: boolean;
   legend: boolean;
+  fitWhole: boolean;
   caption: string | null;
   onSelect: (node: PlanViewNode | null) => void;
 }
@@ -100,7 +102,7 @@ function toCanvasSpace(svg: SVGSVGElement, event: { clientX: number; clientY: nu
   return { x: point.x, y: point.y };
 }
 
-export function PlanGraph({ frame, t, spotlight, legend, caption, onSelect }: PlanGraphProps) {
+export function PlanGraph({ frame, t, spotlight, legend, fitWhole, caption, onSelect }: PlanGraphProps) {
   const [moved, setMoved] = useState<Viewport | null>(null);
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
   const shell = useRef<HTMLDivElement>(null);
@@ -129,7 +131,10 @@ export function PlanGraph({ frame, t, spotlight, legend, caption, onSelect }: Pl
     };
   }, []);
 
-  const home = useMemo(() => homeViewport(frame.viewBox, size), [frame.viewBox, size]);
+  const home = useMemo(
+    () => homeViewport(frame.viewBox, size, fitWhole ? FIT_WHOLE_SCALE : MIN_READABLE_SCALE),
+    [frame.viewBox, size, fitWhole],
+  );
   const viewport = moved ?? home;
   const setViewport = setMoved;
   const live = useRef(viewport);

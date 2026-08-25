@@ -13,7 +13,6 @@ export interface TopBarProps {
   onSql: (sql: string) => void;
   onToggleSidebar: () => void;
   onRun: () => void;
-  onHelp: () => void;
 }
 
 export function TopBar(props: TopBarProps) {
@@ -61,10 +60,6 @@ export function TopBar(props: TopBarProps) {
           ? 'out of date — press Run'
           : `${props.tableCount} tables · ${formatCount(props.loadedRows)} rows`}
       </span>
-
-      <button type="button" className="help-button" onClick={props.onHelp} title="What this tool shows">
-        ?
-      </button>
 
       <button
         type="button"

@@ -1,4 +1,5 @@
 import { physicalPlanToString, totalPhysicalCost } from '@engine/execution/physical-plan.js';
+import { COST_HINT } from '../content/cost.js';
 import { formatCount } from './format.js';
 import type { PhysicalPlanNode } from '@engine/execution/physical-plan.js';
 
@@ -23,8 +24,8 @@ export function PhysicalView({ physical }: PhysicalViewProps) {
       <header>
         <h4>Physical plan</h4>
         <p>
-          Operator choices the physical planner made from the optimized logical plan — total cost{' '}
-          {formatCount(totalPhysicalCost(physical))}.
+          Operator choices the physical planner made from the optimized logical plan — estimated cost{' '}
+          <abbr title={COST_HINT}>{formatCount(totalPhysicalCost(physical))}</abbr>.
         </p>
       </header>
       <pre>{physicalPlanToString(physical)}</pre>

@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { COST_CAPTION, COST_HINT } from '../content/cost.js';
 import { formatCount, formatPercent, percentChange } from './format.js';
 import type { OptimizeTrace, PassStep } from '../engine/trace.js';
 
@@ -87,9 +88,12 @@ export function PassList({ optimize, selectedStep, onSelect, hideNoops, onHideNo
             only changes
           </label>
         </div>
-        <div className="pass-list-cost">
-          {formatCount(first)} → {formatCount(last)}
-          {overall === null ? '' : <span className={overall < 0 ? 'better' : 'worse'}> · {formatPercent(overall)}</span>}
+        <div className="pass-list-cost" title={COST_HINT}>
+          <span className="cost-caption">{COST_CAPTION}</span>
+          <span className="cost-endpoints">{formatCount(first)} → {formatCount(last)}</span>
+          {overall === null ? null : (
+            <span className={overall < 0 ? 'better' : 'worse'}>{formatPercent(overall)}</span>
+          )}
         </div>
       </header>
 
@@ -117,7 +121,7 @@ export function PassList({ optimize, selectedStep, onSelect, hideNoops, onHideNo
                       type="button"
                       className={`pass-row${step.index === selectedStep ? ' selected' : ''}${step.changed ? '' : ' noop'}`}
                       onClick={() => onSelect(step.index)}
-                      title={step.changed ? `${formatCount(from.cost)} → ${formatCount(to.cost)}` : undefined}
+                      title={step.changed ? `${COST_CAPTION} ${formatCount(from.cost)} → ${formatCount(to.cost)}` : undefined}
                     >
                       <span className="pass-name">{step.pass}</span>
                       {step.changed ? (

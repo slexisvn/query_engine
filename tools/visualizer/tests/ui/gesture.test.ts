@@ -120,4 +120,18 @@ describe('home viewport', () => {
   it('stays at rest until it has been measured', () => {
     expect(homeViewport(wide, { width: 0, height: 0 })).toEqual(IDENTITY);
   });
+
+  it('shows the whole plan when the readable floor is waived', () => {
+    const fit = Math.min(pane.width / wide.width, pane.height / wide.height);
+    expect(fit).toBeLessThan(MIN_READABLE_SCALE);
+    expect(homeViewport(wide, pane, 0)).toEqual(IDENTITY);
+  });
+
+  it('zooms only as far as the floor it is given', () => {
+    const floor = 0.8;
+    const view = homeViewport(wide, pane, floor);
+    const fit = Math.min(pane.width / wide.width, pane.height / wide.height);
+    expect(fit).toBeLessThan(floor);
+    expect(fit * view.zoom).toBeCloseTo(floor, 6);
+  });
 });

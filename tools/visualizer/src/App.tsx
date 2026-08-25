@@ -7,7 +7,6 @@ import { traceQuery } from './engine/trace.js';
 import { Workspace } from './engine/workspace.js';
 import { DEFAULT_EXAMPLE } from './content/examples.js';
 import { CompileError } from './ui/CompileError.js';
-import { HelpPanel } from './ui/HelpPanel.js';
 import { JsonView } from './ui/JsonView.js';
 import { PaneRail } from './ui/PaneRail.js';
 import { PassList } from './ui/PassList.js';
@@ -94,7 +93,6 @@ export function App() {
   const [running, setRunning] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
-  const [helpOpen, setHelpOpen] = useState(false);
 
   const compact = useMediaQuery(COMPACT_LAYOUT);
 
@@ -276,7 +274,6 @@ export function App() {
         onSql={setSql}
         onToggleSidebar={() => setSidebarOpen(open => !open)}
         onRun={() => void runQuery()}
-        onHelp={() => setHelpOpen(true)}
       />
 
       <div className="app-body">
@@ -385,13 +382,22 @@ export function App() {
             <>
               {tab === 'tree' ? (
                 stage === 'plan' && planStageMorph ? (
-                  <PlanGraph frame={planStageMorph} t={1} spotlight={false} legend={false} caption={null} onSelect={setSelected} />
+                  <PlanGraph
+                    frame={planStageMorph}
+                    t={1}
+                    spotlight={false}
+                    legend={false}
+                    fitWhole={compact}
+                    caption={null}
+                    onSelect={setSelected}
+                  />
                 ) : morph ? (
                   <PlanGraph
                     frame={morph}
                     t={tween.t}
                     spotlight={spotlight}
-                    legend
+                    legend={!compact}
+                    fitWhole={compact}
                     caption={step === null ? null : `${step.pass} · ${step.changed
                       ? `${optimize?.snapshots[step.from].nodes} → ${optimize?.snapshots[step.to].nodes} nodes`
                       : 'no change'}`}
@@ -446,14 +452,13 @@ export function App() {
         <PaneRail
           selected={pane}
           badges={{
+            query: stale ? 'run it' : undefined,
             passes: optimize ? `${changedTotal}/${optimize.steps.length}` : undefined,
             stages: STAGES.find(candidate => candidate.kind === stage)?.label,
           }}
           onSelect={setPane}
         />
       ) : null}
-
-      {helpOpen ? <HelpPanel onClose={() => setHelpOpen(false)} /> : null}
     </div>
   );
 }

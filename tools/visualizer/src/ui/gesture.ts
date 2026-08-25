@@ -71,11 +71,11 @@ export function applyGesture(view: Viewport, from: Gesture, to: Gesture): Viewpo
   return { zoom: zoomed.zoom, x: zoomed.x + (to.x - from.x), y: zoomed.y + (to.y - from.y) };
 }
 
-export function homeViewport(viewBox: Rect, size: Size): Viewport {
+export function homeViewport(viewBox: Rect, size: Size, minScale: number = MIN_READABLE_SCALE): Viewport {
   if (size.width <= 0 || size.height <= 0 || viewBox.width <= 0 || viewBox.height <= 0) return IDENTITY;
 
   const fit = Math.min(size.width / viewBox.width, size.height / viewBox.height);
-  if (fit >= MIN_READABLE_SCALE) return IDENTITY;
+  if (fit >= minScale) return IDENTITY;
 
-  return zoomAbout(IDENTITY, MIN_READABLE_SCALE / fit, { x: viewBox.x + viewBox.width / 2, y: viewBox.y });
+  return zoomAbout(IDENTITY, minScale / fit, { x: viewBox.x + viewBox.width / 2, y: viewBox.y });
 }
