@@ -13,7 +13,7 @@ export function countNodes(plan: LogicalPlanNode): number {
 }
 
 export class PlanMetrics {
-  private readonly planner: PhysicalPlanner;
+  readonly planner: PhysicalPlanner;
   private readonly annotator: PlanPropertyAnnotator;
 
   constructor(statistics: Map<string, TableStats>) {

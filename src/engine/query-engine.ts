@@ -12,6 +12,7 @@ import type { OptimizationContext } from '../optimizer/pass.js';
 import { QueryExecutor } from '../execution/query-executor.js';
 import { PhysicalPlanner } from '../execution/physical-planner.js';
 import { QueryResult } from '../execution/query-result.js';
+import { ExecutionProfiler, profileToString } from '../execution/execution-profile.js';
 import { BTreeIndex } from '../storage/btree.js';
 import { StatisticsCache } from '../catalog/statistics-cache.js';
 import { LRUCache } from '../utils/lru-cache.js';
@@ -35,6 +36,7 @@ import type { ClusterManager } from '../distributed/cluster/cluster-manager.js';
 import type { PartitionMap } from '../distributed/partition/partition-map.js';
 import type { QueryCoordinator } from '../distributed/execution/coordinator.js';
 import type { NodeCapacity, NodeId, NodeRole as NodeRoleType } from '../distributed/distributed-types.js';
+import type { ExecutionProfile } from '../execution/execution-profile.js';
 
 export type QueryParam = LiteralValue;
 
@@ -139,6 +141,12 @@ interface RunRowsResult {
   columns: string[];
   rowKeys?: string[];
 }
+
+export interface ProfiledRunResult extends RunRowsResult {
+  profile: ExecutionProfile | null;
+}
+
+const EXPLAIN_MS_DECIMALS = 2;
 
 const DATAFRAME_TABLE_PREFIX = '__DF';
 
@@ -376,11 +384,15 @@ export class QueryEngine {
     return new DataFrame(this, logicalPlan, schema, cteMap);
   }
 
-  async _formatPlan(plan: LogicalPlanNode): Promise<string> {
+  async _formatLogicalPlan(plan: LogicalPlanNode): Promise<string> {
     const { formatPlan } = await import('../planner/plan-formatter.js');
+    return formatPlan(plan);
+  }
+
+  async _formatPlan(plan: LogicalPlanNode): Promise<string> {
     const { physicalPlanToString } = await import('../execution/physical-plan.js');
     const physical = this.executor.physicalPlanner.plan(plan);
-    return `${formatPlan(plan)}
+    return `${await this._formatLogicalPlan(plan)}
 Physical Plan:
 ${physicalPlanToString(physical)}`;
   }
@@ -398,6 +410,34 @@ ${physicalPlanToString(physical)}`;
     return new QueryResult(columnNames, sink);
   }
 
+  async _collectRows(plan: LogicalPlanNode, outputColumns: OutputColumn[], cteMap: Map<string, LogicalPlanNode>): Promise<RunRowsResult> {
+    this.executor.cteDefinitions = cteMap;
+    const { sink, columnNames } = await this.executor.execute(plan, outputColumns as ExecutorColumns);
+    const result = new QueryResult(columnNames, sink);
+    return { rows: await result.toArray(), columns: columnNames, rowKeys: result.rowKeys };
+  }
+
+  async _profiled<T>(body: () => Promise<T>): Promise<{ value: T; profile: ExecutionProfile }> {
+    const profiler = new ExecutionProfiler();
+    this.executor.profiler = profiler;
+    try {
+      const value = await body();
+      return { value, profile: profiler.snapshot() };
+    } finally {
+      this.executor.profiler = null;
+    }
+  }
+
+  async _analyzeResult(plan: LogicalPlanNode, outputColumns: OutputColumn[], cteMap: Map<string, LogicalPlanNode>): Promise<RunRowsResult> {
+    const logicalStr = await this._formatLogicalPlan(plan);
+    const { value, profile } = await this._profiled(() => this._collectRows(plan, outputColumns, cteMap));
+    const analyzeStr = `${logicalStr}
+Physical Plan:
+${profileToString(profile)}Execution Time: ${profile.totalMs.toFixed(EXPLAIN_MS_DECIMALS)} ms
+Rows Returned: ${value.rows.length}`;
+    return { rows: [{ 'EXPLAIN_ANALYZE': analyzeStr }], columns: ['EXPLAIN_ANALYZE'] };
+  }
+
   async run(sql: string, params: readonly QueryParam[] = []): Promise<DDLResult | RunRowsResult> {
     const compiled = await this.compile(sql, params);
 
@@ -412,23 +452,37 @@ ${physicalPlanToString(physical)}`;
     }
 
     if (isAnalyze) {
-      const planStr = await this._formatPlan(plan);
-      const startTime = performance.now();
-      this.executor.cteDefinitions = cteMap;
-      const { sink, columnNames } = await this.executor.execute(plan, outputColumns as ExecutorColumns);
-      const result = new QueryResult(columnNames, sink);
-      const rows = await result.toArray();
-      const elapsed = (performance.now() - startTime).toFixed(2);
-      const analyzeStr = `${planStr}\nExecution Time: ${elapsed} ms\nRows Returned: ${rows.length}`;
-      return { rows: [{ 'EXPLAIN_ANALYZE': analyzeStr }], columns: ['EXPLAIN_ANALYZE'] };
+      return this._analyzeResult(plan, outputColumns, cteMap);
     }
 
     this._activeCancel = new AbortController();
     try {
-      this.executor.cteDefinitions = cteMap;
-      const { sink, columnNames } = await this.executor.execute(plan, outputColumns as ExecutorColumns);
-      const result = new QueryResult(columnNames, sink);
-      return { rows: await result.toArray(), columns: columnNames, rowKeys: result.rowKeys };
+      return await this._collectRows(plan, outputColumns, cteMap);
+    } finally {
+      this._activeCancel = null;
+    }
+  }
+
+  async runProfiled(sql: string, params: readonly QueryParam[] = []): Promise<DDLResult | ProfiledRunResult> {
+    const compiled = await this.compile(sql, params);
+
+    if (compiled.ddl) {
+      return this.executeDDL(compiled.ddl);
+    }
+
+    const { plan, outputColumns, cteMap, isExplain, isAnalyze } = compiled;
+
+    if (isExplain) {
+      const explained = isAnalyze
+        ? await this._analyzeResult(plan, outputColumns, cteMap)
+        : await this._explainPlanResult(plan);
+      return { ...explained, profile: null };
+    }
+
+    this._activeCancel = new AbortController();
+    try {
+      const { value, profile } = await this._profiled(() => this._collectRows(plan, outputColumns, cteMap));
+      return { ...value, profile };
     } finally {
       this._activeCancel = null;
     }

@@ -11,6 +11,7 @@ const EXIT_PHASE: Phase = { start: 0, end: 0.25 };
 const TRAVEL_PHASE: Phase = { start: 0.2, end: 0.8 };
 const ENTER_PHASE: Phase = { start: 0.75, end: 1 };
 const GHOST_SCALE = 0.55;
+const AFTER_THRESHOLD = 0.5;
 const SIBLING_GAP_FACTOR = 1.5;
 
 interface Phase {
@@ -66,6 +67,11 @@ export interface MorphFrame {
   nodes: MorphNode[];
   edges: MorphEdge[];
   viewBox: Bounds;
+}
+
+export interface MorphContent {
+  node: PlanViewNode;
+  side: 'before' | 'after';
 }
 
 export interface NodeStyle {
@@ -261,9 +267,29 @@ export function buildMorph(before: PlanViewNode, after: PlanViewNode, diff: Plan
   };
 }
 
+export function showsAfter(t: number): boolean {
+  return t >= AFTER_THRESHOLD;
+}
+
+export function contentAt(frame: MorphFrame, key: string, t: number): MorphContent | null {
+  const node = frame.nodes.find(entry => entry.key === key);
+  if (node === undefined) return null;
+
+  if (node.status === 'removed') {
+    return node.fromNode === null ? null : { node: node.fromNode, side: 'before' };
+  }
+  if (node.status === 'added') {
+    return node.toNode === null ? null : { node: node.toNode, side: 'after' };
+  }
+
+  const preferred = showsAfter(t) ? node.toNode ?? node.fromNode : node.fromNode ?? node.toNode;
+  if (preferred === null) return null;
+  return { node: preferred, side: preferred === node.toNode ? 'after' : 'before' };
+}
+
 export function nodeStyleAt(node: MorphNode, t: number): NodeStyle {
   const travel = progress(t, TRAVEL_PHASE);
-  const showAfter = t >= 0.5;
+  const showAfter = showsAfter(t);
   const base = {
     x: lerp(node.from.x, node.to.x, travel),
     y: lerp(node.from.y, node.to.y, travel),

@@ -2,7 +2,8 @@ import { useMemo, useRef, useState } from 'react';
 import { DEFAULT_ROW_COUNTS } from '../engine/demo-catalog.js';
 import { DataGrid } from './DataGrid.js';
 import { Pager, pageCountOf } from './Pager.js';
-import { formatCount } from './format.js';
+import { columnFactOf } from '../engine/column-facts.js';
+import { formatCount, formatValue } from './format.js';
 import type { TableStats } from '@engine/catalog/statistics.js';
 import type { RowCounts } from '../engine/demo-catalog.js';
 import type { TableEntry } from '../engine/workspace.js';
@@ -23,25 +24,38 @@ export interface SchemaPanelProps {
   onResetRowCounts: () => void;
 }
 
-function distinctCountOf(statistics: Map<string, TableStats>, table: string, column: string): number | null {
-  return statistics.get(table)?.getColumnStats?.(column)?.ndv ?? null;
-}
+const STATS_HINT =
+  'What the estimator knows about each column. A column with no histogram gets a fixed guess '
+  + 'for range predicates, which is where cardinality estimates start drifting.';
 
 function ColumnList({ table, statistics }: { table: TableEntry; statistics: Map<string, TableStats> }) {
   return (
-    <table className="schema-detail">
+    <table className="schema-detail" title={STATS_HINT}>
       <thead>
-        <tr><th>column</th><th>type</th><th>distinct</th><th>index</th></tr>
+        <tr>
+          <th>column</th><th>type</th><th>distinct</th><th>nulls</th>
+          <th>range</th><th>hist</th><th>index</th>
+        </tr>
       </thead>
       <tbody>
-        {table.columns.map(column => (
-          <tr key={column.name}>
-            <td>{column.name}</td>
-            <td className="schema-type">{column.dataType}</td>
-            <td>{formatCount(distinctCountOf(statistics, table.name, column.name))}</td>
-            <td>{table.indexed.includes(column.name) ? 'yes' : ''}</td>
-          </tr>
-        ))}
+        {table.columns.map(column => {
+          const fact = columnFactOf(statistics, table.name, column.name, undefined, String(column.dataType));
+          return (
+            <tr key={column.name} className={fact.known ? '' : 'no-column-stats'}>
+              <td>{column.name}</td>
+              <td className="schema-type">{column.dataType}</td>
+              <td>{formatCount(fact.ndv)}</td>
+              <td>{fact.nullFraction === null ? '—' : `${(fact.nullFraction * 100).toFixed(0)}%`}</td>
+              <td className="schema-range">
+                {fact.min === null && fact.max === null
+                  ? '—'
+                  : `${formatValue(fact.min, column.dataType)}…${formatValue(fact.max, column.dataType)}`}
+              </td>
+              <td>{fact.histogramBuckets === null ? '—' : fact.histogramBuckets}</td>
+              <td>{table.indexed.includes(column.name) ? 'yes' : ''}</td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );

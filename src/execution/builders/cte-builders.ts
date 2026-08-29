@@ -30,8 +30,42 @@ interface ExecutorLike {
   buildLogicalPipeline(node: LogicalPlanNode): Promise<CompiledPipeline>;
   buildSchemaMapping(schema: ExecSchema, alias: string): ColumnMapping;
   findCTEPlan(name: string): LogicalPlanNode | null;
-  cteResults: Map<string, MaterializedCTE>;
+  _executeSubPipeline(compiled: CompiledPipeline): Promise<DataChunk[]>;
+  cteResults: Map<string, Promise<MaterializedCTE>>;
+  ctePipelines: Map<string, Promise<CompiledPipeline>>;
   cteDefinitions: Map<string, LogicalPlanNode>;
+}
+
+function onceByKey<V>(cache: Map<string, Promise<V>>, key: string, start: () => Promise<V>): Promise<V> {
+  const inFlight = cache.get(key);
+  if (inFlight) return inFlight;
+  const started = start();
+  cache.set(key, started);
+  return started;
+}
+
+function compiledCTEFor(executor: ExecutorLike, key: string, ctePlan: LogicalPlanNode): Promise<CompiledPipeline> {
+  return onceByKey(executor.ctePipelines, key, () => executor.buildLogicalPipeline(ctePlan));
+}
+
+function materializedCTEFor(executor: ExecutorLike, key: string, compiled: CompiledPipeline): Promise<MaterializedCTE> {
+  return onceByKey(executor.cteResults, key, async () => ({
+    chunks: await executor._executeSubPipeline(compiled),
+    schema: compiled.schema,
+    columnMapping: compiled.columnMapping,
+  }));
+}
+
+function cloneChunk(chunk: DataChunk): DataChunk {
+  const columns = chunk.columns.map((col): Column => {
+    const cloned = new Column(col.dataType, chunk.size);
+    for (let i = 0; i < chunk.size; i++) {
+      cloned.set(i, col.get(chunk.activeRowIndex(i)));
+    }
+    cloned.length = chunk.size;
+    return cloned;
+  });
+  return new DataChunk(columns, chunk.size);
 }
 
 export async function buildCTEAnchor(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
@@ -50,7 +84,7 @@ export async function buildCTEAnchor(executor: ExecutorLike, physical: PhysicalP
       const producerPipelineId = graph.createPipeline(cteSink);
       producer.register(graph, producerPipelineId, cteSink);
       cteSink.finalize = async () => {
-        executor.cteResults.set(node.cteName.toUpperCase(), { chunks: cteChunks, schema: producer.schema, columnMapping: producer.columnMapping });
+        executor.cteResults.set(node.cteName.toUpperCase(), Promise.resolve({ chunks: cteChunks, schema: producer.schema, columnMapping: producer.columnMapping }));
       };
 
       graph.addDependency(currentPipelineId, producerPipelineId);
@@ -64,7 +98,8 @@ export async function buildCTEScan(executor: ExecutorLike, physical: PhysicalPla
   const ctePlan = executor.findCTEPlan(node.cteName);
   if (!ctePlan) throw new Error(`CTE not found: ${node.cteName}`);
 
-  const compiledCTE = await executor.buildLogicalPipeline(ctePlan);
+  const key = node.cteName.toUpperCase();
+  const compiledCTE = await compiledCTEFor(executor, key, ctePlan);
   const schema: ExecSchema = compiledCTE.schema.map((col) => ({ ...col, tableAlias: node.alias }));
 
   return {
@@ -72,40 +107,9 @@ export async function buildCTEScan(executor: ExecutorLike, physical: PhysicalPla
     columnMapping: executor.buildSchemaMapping(schema, node.alias),
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       const source: SourceGenerator = async function* () {
-        let stored = executor.cteResults.get(node.cteName.toUpperCase());
-        if (!stored) {
-          const cteChunks: DataChunk[] = [];
-          const cteSink: Sink = {
-            async consume(c: DataChunk) { cteChunks.push(c); },
-            async finalize() {}
-          };
-          const cteGraph = new PipelineGraph();
-          const ctePipelineId = cteGraph.createPipeline(cteSink);
-          compiledCTE.register(cteGraph, ctePipelineId, cteSink);
-          const scheduler = new TaskScheduler();
-          await scheduler.schedule(cteGraph);
+        const stored = await materializedCTEFor(executor, key, compiledCTE);
 
-          stored = {
-            chunks: cteChunks,
-            schema: compiledCTE.schema,
-            columnMapping: compiledCTE.columnMapping,
-          };
-          executor.cteResults.set(node.cteName.toUpperCase(), stored);
-        }
-
-        const clonedChunks = stored.chunks.map((chunk: DataChunk) => {
-          const cols = chunk.columns.map((col): Column => {
-            const newCol = new Column(col.dataType, chunk.size);
-            for (let i = 0; i < chunk.size; i++) {
-              newCol.set(i, col.get(chunk.activeRowIndex(i)));
-            }
-            newCol.length = chunk.size;
-            return newCol;
-          });
-          return new DataChunk(cols, chunk.size);
-        });
-
-        for (const chunk of clonedChunks) {
+        for (const chunk of stored.chunks.map(cloneChunk)) {
           await currentSink.consume(chunk);
           yield chunk;
         }

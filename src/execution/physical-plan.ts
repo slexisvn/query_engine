@@ -130,19 +130,20 @@ export function totalPhysicalCost(node: PhysicalPlanNode): number {
   return total;
 }
 
-export function physicalPlanToString(node: PhysicalPlanNode, indent: number = 0): string {
-  const prefix = '  '.repeat(indent);
-  let text = `${prefix}${node.type}`;
-  if (isPhysicalJoin(node)) {
-    text += `(${node.logical.joinType}, build=${node.buildSide}`;
-    if (node.dedupeBuild) text += ', dedupeBuild';
-    if (node.runtimeFilterEntries > 0) text += ', runtimeFilter';
-    if (node.requiresSort.left || node.requiresSort.right) {
-      text += `, sort=${node.requiresSort.left ? 'L' : ''}${node.requiresSort.right ? 'R' : ''}`;
-    }
-    text += ')';
+export function describePhysicalNode(node: PhysicalPlanNode): string {
+  if (!isPhysicalJoin(node)) return node.type;
+
+  let text = `${node.type}(${node.logical.joinType}, build=${node.buildSide}`;
+  if (node.dedupeBuild) text += ', dedupeBuild';
+  if (node.runtimeFilterEntries > 0) text += ', runtimeFilter';
+  if (node.requiresSort.left || node.requiresSort.right) {
+    text += `, sort=${node.requiresSort.left ? 'L' : ''}${node.requiresSort.right ? 'R' : ''}`;
   }
-  text += `\n`;
+  return `${text})`;
+}
+
+export function physicalPlanToString(node: PhysicalPlanNode, indent: number = 0): string {
+  let text = `${'  '.repeat(indent)}${describePhysicalNode(node)}\n`;
   for (const child of node.children) text += physicalPlanToString(child, indent + 1);
   return text;
 }

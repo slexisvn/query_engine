@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { EXAMPLES } from '../content/examples.js';
 import { formatCount } from './format.js';
 
@@ -13,6 +14,7 @@ export interface TopBarProps {
   onSql: (sql: string) => void;
   onToggleSidebar: () => void;
   onRun: () => void;
+  children?: ReactNode;
 }
 
 export function TopBar(props: TopBarProps) {
@@ -54,6 +56,8 @@ export function TopBar(props: TopBarProps) {
       ) : (
         <p className="top-bar-teaches">Querying your own data. Remove every import to get the sample schema and its examples back.</p>
       )}
+
+      {props.children}
 
       <span className="catalog-summary">
         {props.stale && !props.neverRun

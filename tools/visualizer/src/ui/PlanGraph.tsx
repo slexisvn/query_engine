@@ -12,7 +12,6 @@ import { DETAIL_FONT, ROWS_FONT, TITLE_FONT } from './text-metrics.js';
 import { MIN_READABLE_SCALE, applyGesture, gestureOf, homeViewport, zoomAbout } from './gesture.js';
 import type { Gesture, Point, Size, Viewport } from './gesture.js';
 import type { MorphFrame, NodeStyle } from '../engine/morph.js';
-import type { PlanViewNode } from '../engine/plan-view.js';
 
 const TITLE_BASELINE = 13;
 const DETAIL_BASELINE = 11;
@@ -35,7 +34,7 @@ export interface PlanGraphProps {
   legend: boolean;
   fitWhole: boolean;
   caption: string | null;
-  onSelect: (node: PlanViewNode | null) => void;
+  onSelect: (key: string) => void;
 }
 
 function PlanNode({ style, status, onSelect }: { style: NodeStyle; status: string; onSelect: () => void }) {
@@ -219,7 +218,7 @@ export function PlanGraph({ frame, t, spotlight, legend, fitWhole, caption, onSe
                 transform={`translate(${style.x} ${style.y}) scale(${style.scale})`}
                 opacity={style.opacity * dimmed}
               >
-                <PlanNode style={style} status={node.status} onSelect={() => onSelect(style.content)} />
+                <PlanNode style={style} status={node.status} onSelect={() => onSelect(node.key)} />
               </g>
             );
           })}

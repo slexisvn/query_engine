@@ -250,7 +250,7 @@ export class PhysicalPlanner {
         node,
         children,
         cardinality,
-        hashCost * Config.perfectHashAggregateCostFactor,
+        this.costModel.perfectHashAggregateCost(childCard, cardinality),
       ));
     }
 

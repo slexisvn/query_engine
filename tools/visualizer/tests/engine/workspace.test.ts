@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { flattenProfile } from '@engine/execution/execution-profile.js';
 import { PREVIEW_ROW_CAP, RESULT_ROW_CAP, Workspace } from '../../src/engine/workspace.js';
 import { DEFAULT_ROW_COUNTS } from '../../src/engine/demo-catalog.js';
+import type { RunOutcome } from '../../src/engine/workspace.js';
 
 const SALES_CSV = [
   'region,amount,sold_on,note',
@@ -9,6 +11,26 @@ const SALES_CSV = [
   'north,45.25,2024-03-02,',
   'east,,2024-03-02,missing amount',
 ].join('\n');
+
+const PUSHDOWN = new Set(['PredicatePushdown']);
+
+const JOIN_QUERY = `SELECT c.C_NAME, o.O_TOTALPRICE
+FROM CUSTOMER c
+  JOIN ORDERS o ON c.C_CUSTKEY = o.O_CUSTKEY
+WHERE c.C_MKTSEGMENT = 'BUILDING' AND 1 = 1
+ORDER BY o.O_TOTALPRICE DESC
+LIMIT 10`;
+
+function operatorTypes(outcome: RunOutcome): string[] {
+  if (!outcome.ok) throw new Error(outcome.reason === 'error' ? outcome.message : outcome.tables.join(', '));
+  if (outcome.profile === null) throw new Error('the run measured nothing');
+  return flattenProfile(outcome.profile.roots).map(entry => entry.node.type);
+}
+
+function filterIsBelowTheJoin(outcome: RunOutcome): boolean {
+  const types = operatorTypes(outcome);
+  return types.indexOf('Filter') > types.indexOf('HashJoin');
+}
 
 async function withSales(): Promise<Workspace> {
   const workspace = new Workspace();
@@ -192,6 +214,43 @@ describe('running a query', () => {
 
     expect(outcome.ok && outcome.rows.length).toBe(4);
     expect(outcome.ok && outcome.truncated).toBe(false);
+  });
+});
+
+describe('running a query without a pass', () => {
+  it('executes the ablated plan instead of the full pipeline', async () => {
+    const workspace = new Workspace();
+
+    expect(filterIsBelowTheJoin(await workspace.run(JOIN_QUERY))).toBe(true);
+    expect(filterIsBelowTheJoin(await workspace.run(JOIN_QUERY, PUSHDOWN))).toBe(false);
+  });
+
+  it('honours the ablation on the first run of a fresh workspace', async () => {
+    const workspace = new Workspace();
+    expect(filterIsBelowTheJoin(await workspace.run(JOIN_QUERY, PUSHDOWN))).toBe(false);
+  });
+
+  it('answers the query the same either way', async () => {
+    const workspace = new Workspace();
+    const full = await workspace.run(JOIN_QUERY);
+    const ablated = await workspace.run(JOIN_QUERY, PUSHDOWN);
+
+    expect(ablated.ok && ablated.rows).toEqual(full.ok ? full.rows : null);
+  });
+
+  it('puts the full pipeline back for the next run', async () => {
+    const workspace = new Workspace();
+    await workspace.run(JOIN_QUERY, PUSHDOWN);
+
+    expect(filterIsBelowTheJoin(await workspace.run(JOIN_QUERY))).toBe(true);
+  });
+
+  it('puts the full pipeline back after an ablated run that failed', async () => {
+    const workspace = new Workspace();
+    const failed = await workspace.run('SELECT nope FROM CUSTOMER', PUSHDOWN);
+
+    expect(failed.ok ? '' : failed.reason).toBe('error');
+    expect(filterIsBelowTheJoin(await workspace.run(JOIN_QUERY))).toBe(true);
   });
 });
 

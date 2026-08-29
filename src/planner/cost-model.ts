@@ -31,6 +31,7 @@ export interface CostModelOptions {
   radixPasses?: number;
   spillThreshold?: number;
   crossJoinPenalty?: number;
+  perfectHashAggregateFactor?: number;
 }
 
 export class DefaultCostModel {
@@ -46,6 +47,7 @@ export class DefaultCostModel {
   RADIX_PASSES: number;
   SPILL_THRESHOLD: number;
   C_CROSS: number;
+  PERFECT_HASH_FACTOR: number;
 
   constructor(options: CostModelOptions = {}) {
     this.C_TUPLE = options.tupleCost ?? Config.costTuple;
@@ -61,6 +63,7 @@ export class DefaultCostModel {
 
     this.SPILL_THRESHOLD = options.spillThreshold ?? Config.costModelSpillThreshold;
     this.C_CROSS = options.crossJoinPenalty ?? Config.costCrossJoinPenalty;
+    this.PERFECT_HASH_FACTOR = options.perfectHashAggregateFactor ?? Config.perfectHashAggregateCostFactor;
   }
 
   spillPenalty(residentCard: number, streamedCard: number): number {
@@ -173,6 +176,10 @@ export class DefaultCostModel {
     const groups = numGroups ?? Math.max(1, Math.sqrt(card));
     const consumed = card * (this.C_TUPLE + this.C_HASH + this.C_OPERATOR);
     return consumed + groups * this.C_ROW + this.spillPenalty(groups, card);
+  }
+
+  perfectHashAggregateCost(card: number, numGroups: number | null = null): number {
+    return this.hashAggregateCost(card, numGroups) * this.PERFECT_HASH_FACTOR;
   }
 
   aggregateCost(card: number): number {

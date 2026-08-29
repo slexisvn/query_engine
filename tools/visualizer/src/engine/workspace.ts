@@ -14,15 +14,18 @@ import {
 } from './demo-catalog.js';
 import { parseCsv, tableNameFromFile } from './csv.js';
 import { compile } from './compile.js';
+import { NO_PASSES_DISABLED } from './trace.js';
 import type { Catalog } from '@engine/catalog/catalog.js';
 import type { TableStats } from '@engine/catalog/statistics.js';
 import type { ColumnSchema, ColumnValue } from '@engine/storage/data-type.js';
+import type { ExecutionProfile } from '@engine/execution/execution-profile.js';
 import type { RowCounts } from './demo-catalog.js';
 
 export const RESULT_ROW_CAP = 5000;
 export const PREVIEW_ROW_CAP = 1000;
 
 type EngineOptions = ConstructorParameters<typeof QueryEngine>[1];
+type OptimizerFactory = QueryEngine['createOptimizer'];
 
 export type TableKind = 'sample' | 'imported';
 
@@ -46,6 +49,7 @@ export interface RunSuccess {
   total: number;
   truncated: boolean;
   ms: number;
+  profile: ExecutionProfile | null;
 }
 
 export interface RunNoData {
@@ -225,14 +229,38 @@ export class Workspace {
     return [...scanned].filter(table => !this.hasData(table));
   }
 
-  async run(sql: string): Promise<RunOutcome> {
+  private ablate(disabled: ReadonlySet<string>): () => void {
+    if (disabled.size === 0) return () => undefined;
+
+    const engine = this.engine;
+    const fullOptimizer = engine.optimizer;
+    const buildFull: OptimizerFactory = engine.createOptimizer.bind(engine);
+    const buildAblated: OptimizerFactory = statistics => {
+      const optimizer = buildFull(statistics);
+      for (const name of disabled) optimizer.removePass(name);
+      return optimizer;
+    };
+
+    engine.createOptimizer = buildAblated;
+    engine.optimizer = buildAblated(engine.precomputedStats ?? engine.statsCache.toMap());
+    engine.planCache.clear();
+
+    return () => {
+      engine.createOptimizer = buildFull;
+      engine.optimizer = fullOptimizer;
+      engine.planCache.clear();
+    };
+  }
+
+  async run(sql: string, disabled: ReadonlySet<string> = NO_PASSES_DISABLED): Promise<RunOutcome> {
     await this.ready;
     const missing = this.tablesWithoutData(sql);
     if (missing.length > 0) return { ok: false, reason: 'no-data', tables: missing };
 
+    const restore = this.ablate(disabled);
     const startedAt = performance.now();
     try {
-      const result = await this.engine.run(sql);
+      const result = await this.engine.runProfiled(sql);
       const ms = performance.now() - startedAt;
       const rows = result.rows as ResultRow[];
       return {
@@ -243,9 +271,12 @@ export class Workspace {
         total: rows.length,
         truncated: rows.length > RESULT_ROW_CAP,
         ms,
+        profile: 'profile' in result ? result.profile : null,
       };
     } catch (error) {
       return { ok: false, reason: 'error', message: messageOf(error) };
+    } finally {
+      restore();
     }
   }
 }

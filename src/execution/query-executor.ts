@@ -9,6 +9,7 @@ import {
   normalizeExecType as normalizeExecTypeShared,
   normalizeAggResultType as normalizeAggResultTypeShared,
 } from './fragment-spec.js';
+import { ExecutionProfiler } from './execution-profile.js';
 import { ResultSink } from './result-sink.js';
 import { PipelineGraph } from './pipeline.js';
 import { TaskScheduler } from './scheduler.js';
@@ -96,7 +97,8 @@ export class QueryExecutor {
   catalog: ExecutionCatalog;
   tempManager: TempManagerLike;
   storageBackend: StorageBackendLike;
-  cteResults: Map<string, MaterializedCTE>;
+  cteResults: Map<string, Promise<MaterializedCTE>>;
+  ctePipelines: Map<string, Promise<CompiledPipeline>>;
   cteDefinitions: Map<string, LogicalPlanNode>;
   workerPool: WorkerPoolLike | null;
   parallelDispatch: ParallelDispatchLike | null;
@@ -104,12 +106,14 @@ export class QueryExecutor {
   _distributedContext: DistributedExecutionContext | null;
   _exchangeReceivers: Map<number, ChunkReceiver> | null;
   physicalPlanner: PhysicalPlanner;
+  profiler: ExecutionProfiler | null;
 
   constructor(catalog: ExecutionCatalog, tempManager: TempManagerLike, storageBackend: StorageBackendLike | null = null) {
     this.catalog = catalog;
     this.tempManager = tempManager;
     this.storageBackend = storageBackend ?? new MemoryStorageBackend();
     this.cteResults = new Map();
+    this.ctePipelines = new Map();
     this.cteDefinitions = new Map();
     this.workerPool = null;
     this.parallelDispatch = null;
@@ -117,6 +121,7 @@ export class QueryExecutor {
     this._distributedContext = null;
     this._exchangeReceivers = null;
     this.physicalPlanner = new PhysicalPlanner();
+    this.profiler = null;
   }
 
   setPhysicalPlanner(planner: PhysicalPlanner): void {
@@ -151,13 +156,16 @@ export class QueryExecutor {
 
   async executePlan(logicalPlan: LogicalPlanNode, streaming: boolean = false): Promise<ResultSink> {
     this.cteResults.clear();
+    this.ctePipelines.clear();
     const graph = new PipelineGraph();
     const resultSink = new ResultSink(streaming, this.storageBackend.createSpillManager(this.tempManager.allocate('spill', 'result')));
     await resultSink.init();
 
     const rootPipelineId = graph.createPipeline(resultSink);
 
-    const compiledRoot = await this.buildPipeline(this.physicalPlanner.plan(logicalPlan));
+    const physicalPlan = this.physicalPlanner.plan(logicalPlan);
+    this.profiler?.setRoot(physicalPlan);
+    const compiledRoot = await this.buildPipeline(physicalPlan);
 
     compiledRoot.register(graph, rootPipelineId, resultSink);
 
@@ -178,7 +186,8 @@ export class QueryExecutor {
     if (!builder) {
       throw new Error(`Unsupported physical operator: ${node.type}`);
     }
-    return builder(this, node);
+    const compiled = await builder(this, node);
+    return this.profiler === null ? compiled : this.profiler.instrument(node, compiled);
   }
 
   async buildLogicalPipeline(node: LogicalPlanNode): Promise<CompiledPipeline> {

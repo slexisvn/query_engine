@@ -1,5 +1,8 @@
 const SPEEDS: readonly number[] = [0.25, 0.5, 1, 2, 4];
 
+const PIN_HINT =
+  'Hold this plan as the left-hand side, then pick any other pass to morph straight from one to the other.';
+
 export interface TransportProps {
   t: number;
   playing: boolean;
@@ -16,6 +19,8 @@ export interface TransportProps {
   onNext: () => void;
   onSpeed: (speed: number) => void;
   onSpotlight: (spotlight: boolean) => void;
+  pinnedLabel: string | null;
+  onTogglePin: () => void;
 }
 
 export function Transport(props: TransportProps) {
@@ -34,7 +39,20 @@ export function Transport(props: TransportProps) {
         <button type="button" onClick={props.onReplay} disabled={!props.scrubbable} title="Replay this pass (R)" aria-label="Replay this pass">
           ⟲
         </button>
+        <button
+          type="button"
+          className={props.pinnedLabel === null ? 'transport-pin' : 'transport-pin selected'}
+          onClick={props.onTogglePin}
+          title={PIN_HINT}
+          aria-label={props.pinnedLabel === null ? 'Pin this plan to compare against' : 'Release the pinned plan'}
+        >
+          {props.pinnedLabel === null ? 'pin' : 'unpin'}
+        </button>
       </div>
+
+      {props.pinnedLabel === null ? null : (
+        <span className="transport-pinned">against {props.pinnedLabel}</span>
+      )}
 
       {props.scrubbable ? (
         <div className="transport-scrubber">
