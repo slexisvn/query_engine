@@ -14,6 +14,9 @@ import type { BoundExpr } from '../../binder/expression-binder.js';
 import type { CompiledExpr, ColumnMapping, EvalValue } from '../execution-types.js';
 import { KernelOperand } from '../../wasm/wasm-types.js';
 
+const ROOT_PARTITION_PREFIX = 'agg';
+const HASH_BITS = 32;
+
 type AvgState = { sum: number; count: number };
 type AccumulatorState = ColumnValue | AvgState | ColumnValue[];
 
@@ -80,22 +83,39 @@ export class HashAggregateOperator {
     this.spilledPartitions = new Set();
   }
 
-  partitionHandle(partition: number): string {
-    return `agg_${partition}`;
+  partitionHandle(partition: number, prefix: string = ROOT_PARTITION_PREFIX): string {
+    return `${prefix}_${partition}`;
   }
 
-  async spillResidentGroups(): Promise<void> {
-    if (!this.spillStore || this.groups.size === 0) return;
+  get partitionBits(): number {
+    return Math.max(1, Math.round(Math.log2(this.spillPartitionCount)));
+  }
 
-    const partitions = this.exportPartials(this.spillPartitionCount);
+  get maxRepartitionDepth(): number {
+    const affordable = Math.floor(HASH_BITS / this.partitionBits) - 1;
+    return Math.max(0, Math.min(Config.aggSpillMaxRepartitionDepth, affordable));
+  }
+
+  async spillGroupsInto(prefix: string, depth: number): Promise<number[]> {
+    if (!this.spillStore || this.groups.size === 0) return [];
+
+    const partitions = this.exportPartials(this.spillPartitionCount, depth);
+    const written: number[] = [];
     for (let p = 0; p < partitions.length; p++) {
       if (partitions[p].length === 0) continue;
-      await this.spillStore.appendChunk(this.partitionHandle(p), partialGroupsToChunk(partitions[p]));
-      this.spilledPartitions.add(p);
+      await this.spillStore.appendChunk(this.partitionHandle(p, prefix), partialGroupsToChunk(partitions[p]));
+      written.push(p);
     }
 
     this._resetGroups();
     this.memoryBudget.reset();
+    return written;
+  }
+
+  async spillResidentGroups(): Promise<void> {
+    for (const partition of await this.spillGroupsInto(ROOT_PARTITION_PREFIX, 0)) {
+      this.spilledPartitions.add(partition);
+    }
   }
 
   _resetGroups(): void {
@@ -202,19 +222,49 @@ export class HashAggregateOperator {
     await this.spillResidentGroups();
 
     const chunks: DataChunk[] = [];
-    const ordered = [...this.spilledPartitions].sort((a, b) => a - b);
-
-    for (const partition of ordered) {
-      this._resetGroups();
-      for await (const spilled of spillStore.readChunks(this.partitionHandle(partition))) {
-        this.absorbPartials(chunkToPartialGroups(spilled));
-      }
-      for (const chunk of this.emitResidentGroups()) chunks.push(chunk);
-    }
+    await this.drainPartitions(spillStore, ROOT_PARTITION_PREFIX, [...this.spilledPartitions], 0, chunks);
 
     this._resetGroups();
     await spillStore.clearAll();
     return chunks;
+  }
+
+  async drainPartitions(
+    spillStore: ChunkSpillStore,
+    prefix: string,
+    partitions: readonly number[],
+    depth: number,
+    chunks: DataChunk[],
+  ): Promise<void> {
+    const canRepartition = depth < this.maxRepartitionDepth;
+
+    for (const partition of [...partitions].sort((a, b) => a - b)) {
+      const handle = this.partitionHandle(partition, prefix);
+      const childPrefix = `${handle}r`;
+      const overflow = new Set<number>();
+
+      this._resetGroups();
+      this.memoryBudget.reset();
+
+      for await (const spilled of spillStore.readChunks(handle)) {
+        this.absorbPartials(chunkToPartialGroups(spilled));
+        if (!canRepartition) continue;
+
+        this.memoryBudget.reset();
+        this.memoryBudget.admit(this.groups.size);
+        if (this.memoryBudget.exceeded) {
+          for (const child of await this.spillGroupsInto(childPrefix, depth + 1)) overflow.add(child);
+        }
+      }
+
+      if (overflow.size === 0) {
+        for (const chunk of this.emitResidentGroups()) chunks.push(chunk);
+        continue;
+      }
+
+      for (const child of await this.spillGroupsInto(childPrefix, depth + 1)) overflow.add(child);
+      await this.drainPartitions(spillStore, childPrefix, [...overflow], depth + 1, chunks);
+    }
   }
 
   emitResidentGroups(): DataChunk[] {
@@ -269,11 +319,12 @@ export class HashAggregateOperator {
     return chunks;
   }
 
-  exportPartials(partitionCount: number): PartialGroup[][] {
+  exportPartials(partitionCount: number, depth: number = 0): PartialGroup[][] {
     const mask = partitionCount - 1;
+    const shift = depth * this.partitionBits;
     const partitions: PartialGroup[][] = Array.from({ length: partitionCount }, () => []);
     for (let entry = 0; entry < this.groupStates.length; entry++) {
-      partitions[this.groups.hashOf(entry) & mask].push({
+      partitions[(this.groups.hashOf(entry) >>> shift) & mask].push({
         groupValues: this._groupValuesAt(entry),
         states: this.groupStates[entry].accumulators.map((acc) => acc.exportState()),
       });

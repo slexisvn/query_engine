@@ -533,12 +533,25 @@ describe('PhysicalPlanner order satisfied by a merge join', () => {
     expect(physical.type).toBe(PhysicalNodeType.SORT);
   });
 
-  it('keeps the Sort above a hash join that delivers no order', () => {
+  it('keeps the Sort above a hash join when no join operator delivers the order', () => {
     const unordered = LogicalJoin(JoinType.INNER, eqJoin('A', 'id', 'B', 'id'), scan('A'), scan('B'));
-    const physical = planPhysical(LogicalSort(ascOn('A', 'id'), unordered), stats());
+    const physical = planPhysical(LogicalSort(ascOn('A', 'val'), unordered), stats());
 
     expect(physical.children[0].type).toBe(PhysicalNodeType.HASH_JOIN);
     expect(physical.type).toBe(PhysicalNodeType.SORT);
+  });
+
+  it('takes a merge join over unsorted inputs when that removes the Sort above', () => {
+    const unordered = LogicalJoin(JoinType.INNER, eqJoin('A', 'id', 'B', 'id'), scan('A'), scan('B'));
+    const physical = planPhysical(LogicalSort(ascOn('A', 'id'), unordered), stats());
+
+    expect(physical.type).toBe(PhysicalNodeType.MERGE_JOIN);
+  });
+
+  it('leaves the hash join in place when nothing above asks for an order', () => {
+    const unordered = LogicalJoin(JoinType.INNER, eqJoin('A', 'id', 'B', 'id'), scan('A'), scan('B'));
+
+    expect(planPhysical(unordered, stats()).type).toBe(PhysicalNodeType.HASH_JOIN);
   });
 
   it('sees through a projection between the sort and the merge join', () => {

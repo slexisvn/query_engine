@@ -35,6 +35,7 @@ export class BinderScope {
   relations: Map<string, ScopeRelation>;
   aliasIndex: Map<string, string>;
   shadowCount: number;
+  claimedAliases: Set<string>;
   queryBoundary: boolean;
 
   constructor(parent: BinderScope | null = null, queryBoundary: boolean = false) {
@@ -45,15 +46,25 @@ export class BinderScope {
     this.relations = new Map();
     this.aliasIndex = new Map();
     this.shadowCount = 0;
+    this.claimedAliases = new Set();
   }
 
   root(): BinderScope {
     return this.parent ? this.parent.root() : this;
   }
 
+  claimRelationAlias(key: string): string {
+    const root = this.root();
+    if (!root.claimedAliases.has(key)) {
+      root.claimedAliases.add(key);
+      return key;
+    }
+    return this.shadowAliasFor(key);
+  }
+
   addTable(alias: string, tableInfo: TableInfo): string {
     const key = alias.toUpperCase();
-    const relationAlias = this.resolveTable(key) ? this.shadowAliasFor(key) : key;
+    const relationAlias = this.claimRelationAlias(key);
     this.tables.set(key, tableInfo);
     this.relations.set(key, {
       alias: relationAlias,

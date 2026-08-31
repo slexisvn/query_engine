@@ -85,6 +85,36 @@ export function castToNumber(value: ColumnValue): number | null {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+export function castToType(value: ColumnValue, targetType: DataType): ColumnValue {
+  if (value === null || value === undefined) return null;
+  switch (targetType) {
+    case DataType.INT32: {
+      const numeric = castToNumber(value);
+      return numeric === null ? null : Math.trunc(numeric);
+    }
+    case DataType.INT64: {
+      const numeric = castToNumber(value);
+      return numeric === null ? null : BigInt(Math.trunc(numeric));
+    }
+    case DataType.FLOAT64:
+    case DataType.DECIMAL:
+      return castToNumber(value);
+    case DataType.VARCHAR:
+      return typeof value === 'bigint' ? String(Number(value)) : String(value);
+    case DataType.BOOLEAN:
+      return !!value;
+    case DataType.TIMESTAMP:
+      return typeof value === 'string' ? new Date(value).getTime() : Number(value);
+    case DataType.DATE: {
+      if (typeof value !== 'string') return value;
+      const [year, month, day] = value.split('-').map(Number);
+      return dateToEpochDays(year, month, day);
+    }
+    default:
+      return value;
+  }
+}
+
 export function isFixedWidth(dataType: DataType): boolean {
   return FIXED_WIDTH_TYPES.has(dataType);
 }

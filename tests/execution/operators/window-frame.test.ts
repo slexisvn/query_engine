@@ -8,7 +8,7 @@ import {
 
 function rows(mode, start, end, length, samePeer = () => false) {
   const peers = peerGroupsOf(length, samePeer);
-  const ranges = frameRangesOf({ mode, start, end }, length, peers);
+  const ranges = frameRangesOf({ mode, start, end }, { length, peers, orderValues: null, ascending: true });
   return Array.from({ length }, (_, i) => [ranges.starts[i], ranges.ends[i]]);
 }
 

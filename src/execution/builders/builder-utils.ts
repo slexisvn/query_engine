@@ -1,6 +1,7 @@
 import type { DataChunk } from '../../storage/chunk.js';
 import type { PipelineGraph } from '../pipeline.js';
 import type { ColumnMapping, CompiledPipeline, Sink } from '../execution-types.js';
+import { AMBIGUOUS_COLUMN } from '../column-resolve.js';
 import { SortOperator, type SortKey } from '../operators/sort.js';
 import type { ChunkSpillStore } from '../../storage/spill-manager/spill-manager.js';
 
@@ -8,12 +9,20 @@ type MappedInput = Pick<CompiledPipeline, 'schema' | 'columnMapping'>;
 
 export function combinedMappingOf(...inputs: MappedInput[]): ColumnMapping {
   const mapping = new Map<string, number>();
+  const bareOwner = new Map<string, number>();
   let base = 0;
-  for (const input of inputs) {
+
+  for (const [inputIndex, input] of inputs.entries()) {
     input.schema.forEach((col, i) => {
       mapping.set(`${col.tableAlias}.${col.name}`.toUpperCase(), base + i);
       const bare = col.name.toUpperCase();
-      if (!mapping.has(bare)) mapping.set(bare, base + i);
+      const owner = bareOwner.get(bare);
+      if (owner === undefined) {
+        bareOwner.set(bare, inputIndex);
+        mapping.set(bare, base + i);
+      } else if (owner !== inputIndex) {
+        mapping.set(bare, AMBIGUOUS_COLUMN);
+      }
     });
     for (const [key, index] of input.columnMapping) {
       if (!mapping.has(key)) mapping.set(key, base + index);

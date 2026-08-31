@@ -102,6 +102,7 @@ export enum TokenType {
   OVER = 'OVER',
   PARTITION = 'PARTITION',
   RANGE = 'RANGE',
+  GROUPS = 'GROUPS',
   UNBOUNDED = 'UNBOUNDED',
   PRECEDING = 'PRECEDING',
   FOLLOWING = 'FOLLOWING',
@@ -122,6 +123,7 @@ const NON_KEYWORD_TOKENS = new Set([
 ]);
 
 const PLACEHOLDER_PREFIX = '$';
+const QUOTE_DELIMITER = '"';
 
 const KEYWORDS = new Map<string, TokenType>();
 for (const key of Object.keys(TokenType)) {
@@ -130,15 +132,37 @@ for (const key of Object.keys(TokenType)) {
   }
 }
 
+export interface SourcePosition { line: number; column: number; }
+
+export function positionOf(input: string, offset: number): SourcePosition {
+  const bounded = Math.max(0, Math.min(offset, input.length));
+  let line = 1;
+  let lineStart = 0;
+  for (let i = 0; i < bounded; i++) {
+    if (input[i] === '\n') {
+      line++;
+      lineStart = i + 1;
+    }
+  }
+  return { line, column: bounded - lineStart + 1 };
+}
+
+export function describePosition(input: string, offset: number): string {
+  const { line, column } = positionOf(input, offset);
+  return `line ${line}, column ${column}`;
+}
+
 export class Token {
   type: TokenType;
   value: string;
   position: number;
+  quoted: boolean;
 
-  constructor(type: TokenType, value: string, position: number) {
+  constructor(type: TokenType, value: string, position: number, quoted: boolean = false) {
     this.type = type;
     this.value = value;
     this.position = position;
+    this.quoted = quoted;
   }
 }
 
@@ -164,6 +188,8 @@ export class Lexer {
 
       if (ch === "'") {
         this.tokens.push(this._readString(start));
+      } else if (ch === QUOTE_DELIMITER) {
+        this.tokens.push(this._readQuotedIdent(start));
       } else if (ch === PLACEHOLDER_PREFIX) {
         this.tokens.push(this._readPlaceholder(start));
       } else if (this._isDigit(ch)) {
@@ -187,15 +213,64 @@ export class Lexer {
         continue;
       }
 
-      if (ch === '-' && this.pos + 1 < this.input.length && this.input[this.pos + 1] === '-') {
+      if (ch === '-' && this.input[this.pos + 1] === '-') {
         while (this.pos < this.input.length && this.input[this.pos] !== '\n') {
           this.pos++;
         }
         continue;
       }
 
+      if (ch === '/' && this.input[this.pos + 1] === '*') {
+        this._skipBlockComment();
+        continue;
+      }
+
       break;
     }
+  }
+
+  _skipBlockComment(): void {
+    const start = this.pos;
+    let depth = 0;
+    while (this.pos < this.input.length) {
+      if (this.input[this.pos] === '/' && this.input[this.pos + 1] === '*') {
+        depth++;
+        this.pos += 2;
+        continue;
+      }
+      if (this.input[this.pos] === '*' && this.input[this.pos + 1] === '/') {
+        depth--;
+        this.pos += 2;
+        if (depth === 0) return;
+        continue;
+      }
+      this.pos++;
+    }
+    this._fail('Unterminated block comment', start);
+  }
+
+  _fail(message: string, offset: number): never {
+    throw new Error(`Lex error at ${describePosition(this.input, offset)}: ${message}`);
+  }
+
+  _readQuotedIdent(start: number): Token {
+    this.pos++;
+    let value = '';
+    while (this.pos < this.input.length) {
+      if (this.input[this.pos] === QUOTE_DELIMITER) {
+        if (this.input[this.pos + 1] === QUOTE_DELIMITER) {
+          value += QUOTE_DELIMITER;
+          this.pos += 2;
+          continue;
+        }
+        this.pos++;
+        if (value.length === 0) this._fail('Empty delimited identifier', start);
+        return new Token(TokenType.IDENT, value, start, true);
+      }
+      value += this.input[this.pos];
+      this.pos++;
+    }
+    this._fail('Unterminated delimited identifier', start);
   }
 
   _readString(start: number): Token {
@@ -215,7 +290,7 @@ export class Lexer {
         this.pos++;
       }
     }
-    throw new Error(`Unterminated string at position ${start}`);
+    this._fail('Unterminated string', start);
   }
 
   _readPlaceholder(start: number): Token {
@@ -225,22 +300,35 @@ export class Lexer {
       this.pos++;
     }
     if (this.pos === digitsStart) {
-      throw new Error(`Expected parameter number after '${PLACEHOLDER_PREFIX}' at position ${start}`);
+      this._fail(`Expected parameter number after '${PLACEHOLDER_PREFIX}'`, start);
     }
     return new Token(TokenType.PLACEHOLDER, this.input.slice(digitsStart, this.pos), start);
   }
 
   _readNumber(start: number): Token {
-    while (this.pos < this.input.length && this._isDigit(this.input[this.pos])) {
+    this._readDigits();
+    if (this.input[this.pos] === '.') {
       this.pos++;
+      this._readDigits();
     }
-    if (this.pos < this.input.length && this.input[this.pos] === '.') {
-      this.pos++;
-      while (this.pos < this.input.length && this._isDigit(this.input[this.pos])) {
-        this.pos++;
-      }
-    }
+    this._readExponent();
     return new Token(TokenType.NUMBER, this.input.slice(start, this.pos), start);
+  }
+
+  _readDigits(): number {
+    const from = this.pos;
+    while (this.pos < this.input.length && this._isDigit(this.input[this.pos])) this.pos++;
+    return this.pos - from;
+  }
+
+  _readExponent(): void {
+    const marker = this.input[this.pos];
+    if (marker !== 'e' && marker !== 'E') return;
+
+    const saved = this.pos;
+    this.pos++;
+    if (this.input[this.pos] === '+' || this.input[this.pos] === '-') this.pos++;
+    if (this._readDigits() === 0) this.pos = saved;
   }
 
   _readIdentOrKeyword(start: number): Token {
@@ -286,19 +374,19 @@ export class Lexer {
         }
         return new Token(TokenType.GT, '>', start);
       case '!':
-        if (this.pos < this.input.length && this.input[this.pos] === '=') {
+        if (this.input[this.pos] === '=') {
           this.pos++;
           return new Token(TokenType.NEQ, '!=', start);
         }
-        throw new Error(`Unexpected character '!' at position ${start}`);
+        this._fail("Unexpected character '!'", start);
       case '|':
-        if (this.pos < this.input.length && this.input[this.pos] === '|') {
+        if (this.input[this.pos] === '|') {
           this.pos++;
           return new Token(TokenType.CONCAT, '||', start);
         }
-        throw new Error(`Unexpected character '|' at position ${start}`);
+        this._fail("Unexpected character '|'", start);
       default:
-        throw new Error(`Unexpected character '${ch}' at position ${start}`);
+        this._fail(`Unexpected character '${ch}'`, start);
     }
   }
 

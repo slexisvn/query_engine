@@ -114,3 +114,41 @@ describe('CancelToken', () => {
     expect(token.isCancelled).toBe(true);
   });
 });
+
+describe('PipelineGraph ready tracking', () => {
+  const sink = () => ({ consume: async () => {} });
+
+  it('drops a pipeline from ready as soon as it gains a dependency', () => {
+    const g = new PipelineGraph();
+    const consumer = g.createPipeline(sink());
+    const producer = g.createPipeline(sink());
+
+    expect(g.getReadyPipelines().map(p => p.id).sort()).toEqual([consumer, producer].sort());
+    g.addDependency(consumer, producer);
+    expect(g.getReadyPipelines().map(p => p.id)).toEqual([producer]);
+  });
+
+  it('releases a dependent only when its last dependency finishes', () => {
+    const g = new PipelineGraph();
+    const consumer = g.createPipeline(sink());
+    const first = g.createPipeline(sink());
+    const second = g.createPipeline(sink());
+    g.addDependency(consumer, first);
+    g.addDependency(consumer, second);
+
+    g.markPipelineDone(first);
+    expect(g.getReadyPipelines().map(p => p.id)).not.toContain(consumer);
+
+    g.markPipelineDone(second);
+    expect(g.getReadyPipelines().map(p => p.id)).toContain(consumer);
+  });
+
+  it('does not scan pipelines that already ran', () => {
+    const g = new PipelineGraph();
+    const id = g.createPipeline(sink());
+
+    g.markPipelineDone(id);
+    expect(g.getReadyPipelines()).toEqual([]);
+    expect(g.readyIds.size).toBe(0);
+  });
+});

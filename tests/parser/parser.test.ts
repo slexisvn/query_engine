@@ -1043,4 +1043,96 @@ describe('Parser', () => {
       expect(() => parse('(SELECT a FROM t ORDER BY a) ORDER BY a')).toThrow(/two ORDER BY/);
     });
   });
+  describe('non-reserved keywords as identifiers', () => {
+    it('parses a non-reserved keyword as a bare column reference', () => {
+      const ast = parse('SELECT year FROM t');
+      expect(ast.selectItems[0].expr.kind).toBe(NodeKind.COLUMN_REF);
+      expect(ast.selectItems[0].expr.name).toBe('YEAR');
+    });
+
+    it('parses a non-reserved keyword as a qualified column reference', () => {
+      const ast = parse('SELECT t.date FROM t');
+      expect(ast.selectItems[0].expr.table).toBe('t');
+      expect(ast.selectItems[0].expr.name).toBe('DATE');
+    });
+
+    it('parses an aggregate keyword used as a column name', () => {
+      const ast = parse('SELECT count FROM t');
+      expect(ast.selectItems[0].expr.kind).toBe(NodeKind.COLUMN_REF);
+      expect(ast.selectItems[0].expr.name).toBe('COUNT');
+    });
+
+    it('still parses the aggregate call form', () => {
+      const ast = parse('SELECT count(a) FROM t');
+      expect(ast.selectItems[0].expr.kind).toBe(NodeKind.AGGREGATE_CALL);
+    });
+
+    it('still parses a DATE literal', () => {
+      const ast = parse("SELECT DATE '2020-01-01' FROM t");
+      expect(ast.selectItems[0].expr.kind).toBe(NodeKind.LITERAL);
+    });
+
+    it('still parses EXTRACT', () => {
+      const ast = parse('SELECT EXTRACT(YEAR FROM d) FROM t');
+      expect(ast.selectItems[0].expr.kind).toBe(NodeKind.EXTRACT_EXPR);
+    });
+
+    it('still parses an INTERVAL literal', () => {
+      const ast = parse("SELECT d + INTERVAL '1' DAY FROM t");
+      expect(ast.selectItems[0].expr.right.kind).toBe(NodeKind.INTERVAL_EXPR);
+    });
+
+    it('still parses FETCH FIRST n ROWS ONLY', () => {
+      const ast = parse('SELECT a FROM t FETCH FIRST 5 ROWS ONLY');
+      expect(ast.limit.value).toBe(5);
+    });
+
+    it('still parses a LEFT JOIN', () => {
+      const ast = parse('SELECT a FROM t LEFT JOIN u ON t.a = u.a');
+      expect(ast.from.joinType).toBe('LEFT');
+    });
+  });
+
+  describe('delimited identifiers', () => {
+    it('accepts a reserved word as a delimited column name', () => {
+      const ast = parse('SELECT "select" FROM t');
+      expect(ast.selectItems[0].expr.kind).toBe(NodeKind.COLUMN_REF);
+      expect(ast.selectItems[0].expr.name).toBe('select');
+    });
+
+    it('accepts a delimited table name and alias', () => {
+      const ast = parse('SELECT x.a FROM "my table" AS x');
+      expect(ast.from.name).toBe('my table');
+      expect(ast.from.alias).toBe('x');
+    });
+
+    it('accepts a delimited output alias', () => {
+      const ast = parse('SELECT a AS "total sales" FROM t');
+      expect(ast.selectItems[0].alias).toBe('total sales');
+    });
+
+    it('accepts a delimited qualified reference', () => {
+      const ast = parse('SELECT "t"."from" FROM t');
+      expect(ast.selectItems[0].expr.table).toBe('t');
+      expect(ast.selectItems[0].expr.name).toBe('from');
+    });
+  });
+
+  describe('numeric literals', () => {
+    it('parses exponent notation as a float literal', () => {
+      const ast = parse('SELECT 1e3 AS x FROM t');
+      expect(ast.selectItems[0].expr.value).toBe(1000);
+    });
+
+    it('parses a negative exponent', () => {
+      const ast = parse('SELECT 1.5e-3 AS x FROM t');
+      expect(ast.selectItems[0].expr.value).toBeCloseTo(0.0015);
+    });
+  });
+
+  describe('parse errors', () => {
+    it('reports line and column', () => {
+      expect(() => parse('SELECT a FROM')).toThrow(/line 1, column 14/);
+    });
+  });
 });

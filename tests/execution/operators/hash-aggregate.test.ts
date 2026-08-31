@@ -17,6 +17,7 @@ import { DataType } from '../../../src/storage/data-type.js';
 import { SpillManager } from '../../../src/storage/spill-manager/spill-manager.js';
 import { MemoryStorage } from '../../../src/storage/spill-manager/memory-storage.js';
 import { captureMemoryLimit, limitResidentRows } from '../../helpers/memory-limits.js';
+import { Config } from '../../../src/config.js';
 
 function makeChunk(colDefs) {
   const size = colDefs[0].values.length;
@@ -670,6 +671,40 @@ describe('HashAggregateOperator spill path', () => {
     const rows = resultRows(await op.finalize());
 
     expect(rows.map(r => r[0])).toEqual(Array.from({ length: 100 }, (_, i) => i));
+  });
+
+  it('repartitions again when one spilled partition still does not fit', async () => {
+    limitResidentRows(GROUP_SCHEMA, 2);
+    const op = groupedOperator(memSpill());
+    op.spillPartitionCount = 2;
+
+    await feed(op, 400, 2);
+    const rows = resultRows(await op.finalize());
+
+    expect(rows).toHaveLength(400);
+    for (const [key, sum, count] of rows) {
+      expect(count).toBe(2);
+      expect(sum).toBe(key * 2 + 1);
+    }
+  });
+
+  it('stops repartitioning at the configured depth', async () => {
+    const op = groupedOperator(memSpill());
+    op.spillPartitionCount = 2;
+
+    expect(op.partitionBits).toBe(1);
+    expect(op.maxRepartitionDepth).toBe(Config.aggSpillMaxRepartitionDepth);
+  });
+
+  it('routes groups differently at each depth', async () => {
+    const op = groupedOperator(memSpill());
+    op.spillPartitionCount = 4;
+    await feed(op, 200, 1);
+
+    const assignment = (depth) => op.exportPartials(4, depth).map(part => part.map(g => g.groupValues[0]).join(','));
+
+    expect(op.groups.size).toBe(200);
+    expect(assignment(0)).not.toEqual(assignment(1));
   });
 
   it('bounds resident groups while consuming far more than the budget', async () => {

@@ -86,6 +86,27 @@ describe('subsetsByAscendingSize', () => {
   it('differs from the unordered enumeration order for multi-bit masks', () => {
     expect(subsetsByAscendingSize(0b111)).not.toEqual(subsets(0b111));
   });
+
+  it('keeps the raw enumeration order inside each size class', () => {
+    const mask = 0b101101;
+    const bySize = new Map();
+    for (const subset of subsets(mask)) {
+      const size = popcount(subset);
+      if (!bySize.has(size)) bySize.set(size, []);
+      bySize.get(size).push(subset);
+    }
+    const expected = [...bySize.keys()].sort((a, b) => a - b).flatMap(size => bySize.get(size));
+
+    expect(subsetsByAscendingSize(mask)).toEqual(expected);
+  });
+
+  it('enumerates every subset of a wide mask exactly once', () => {
+    const mask = 0b11111111111;
+    const ordered = subsetsByAscendingSize(mask);
+
+    expect(ordered).toHaveLength(2 ** 11 - 1);
+    expect(new Set(ordered).size).toBe(ordered.length);
+  });
 });
 
 describe('bit helpers', () => {

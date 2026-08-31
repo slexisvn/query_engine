@@ -92,7 +92,7 @@ export interface BoundQuantifiedNode {
 
 export interface BoundIntervalNode { kind: BoundExprKind.INTERVAL; value: number; unit: string; resultType: DataType; }
 
-export type FrameMode = 'ROWS' | 'RANGE';
+export type FrameMode = 'ROWS' | 'RANGE' | 'GROUPS';
 
 export type FrameBoundType = 'UNBOUNDED_PRECEDING' | 'PRECEDING' | 'CURRENT_ROW' | 'FOLLOWING' | 'UNBOUNDED_FOLLOWING';
 
@@ -108,6 +108,30 @@ export interface BoundWindowNode {
   orderBy: BoundWindowOrderKey[];
   frame: BoundWindowFrame | null;
   resultType: DataType | null;
+}
+
+export function validateWindowFrame(frame: BoundWindowFrame | null, orderByCount: number): void {
+  if (!frame) return;
+
+  if (frame.start.type === 'UNBOUNDED_FOLLOWING') {
+    throw new Error('Window frame start bound cannot be UNBOUNDED FOLLOWING');
+  }
+  if (frame.end.type === 'UNBOUNDED_PRECEDING') {
+    throw new Error('Window frame end bound cannot be UNBOUNDED PRECEDING');
+  }
+  if (frame.mode === 'GROUPS' && orderByCount === 0) {
+    throw new Error('GROUPS window frames require an ORDER BY clause');
+  }
+
+  const hasOffset = frame.start.offset !== null || frame.end.offset !== null;
+  if (!hasOffset || frame.mode === 'ROWS') return;
+
+  if (orderByCount === 0) {
+    throw new Error(`${frame.mode} window frames with offsets require an ORDER BY clause`);
+  }
+  if (frame.mode === 'RANGE' && orderByCount !== 1) {
+    throw new Error('RANGE window frames with offsets require exactly one ORDER BY column');
+  }
 }
 
 export function BoundColumnRef(tableAlias: string, columnName: string, columnIndex: number, dataType: DataType | null, depth: number = 0): BoundColumnRefNode {

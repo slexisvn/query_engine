@@ -1,13 +1,13 @@
 import { DataChunk } from '../../storage/chunk.js';
 import { Column } from '../../storage/column.js';
 import { DataType, type ColumnValue } from '../../storage/data-type.js';
-import type { BoundExpr, BoundWindowNode } from '../../binder/expression-binder.js';
+import type { BoundExpr, BoundWindowFrame, BoundWindowNode } from '../../binder/expression-binder.js';
 import { exprKey } from '../../binder/expr-key.js';
 import { createKeyedHashTable, hashKeyValues } from '../hash-table.js';
 import { RowMemoryBudget } from '../memory-budget.js';
 import { PriorityQueue } from '../../utils/priority-queue.js';
 import { Config } from '../../config.js';
-import { DEFAULT_FRAME, FRAME_AGGREGATORS, frameRangesOf, peerGroupsOf, type FrameRanges } from './window-frame.js';
+import { DEFAULT_FRAME, FRAME_AGGREGATORS, frameNeedsOrderValues, frameRangesOf, peerGroupsOf, type FrameInput, type FrameRanges, type PeerGroups } from './window-frame.js';
 import { nullsFirstFor, compareOrderedValues } from './sort.js';
 import type { ChunkSpillStore } from '../../storage/spill-manager/spill-manager.js';
 import type { CompiledExpr, ColumnMapping, ExecSchema, EvalValue } from '../execution-types.js';
@@ -162,6 +162,22 @@ function sortedPartition(partition: readonly number[], orderColumns: EvalValue[]
     }
     return 0;
   });
+}
+
+function frameInputOf(
+  frame: BoundWindowFrame,
+  plan: WindowPlan,
+  orderColumns: EvalValue[][],
+  partition: readonly number[],
+  peers: PeerGroups,
+): FrameInput {
+  const needsValues = frameNeedsOrderValues(frame) && orderColumns.length === 1;
+  return {
+    length: partition.length,
+    peers,
+    orderValues: needsValues ? partition.map((row) => orderColumns[0][row]) : null,
+    ascending: plan.orderSpecs.length === 0 || plan.orderSpecs[0].direction === ASCENDING,
+  };
 }
 
 function samePeer(orderColumns: EvalValue[][], rowA: number, rowB: number): boolean {
@@ -371,7 +387,7 @@ export class WindowOperator {
       for (const partition of ordered) {
         const values = partition.map((rowIndex) => (argValues ? argValues[rowIndex] : null));
         const peers = peerGroupsOf(partition.length, (a, b) => samePeer(orderColumns, partition[a], partition[b]));
-        const computed = plan.aggregator(values, frameRangesOf(frame, partition.length, peers));
+        const computed = plan.aggregator(values, frameRangesOf(frame, frameInputOf(frame, plan, orderColumns, partition, peers)));
         for (let i = 0; i < partition.length; i++) result[partition[i]] = computed[i];
       }
       return result;

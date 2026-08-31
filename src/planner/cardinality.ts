@@ -90,8 +90,28 @@ function cappedBy(limit: number | null | undefined, card: number): number {
   return limit ? Math.min(limit, card) : card;
 }
 
-function distinctRows(card: number): number {
-  return Math.max(1, Math.round(Math.sqrt(card)));
+const SELECTIVITY_BACKOFF_BASE = 2;
+
+function dampedProduct(selectivities: readonly number[]): number {
+  const ordered = selectivities.slice().sort((a, b) => a - b);
+  let combined = 1;
+  let exponent = 1;
+  for (const selectivity of ordered) {
+    combined *= Math.pow(selectivity, exponent);
+    exponent /= SELECTIVITY_BACKOFF_BASE;
+  }
+  return combined;
+}
+
+function distinctKeysOf(node: LogicalPlanNode): BoundExpr[] | null {
+  const child = node.children?.[0];
+  return child && child.type === PlanNodeType.PROJECT ? child.expressions : null;
+}
+
+function distinctRows(estimator: DefaultCardinalityEstimator, node: LogicalPlanNode, inputCard: number): number {
+  const keys = distinctKeysOf(node);
+  if (keys && keys.length > 0) return estimator.estimateAggregate(inputCard, keys.length, keys);
+  return Math.max(1, Math.round(Math.sqrt(inputCard)));
 }
 
 const scanRule: CardinalityRule = (estimator, node) => estimator.estimateScan((node as LogicalScanNode).table);
@@ -120,7 +140,7 @@ const CARDINALITY_RULES: Partial<Record<PlanNodeType, CardinalityRule>> = {
   [PlanNodeType.TOP_N]: countedRule,
   [PlanNodeType.SORT]: (_estimator, node, inputs) => cappedBy((node as LogicalSortNode).limit, inputs[0]),
   [PlanNodeType.MERGE_EXCHANGE]: (_estimator, node, inputs) => cappedBy((node as LogicalMergeExchangeNode).limit, inputs[0]),
-  [PlanNodeType.DISTINCT]: (_estimator, _node, inputs) => distinctRows(inputs[0]),
+  [PlanNodeType.DISTINCT]: (estimator, node, inputs) => distinctRows(estimator, node, inputs[0]),
   [PlanNodeType.SET_OP]: (_estimator, node, inputs) => {
     const setOp = node as LogicalSetOpNode;
     const combined = SET_OP_COMBINE_RULES[setOp.op](inputs[0], inputs[1]);
@@ -214,16 +234,14 @@ export class DefaultCardinalityEstimator {
       return Math.max(1, Math.round(leftCard * rightCard * sel));
     }
 
-    let selectivity = 1.0;
-    for (const pred of equiPreds) {
-      selectivity *= this.estimateEquiJoinSelectivity(pred.left, pred.right, leftCard, rightCard);
-    }
+    const selectivities = equiPreds.map(pred =>
+      this.estimateEquiJoinSelectivity(pred.left, pred.right, leftCard, rightCard));
     // Anything the join tests beyond the equalities still throws rows away.
     for (const residual of this.residualConjuncts(condition)) {
-      selectivity *= this.estimateSelectivity(residual);
+      selectivities.push(this.estimateSelectivity(residual));
     }
 
-    return Math.max(1, Math.round(leftCard * rightCard * selectivity));
+    return Math.max(1, Math.round(leftCard * rightCard * dampedProduct(selectivities)));
   }
 
   residualConjuncts(condition: BoundExpr | null, into: BoundExpr[] = []): BoundExpr[] {
@@ -351,10 +369,7 @@ export class DefaultCardinalityEstimator {
       }
     }
 
-    if (ndvProduct > 1) {
-      return Math.max(1, Math.min(inputCard, Math.round(ndvProduct)));
-    }
-    return Math.min(inputCard, Math.pow(10, groupByCount));
+    return Math.max(1, Math.min(inputCard, Math.round(ndvProduct)));
   }
 
   estimateSelectivity(predicate: BoundExpr | null): number {

@@ -15,10 +15,12 @@ export interface Pipeline {
 export class PipelineGraph {
   pipelines: Map<number, Pipeline>;
   nextId: number;
+  readyIds: Set<number>;
 
   constructor() {
     this.pipelines = new Map();
     this.nextId = 1;
+    this.readyIds = new Set();
   }
 
   createPipeline(sink: Sink): number {
@@ -32,6 +34,7 @@ export class PipelineGraph {
       state: 'PENDING',
       cancelled: false,
     });
+    this.readyIds.add(id);
     return id;
   }
 
@@ -40,6 +43,7 @@ export class PipelineGraph {
     const dependency = this.pipelines.get(dependsOnId)!;
     pipeline.dependencies.add(dependsOnId);
     dependency.dependents.add(pipelineId);
+    this.readyIds.delete(pipelineId);
   }
 
   setSource(pipelineId: number, sourceGenerator: SourceGenerator): void {
@@ -49,10 +53,13 @@ export class PipelineGraph {
 
   getReadyPipelines(): Pipeline[] {
     const ready: Pipeline[] = [];
-    for (const pipeline of this.pipelines.values()) {
-      if (pipeline.state === 'PENDING' && pipeline.dependencies.size === 0) {
+    for (const id of this.readyIds) {
+      const pipeline = this.pipelines.get(id);
+      if (pipeline && pipeline.state === 'PENDING' && pipeline.dependencies.size === 0) {
         ready.push(pipeline);
+        continue;
       }
+      this.readyIds.delete(id);
     }
     return ready;
   }
@@ -60,10 +67,14 @@ export class PipelineGraph {
   markPipelineDone(pipelineId: number): void {
     const pipeline = this.pipelines.get(pipelineId)!;
     pipeline.state = 'DONE';
+    this.readyIds.delete(pipelineId);
 
     for (const depId of pipeline.dependents) {
       const dependent = this.pipelines.get(depId)!;
       dependent.dependencies.delete(pipelineId);
+      if (dependent.dependencies.size === 0 && dependent.state === 'PENDING') {
+        this.readyIds.add(depId);
+      }
     }
   }
 
@@ -71,6 +82,7 @@ export class PipelineGraph {
     const pipeline = this.pipelines.get(pipelineId);
     if (!pipeline) return;
     pipeline.state = 'FAILED';
+    this.readyIds.delete(pipelineId);
   }
 
   cancelPipeline(pipelineId: number): void {
@@ -80,6 +92,7 @@ export class PipelineGraph {
     if (pipeline.state === 'PENDING' || pipeline.state === 'RUNNING') {
       pipeline.state = 'CANCELLED';
     }
+    this.readyIds.delete(pipelineId);
   }
 
   isCancelled(pipelineId: number): boolean {

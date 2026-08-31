@@ -143,7 +143,7 @@ export interface OrderKeyNode { kind: NodeKind.ORDER_KEY; expr: Expr; direction:
 
 export interface TypeNameNode { kind: NodeKind.TYPE_NAME; name: string; params: number[]; }
 
-export type FrameMode = 'ROWS' | 'RANGE';
+export type FrameMode = 'ROWS' | 'RANGE' | 'GROUPS';
 
 export type FrameBoundType = 'UNBOUNDED_PRECEDING' | 'PRECEDING' | 'CURRENT_ROW' | 'FOLLOWING' | 'UNBOUNDED_FOLLOWING';
 

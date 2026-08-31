@@ -38,12 +38,19 @@ export function descendingBitIndices(mask: number): number[] {
 
 export function subsetsByAscendingSize(mask: number): number[] {
   const width = popcount(mask);
-  const buckets: number[][] = Array.from({ length: width + 1 }, () => []);
-  for (const subset of subsets(mask)) buckets[popcount(subset)].push(subset);
+  const counts = new Int32Array(width + 2);
+  let total = 0;
+  for (let subset = mask; subset > 0; subset = (subset - 1) & mask) {
+    counts[popcount(subset)]++;
+    total++;
+  }
 
-  const ordered: number[] = [];
-  for (let size = 1; size <= width; size++) {
-    for (const subset of buckets[size]) ordered.push(subset);
+  const cursor = new Int32Array(width + 2);
+  for (let size = 2; size <= width; size++) cursor[size] = cursor[size - 1] + counts[size - 1];
+
+  const ordered = new Array<number>(total);
+  for (let subset = mask; subset > 0; subset = (subset - 1) & mask) {
+    ordered[cursor[popcount(subset)]++] = subset;
   }
   return ordered;
 }

@@ -4,12 +4,24 @@ import { DataType } from '../storage/data-type.js';
 
 const AND = 'AND';
 
+function isConjunction(expr: BoundExpr): expr is BoundBinaryNode {
+  return expr.kind === BoundExprKind.BINARY && expr.op?.toUpperCase() === AND;
+}
+
 export function splitConjuncts(expr: BoundExpr | null): BoundExpr[] {
   if (!expr) return [];
-  if (expr.kind === BoundExprKind.BINARY && expr.op?.toUpperCase() === AND) {
-    return [...splitConjuncts(expr.left), ...splitConjuncts(expr.right)];
+
+  const conjuncts: BoundExpr[] = [];
+  const pending: BoundExpr[] = [expr];
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    if (isConjunction(current)) {
+      pending.push(current.right, current.left);
+      continue;
+    }
+    conjuncts.push(current);
   }
-  return [expr];
+  return conjuncts;
 }
 
 export function combineConjuncts(preds: BoundExpr[]): BoundExpr | null {

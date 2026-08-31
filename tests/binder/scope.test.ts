@@ -304,6 +304,26 @@ describe('BinderScope', () => {
       expect(first).not.toBe(second);
     });
 
+    it('separates the same alias used by two sibling scopes', () => {
+      const root = new BinderScope();
+      const left = root.child().addTable('a', { originalName: 'T', columns: makeColumns('X') });
+      const right = root.child().addTable('a', { originalName: 'U', columns: makeColumns('Y') });
+
+      expect(left).toBe('A');
+      expect(right).not.toBe('A');
+      expect(left).not.toBe(right);
+    });
+
+    it('hands out a distinct relation alias for every relation in one query', () => {
+      const root = new BinderScope();
+      const aliases = new Set();
+      for (let i = 0; i < 5; i++) {
+        aliases.add(root.child().addTable('a', { originalName: 'T', columns: makeColumns('X') }));
+      }
+
+      expect(aliases.size).toBe(5);
+    });
+
     it('reports the shadowing alias from an unqualified lookup', () => {
       const parent = new BinderScope();
       parent.addTable('emp', { originalName: 'EMP', columns: makeColumns('ID') });

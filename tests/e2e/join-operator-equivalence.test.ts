@@ -4,6 +4,7 @@ import { createEngine, registerTable } from '../../src/engine-entry.js';
 import { PhysicalPlanner } from '../../src/execution/physical-planner.js';
 import { PhysicalNodeType } from '../../src/execution/physical-plan.js';
 import { deterministicRandom } from '../../src/catalog/reservoir-sample.js';
+import { DataType } from '../../src/storage/data-type.js';
 
 function forceJoinOperator(engine, type) {
   const planner = engine.executor.physicalPlanner;
@@ -18,6 +19,11 @@ function forceJoinOperator(engine, type) {
   };
   return forced;
 }
+
+const JOIN_SCHEMA = [
+  { name: 'K', dataType: DataType.INT32 },
+  { name: 'V', dataType: DataType.INT32 },
+];
 
 function buildRows(count, keySpread, seed) {
   const random = deterministicRandom(seed);
@@ -38,8 +44,8 @@ function normalize(rows, columns) {
 
 async function runWith(operatorType, sql, left, right) {
   const engine = createEngine();
-  registerTable(engine, 'L', left);
-  registerTable(engine, 'R', right);
+  registerTable(engine, 'L', left, JOIN_SCHEMA);
+  registerTable(engine, 'R', right, JOIN_SCHEMA);
   await engine.run('SELECT COUNT(*) AS C FROM L');
   await engine.run('SELECT COUNT(*) AS C FROM R');
   const forced = forceJoinOperator(engine, operatorType);
@@ -71,7 +77,7 @@ describe('hash join and merge join agree', () => {
   for (const shape of shapes) {
     for (const dataset of datasets) {
       it(`${shape.name} over ${dataset.name}`, async () => {
-        const right = dataset.right.length > 0 ? dataset.right : [{ K: null, V: null }];
+        const right = dataset.right;
         const viaHash = await runWith(PhysicalNodeType.HASH_JOIN, shape.sql, dataset.left, right);
         const viaMerge = await runWith(PhysicalNodeType.MERGE_JOIN, shape.sql, dataset.left, right);
 

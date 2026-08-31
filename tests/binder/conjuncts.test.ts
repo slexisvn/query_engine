@@ -61,6 +61,34 @@ describe('splitConjuncts', () => {
   });
 });
 
+describe('splitConjuncts on long chains', () => {
+  const chain = (size) => {
+    const preds = Array.from({ length: size }, (_, i) => eq(colRef('L', `C${i}`), lit(i)));
+    return { preds, expr: combineConjuncts(preds) };
+  };
+
+  it('keeps left-to-right order', () => {
+    const { preds, expr } = chain(6);
+    expect(splitConjuncts(expr)).toEqual(preds);
+  });
+
+  it('flattens a right-deep chain in order', () => {
+    const a = eq(colRef('L', 'A'), lit(1));
+    const b = eq(colRef('L', 'B'), lit(2));
+    const c = eq(colRef('L', 'C'), lit(3));
+    expect(splitConjuncts(and(a, and(b, c)))).toEqual([a, b, c]);
+  });
+
+  it('handles a chain far deeper than the call stack allows', () => {
+    const { preds, expr } = chain(50000);
+    const split = splitConjuncts(expr);
+
+    expect(split).toHaveLength(50000);
+    expect(split[0]).toBe(preds[0]);
+    expect(split[49999]).toBe(preds[49999]);
+  });
+});
+
 describe('combineConjuncts', () => {
   it('returns null for an empty list', () => {
     expect(combineConjuncts([])).toBeNull();

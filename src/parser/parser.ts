@@ -1,13 +1,15 @@
-import { Lexer, Token, TokenType } from './lexer.js';
+import { Lexer, Token, TokenType, describePosition } from './lexer.js';
 import * as AST from './ast.js';
 import { DataType } from '../storage/data-type.js';
 
 export class Parser {
+  source: string;
   tokens: Token[];
   pos: number;
 
   constructor(sql: string) {
     const lexer = new Lexer(sql);
+    this.source = sql;
     this.tokens = lexer.tokens;
     this.pos = 0;
   }
@@ -531,7 +533,7 @@ export class Parser {
 
     if (token.type === TokenType.NUMBER) {
       this.advance();
-      if (token.value.includes('.')) {
+      if (isApproximateLiteral(token.value)) {
         return AST.Literal(parseFloat(token.value), DataType.FLOAT64);
       }
       return AST.Literal(parseInt(token.value, 10));
@@ -557,19 +559,19 @@ export class Parser {
       return AST.Literal(false, DataType.BOOLEAN);
     }
 
-    if (token.type === TokenType.DATE) {
+    if (token.type === TokenType.DATE && this.aheadIs(1, TokenType.STRING)) {
       this.advance();
       const dateStr = this.expect(TokenType.STRING);
       return AST.Literal(dateStr.value, DataType.DATE);
     }
 
-    if (token.type === TokenType.TIMESTAMP) {
+    if (token.type === TokenType.TIMESTAMP && this.aheadIs(1, TokenType.STRING)) {
       this.advance();
       const tsStr = this.expect(TokenType.STRING);
       return AST.Literal(tsStr.value, DataType.TIMESTAMP);
     }
 
-    if (token.type === TokenType.INTERVAL) {
+    if (token.type === TokenType.INTERVAL && this.aheadIs(1, TokenType.STRING)) {
       return this.parseInterval();
     }
 
@@ -581,15 +583,15 @@ export class Parser {
       return this.parseCast();
     }
 
-    if (token.type === TokenType.EXTRACT) {
+    if (token.type === TokenType.EXTRACT && this.aheadIs(1, TokenType.LPAREN)) {
       return this.parseExtract();
     }
 
-    if (token.type === TokenType.SUBSTRING) {
+    if (token.type === TokenType.SUBSTRING && this.aheadIs(1, TokenType.LPAREN)) {
       return this.parseSubstringFn();
     }
 
-    if (token.type === TokenType.TRIM) {
+    if (token.type === TokenType.TRIM && this.aheadIs(1, TokenType.LPAREN)) {
       return this.parseTrim();
     }
 
@@ -628,7 +630,7 @@ export class Parser {
       return AST.AllColumns();
     }
 
-    if (this.isAggregateKeyword(token.type)) {
+    if (this.isAggregateKeyword(token.type) && this.aheadIs(1, TokenType.LPAREN)) {
       return this.parseAggregateCall();
     }
 
@@ -643,7 +645,7 @@ export class Parser {
       return AST.Parameter(Number(paramToken.value));
     }
 
-    if (token.type === TokenType.IDENT) {
+    if (token.type === TokenType.IDENT || this.isNonReservedKeyword(token.type)) {
       const name = this.advance().value;
 
       if (this.isAt(TokenType.LPAREN)) {
@@ -734,6 +736,7 @@ export class Parser {
     let mode: AST.FrameMode;
     if (this.tryConsume(TokenType.ROWS)) mode = 'ROWS';
     else if (this.tryConsume(TokenType.RANGE)) mode = 'RANGE';
+    else if (this.tryConsume(TokenType.GROUPS)) mode = 'GROUPS';
     else return null;
 
     if (this.tryConsume(TokenType.BETWEEN)) {
@@ -916,6 +919,10 @@ export class Parser {
     return this.tokens[this.pos + offset] || null;
   }
 
+  aheadIs(offset: number, type: TokenType): boolean {
+    return this.peekAhead(offset)?.type === type;
+  }
+
   advance(): Token {
     return this.tokens[this.pos++];
   }
@@ -967,7 +974,7 @@ export class Parser {
       TokenType.TIMESTAMP, TokenType.HOUR, TokenType.MINUTE, TokenType.SECOND,
       TokenType.OVER, TokenType.PARTITION, TokenType.RANGE,
       TokenType.UNBOUNDED, TokenType.PRECEDING, TokenType.FOLLOWING,
-      TokenType.CURRENT, TokenType.ROW, TokenType.NATURAL, TokenType.USING,
+      TokenType.CURRENT, TokenType.ROW, TokenType.GROUPS, TokenType.NATURAL, TokenType.USING,
       TokenType.TABLE, TokenType.DROP, TokenType.IF, TokenType.ANALYZE,
     ].includes(type);
   }
@@ -1025,8 +1032,12 @@ export class Parser {
 
   error(message: string): never {
     const token = this.peek();
-    throw new Error(`Parse error at position ${token.position}: ${message}`);
+    throw new Error(`Parse error at ${describePosition(this.source, token.position)}: ${message}`);
   }
+}
+
+function isApproximateLiteral(text: string): boolean {
+  return text.includes('.') || text.includes('e') || text.includes('E');
 }
 
 function truthTest(expr: AST.Expr, name: string, negated: boolean): AST.Expr {

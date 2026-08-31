@@ -16,24 +16,41 @@ import {
   type SortRequirement,
 } from './physical-plan.js';
 import { descriptorOf } from '../planner/plan-node-descriptor.js';
-import { DefaultCostModel, sortKeyClassOf } from '../planner/cost-model.js';
+import { DefaultCostModel, sortKeyClassOf, type SortKeyClass } from '../planner/cost-model.js';
 import { Config } from '../config.js';
 import { chooseJoinBuildSide, isEquiJoinDedupable } from '../planner/join-build-side.js';
 import { extractEquiJoinKeys, equiJoinKeyTypes, columnKeyOf, isSortedBy, isSortedByPrefix, satisfiesOrder, selectsRows } from '../planner/sort-properties.js';
 import { canUsePerfectHashAggregate, type AggregateStatsProvider } from '../planner/aggregate-strategy.js';
 import { PlanPropertyAnnotator } from '../planner/plan-properties.js';
-import type { BoundExpr } from '../binder/expression-binder.js';
+import { getExprType, type BoundExpr } from '../binder/expression-binder.js';
 import type { TableStats } from '../catalog/statistics.js';
 
 const DEFAULT_CARDINALITY = 1000;
 
 const NO_SORT_REQUIRED: SortRequirement = { left: false, right: false };
 
+type RequiredOrder = readonly LogicalOrderKey[] | null;
+
 const ORDER_PRESERVING_TYPES: ReadonlySet<PhysicalNodeType> = new Set([
   PhysicalNodeType.FILTER,
   PhysicalNodeType.PROJECT,
   PhysicalNodeType.LIMIT,
 ]);
+
+const ORDER_PRESERVING_LOGICAL_TYPES: ReadonlySet<PlanNodeType> = new Set([
+  PlanNodeType.FILTER,
+  PlanNodeType.PROJECT,
+  PlanNodeType.LIMIT,
+]);
+
+function requiredOrderFor(node: LogicalPlanNode, inherited: RequiredOrder): RequiredOrder {
+  if (node.type === PlanNodeType.SORT || node.type === PlanNodeType.TOP_N) return node.orderKeys;
+  return ORDER_PRESERVING_LOGICAL_TYPES.has(node.type) ? inherited : null;
+}
+
+function orderKeyClassOf(required: readonly LogicalOrderKey[]): SortKeyClass {
+  return sortKeyClassOf(required.map(key => getExprType(key.expr)));
+}
 
 function ascendingOrder(keys: readonly string[]): SortedByEntry[] {
   return keys.map(key => ({ key, direction: 'ASC' }));
@@ -81,14 +98,15 @@ export class PhysicalPlanner {
   }
 
   plan(node: LogicalPlanNode): PhysicalPlanNode {
-    return this.planNode(this.planProperties.annotate(node));
+    return this.planNode(this.planProperties.annotate(node), null);
   }
 
-  planNode(node: LogicalPlanNode): PhysicalPlanNode {
-    const children = (node.children ?? []).map((child) => this.planNode(child));
+  planNode(node: LogicalPlanNode, required: RequiredOrder = null): PhysicalPlanNode {
+    const childRequired = requiredOrderFor(node, required);
+    const children = (node.children ?? []).map((child) => this.planNode(child, childRequired));
     const physicalType = descriptorOf(node.type).physicalType;
 
-    if (physicalType === null) return this.planCostBased(node, children);
+    if (physicalType === null) return this.planCostBased(node, children, required);
 
     const satisfied = this.planSatisfiedOrder(node, children);
     if (satisfied) return satisfied;
@@ -96,10 +114,29 @@ export class PhysicalPlanner {
     return physicalOperator(physicalType, node, children, cardinalityOf(node), this.operatorCost(node, children));
   }
 
-  planCostBased(node: LogicalPlanNode, children: PhysicalPlanNode[]): PhysicalPlanNode {
-    if (node.type === PlanNodeType.JOIN) return this.planJoin(node, children);
-    if (node.type === PlanNodeType.AGGREGATE) return this.planAggregate(node, children);
+  planCostBased(node: LogicalPlanNode, children: PhysicalPlanNode[], required: RequiredOrder): PhysicalPlanNode {
+    if (node.type === PlanNodeType.JOIN) return this.planJoin(node, children, required);
+    if (node.type === PlanNodeType.AGGREGATE) return this.planAggregate(node, children, required);
     throw new Error(`No physical operator for plan node: ${node.type}`);
+  }
+
+  residualSortCost(candidate: PhysicalPlanNode, required: RequiredOrder): number {
+    if (!required || required.length === 0) return 0;
+    if (providedSortOrders(candidate).some(order => satisfiesOrder(order, required))) return 0;
+    return this.costModel.sortCost(candidate.cardinality, orderKeyClassOf(required));
+  }
+
+  cheapestFor(candidates: PhysicalPlanNode[], required: RequiredOrder): PhysicalPlanNode {
+    let best = candidates[0];
+    let bestCost = best.cost + this.residualSortCost(best, required);
+    for (const candidate of candidates) {
+      const effective = candidate.cost + this.residualSortCost(candidate, required);
+      if (effective < bestCost) {
+        best = candidate;
+        bestCost = effective;
+      }
+    }
+    return best;
   }
 
   planSatisfiedOrder(node: LogicalPlanNode, children: PhysicalPlanNode[]): PhysicalPlanNode | null {
@@ -129,8 +166,8 @@ export class PhysicalPlanner {
     return cost(this.costModel, node, inputCardinalities, cardinality);
   }
 
-  planJoin(node: LogicalJoinNode, children: PhysicalPlanNode[]): PhysicalPlanNode {
-    return cheapest(this.joinCandidates(node, children));
+  planJoin(node: LogicalJoinNode, children: PhysicalPlanNode[], required: RequiredOrder = null): PhysicalPlanNode {
+    return this.cheapestFor(this.joinCandidates(node, children), required);
   }
 
   joinCandidates(node: LogicalJoinNode, children: PhysicalPlanNode[]): PhysicalPlanNode[] {
@@ -215,8 +252,8 @@ export class PhysicalPlanner {
     );
   }
 
-  planAggregate(node: LogicalAggregateNode, children: PhysicalPlanNode[]): PhysicalPlanNode {
-    return cheapest(this.aggregateCandidates(node, children));
+  planAggregate(node: LogicalAggregateNode, children: PhysicalPlanNode[], required: RequiredOrder = null): PhysicalPlanNode {
+    return this.cheapestFor(this.aggregateCandidates(node, children), required);
   }
 
   aggregateCandidates(node: LogicalAggregateNode, children: PhysicalPlanNode[]): PhysicalPlanNode[] {
@@ -256,14 +293,6 @@ export class PhysicalPlanner {
 
     return candidates;
   }
-}
-
-export function cheapest(candidates: PhysicalPlanNode[]): PhysicalPlanNode {
-  let best = candidates[0];
-  for (const candidate of candidates) {
-    if (candidate.cost < best.cost) best = candidate;
-  }
-  return best;
 }
 
 const RUNTIME_FILTER_JOINS: ReadonlySet<JoinType> = new Set([JoinType.INNER, JoinType.SEMI]);

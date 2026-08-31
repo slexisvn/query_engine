@@ -4,6 +4,7 @@ import { DataType, dateToEpochDays, timestampToEpochMs, normalizeTypeName, isNum
 import { BinderScope, type ColumnInfo } from './scope.js';
 import * as BE from './expression-binder.js';
 import { exprKey } from './expr-key.js';
+import { ARITHMETIC_OPS, COMPARISON_OPS, coerceGroup, coerceOperands } from './coercion.js';
 import { inferArithmeticType, inferAggregateType } from './type-inference.js';
 
 export interface TableMeta { name: string; columns: ColumnInfo[]; }
@@ -475,13 +476,13 @@ export class Binder {
       case NodeKind.CAST_EXPR:
         return this.bindCastExpr(node, scope);
 
-      case NodeKind.BETWEEN_EXPR:
-        return BE.BoundBetween(
-          this.bindExpression(node.expr, scope),
+      case NodeKind.BETWEEN_EXPR: {
+        const bounds = coerceGroup('BETWEEN', this.bindExpression(node.expr, scope), [
           this.bindExpression(node.low, scope),
           this.bindExpression(node.high, scope),
-          node.negated,
-        );
+        ]);
+        return BE.BoundBetween(bounds.anchor, bounds.operands[0], bounds.operands[1], node.negated);
+      }
 
       case NodeKind.IN_EXPR:
         return this.bindInExpr(node, scope);
@@ -535,6 +536,7 @@ export class Binder {
       nullOrder: ok.nullOrder,
     }));
     const resultType = this.inferWindowType(node.name, args);
+    BE.validateWindowFrame(node.windowSpec.frame, orderBy.length);
     return BE.BoundWindow(node.name.toUpperCase(), args, partitionBy, orderBy, node.windowSpec.frame, resultType);
   }
 
@@ -610,8 +612,9 @@ export class Binder {
     const right = this.bindExpression(node.right, scope);
     const op = node.op;
 
-    if (['=', '<>', '<', '>', '<=', '>='].includes(op)) {
-      return BE.BoundBinary(op, left, right, DataType.BOOLEAN);
+    if (COMPARISON_OPS.has(op)) {
+      const [lhs, rhs] = coerceOperands(op, left, right);
+      return BE.BoundBinary(op, lhs, rhs, DataType.BOOLEAN);
     }
     if (['AND', 'OR'].includes(op)) {
       return BE.BoundBinary(op, left, right, DataType.BOOLEAN);
@@ -620,8 +623,9 @@ export class Binder {
       return BE.BoundBinary(op, left, right, DataType.VARCHAR);
     }
 
-    const resultType = this.inferArithmeticType(BE.getExprType(left), BE.getExprType(right), op);
-    return BE.BoundBinary(op, left, right, resultType);
+    const [lhs, rhs] = ARITHMETIC_OPS.has(op) ? coerceOperands(op, left, right) : [left, right];
+    const resultType = this.inferArithmeticType(BE.getExprType(lhs), BE.getExprType(rhs), op);
+    return BE.BoundBinary(op, lhs, rhs, resultType);
   }
 
   bindQuantified(op: string, node: AST.QuantifiedSubqueryNode, expr: BE.BoundExpr, scope: BinderScope): BE.BoundQuantifiedNode {
@@ -706,7 +710,8 @@ export class Binder {
       return BE.BoundInList(expr, BE.BoundSubquery(subPlan, 'IN'), node.negated);
     }
     const list = (inList as AST.Expr[]).map(e => this.bindExpression(e, scope));
-    return BE.BoundInList(expr, list, node.negated);
+    const coerced = coerceGroup('IN', expr, list);
+    return BE.BoundInList(coerced.anchor, coerced.operands, node.negated);
   }
 
   bindExistsExpr(node: AST.ExistsExprNode, scope: BinderScope): BE.BoundExistsNode {

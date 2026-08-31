@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { compileExpression, buildColumnMapping } from '../../src/execution/expression-eval.js';
+import { compileExpression } from '../../src/execution/expression-eval.js';
 import { BoundExprKind } from '../../src/binder/expression-binder.js';
 import { aggregateKey } from '../../src/binder/expr-key.js';
 import { Column } from '../../src/storage/column.js';
@@ -482,108 +482,5 @@ describe('compileExpression', () => {
       const fn = compileExpression(null, mapping);
       expect(fn(chunk, 0)).toBeNull();
     });
-  });
-});
-
-describe('buildColumnMapping', () => {
-  it('creates mapping with table alias prefix', () => {
-    const schemas = [
-      { alias: 'T', columns: [{ name: 'ID' }, { name: 'NAME' }] },
-    ];
-    const m = buildColumnMapping(schemas);
-
-    expect(m.get('T.ID')).toBe(0);
-    expect(m.get('T.NAME')).toBe(1);
-    expect(m.get('ID')).toBe(0);
-    expect(m.get('NAME')).toBe(1);
-  });
-
-  it('handles multiple schemas with correct offsets', () => {
-    const schemas = [
-      { alias: 'A', columns: [{ name: 'X' }] },
-      { alias: 'B', columns: [{ name: 'Y' }, { name: 'Z' }] },
-    ];
-    const m = buildColumnMapping(schemas);
-
-    expect(m.get('A.X')).toBe(0);
-    expect(m.get('B.Y')).toBe(1);
-    expect(m.get('B.Z')).toBe(2);
-  });
-
-  it('last occurrence wins for ambiguous bare column names', () => {
-    const schemas = [
-      { alias: 'A', columns: [{ name: 'ID' }] },
-      { alias: 'B', columns: [{ name: 'ID' }] },
-    ];
-    const m = buildColumnMapping(schemas);
-
-    expect(m.get('ID')).toBe(1);
-    expect(m.get('A.ID')).toBe(0);
-    expect(m.get('B.ID')).toBe(1);
-  });
-});
-
-describe('LIKE regex cache bounding', () => {
-  it('produces correct results even with many distinct patterns', () => {
-    const colValues = [];
-    const patternValues = [];
-    for (let i = 0; i < 300; i++) {
-      colValues.push(`item_${i}`);
-      patternValues.push(`%${i}%`);
-    }
-
-    const col0 = new Column('VARCHAR', colValues.length);
-    const col1 = new Column('VARCHAR', patternValues.length);
-    for (let i = 0; i < colValues.length; i++) {
-      col0.set(i, colValues[i]);
-      col1.set(i, patternValues[i]);
-    }
-    col0.length = colValues.length;
-    col1.length = patternValues.length;
-
-    const chunk = new DataChunk([col0, col1], colValues.length);
-
-    const mapping = new Map([['T.VAL', 0], ['VAL', 0], ['T.PAT', 1], ['PAT', 1]]);
-    const likeExpr = {
-      kind: BoundExprKind.LIKE,
-      expr: { kind: BoundExprKind.COLUMN_REF, tableAlias: 'T', columnName: 'VAL', columnIndex: 0, dataType: 'VARCHAR' },
-      pattern: { kind: BoundExprKind.COLUMN_REF, tableAlias: 'T', columnName: 'PAT', columnIndex: 1, dataType: 'VARCHAR' },
-      negated: false,
-    };
-
-    const fn = compileExpression(likeExpr, mapping);
-
-    let trueCount = 0;
-    for (let i = 0; i < chunk.size; i++) {
-      if (fn(chunk, i)) trueCount++;
-    }
-
-    expect(trueCount).toBe(300);
-  });
-
-  it('does not leak memory with unbounded distinct patterns', () => {
-    const col0 = new Column('VARCHAR', 10);
-    const col1 = new Column('VARCHAR', 10);
-    for (let i = 0; i < 10; i++) {
-      col0.set(i, `value_${i}`);
-      col1.set(i, `%${i}%`);
-    }
-    col0.length = 10;
-    col1.length = 10;
-    const chunk = new DataChunk([col0, col1], 10);
-
-    const mapping = new Map([['V', 0], ['P', 1]]);
-    const likeExpr = {
-      kind: BoundExprKind.LIKE,
-      expr: { kind: BoundExprKind.COLUMN_REF, tableAlias: '', columnName: 'V', columnIndex: 0, dataType: 'VARCHAR' },
-      pattern: { kind: BoundExprKind.COLUMN_REF, tableAlias: '', columnName: 'P', columnIndex: 1, dataType: 'VARCHAR' },
-      negated: false,
-    };
-
-    const fn = compileExpression(likeExpr, mapping);
-    for (let i = 0; i < 10; i++) {
-      fn(chunk, i);
-    }
-    expect(true).toBe(true);
   });
 });

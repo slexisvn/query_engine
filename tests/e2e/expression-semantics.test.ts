@@ -127,9 +127,9 @@ describe('expression and window semantics', () => {
       expect(rows.every(row => row.S === 1100)).toBe(true);
     });
 
-    it('rejects RANGE frames with an offset', async () => {
-      await expect(runQuery('SELECT ID, SUM(SAL) OVER (ORDER BY ID RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) AS S FROM EMP'))
-        .rejects.toThrow(/RANGE frames/);
+    it('sums a RANGE frame with a value offset', async () => {
+      const rows = await runQuery('SELECT ID, SUM(SAL) OVER (ORDER BY ID RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) AS S FROM EMP ORDER BY ID');
+      expect(rows.map(row => row.S)).toEqual([100, 300, 500, 300, 500]);
     });
   });
 

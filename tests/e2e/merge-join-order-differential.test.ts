@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import '../../src/index.js';
 import { createEngine, registerTable } from '../../src/engine-entry.js';
+import { PhysicalNodeType } from '../../src/execution/physical-plan.js';
 
 const LEFT = [];
 const RIGHT = [];
@@ -19,15 +20,22 @@ const FIXED_STATISTICS = () => {
   return new Map([['L', table()], ['R', table()]]);
 };
 
-const PROHIBITIVE = 1e6;
+function forceJoinOperator(engine, type) {
+  const planner = engine.executor.physicalPlanner;
+  const original = planner.joinCandidates.bind(planner);
+  planner.joinCandidates = (node, children) => {
+    const candidates = original(node, children);
+    const wanted = candidates.filter(candidate => candidate.type === type);
+    if (wanted.length === 0) throw new Error(`${type} is not a candidate for this join`);
+    return [wanted[0]];
+  };
+}
 
-async function withEngine(preferMergeJoin, body) {
+async function withEngine(forcedOperator, body) {
   const engine = createEngine({ statistics: FIXED_STATISTICS() });
   registerTable(engine, 'L', LEFT);
   registerTable(engine, 'R', RIGHT);
-  if (preferMergeJoin) {
-    engine.executor.physicalPlanner.costModel.C_HASH_INSERT = PROHIBITIVE;
-  }
+  if (forcedOperator) forceJoinOperator(engine, forcedOperator);
   try {
     return await body(engine);
   } finally {
@@ -35,8 +43,8 @@ async function withEngine(preferMergeJoin, body) {
   }
 }
 
-async function planAndRun(preferMergeJoin, sql) {
-  return withEngine(preferMergeJoin, async (engine) => {
+async function planAndRun(forcedOperator, sql) {
+  return withEngine(forcedOperator, async (engine) => {
     const explained = await engine.run(`EXPLAIN ${sql}`);
     const operators = explained.rows[0].EXPLAIN_PLAN
       .split('Physical Plan:')[1]
@@ -87,8 +95,8 @@ describe('a merge join plan answers the same as sorting above a hash join', () =
 
   for (const { name, sql, column, elided } of cases) {
     it(`agrees on ${name}`, async () => {
-      const merged = await planAndRun(true, sql);
-      const reference = await planAndRun(false, sql);
+      const merged = await planAndRun(PhysicalNodeType.MERGE_JOIN, sql);
+      const reference = await planAndRun(PhysicalNodeType.HASH_JOIN, sql);
 
       expect(merged.operators).toContain('MergeJoin');
       expect(merged.operators).not.toContain(elided);
@@ -102,8 +110,8 @@ describe('a merge join plan answers the same as sorting above a hash join', () =
 
   it('returns the same rows, not merely the same keys, when no limit truncates ties', async () => {
     const sql = 'SELECT l.K, l.V, r.W FROM L l JOIN R r ON l.K = r.K ORDER BY l.K';
-    const merged = await planAndRun(true, sql);
-    const reference = await planAndRun(false, sql);
+    const merged = await planAndRun(PhysicalNodeType.MERGE_JOIN, sql);
+    const reference = await planAndRun(PhysicalNodeType.HASH_JOIN, sql);
 
     expect(asMultiset(merged.rows)).toEqual(asMultiset(reference.rows));
     expect(merged.rows).toHaveLength(reference.rows.length);
@@ -141,7 +149,7 @@ describe('a merge join plan keeps the ordering it cannot supply on its own', () 
 
   for (const { name, sql, operator } of kept) {
     it(`keeps the ${operator} for ${name}`, async () => {
-      const merged = await planAndRun(true, sql);
+      const merged = await planAndRun(PhysicalNodeType.MERGE_JOIN, sql);
 
       expect(merged.operators).toContain('MergeJoin');
       expect(merged.operators).toContain(operator);
@@ -150,19 +158,35 @@ describe('a merge join plan keeps the ordering it cannot supply on its own', () 
 
   it('orders descending results correctly despite the merge join beneath', async () => {
     const sql = 'SELECT l.K, l.V FROM L l JOIN R r ON l.K = r.K ORDER BY l.K DESC';
-    const merged = await planAndRun(true, sql);
+    const merged = await planAndRun(PhysicalNodeType.MERGE_JOIN, sql);
     const descending = orderKeyValues(merged.rows, 'K');
 
     expect(descending.every((value, index) => index === 0 || descending[index - 1] >= value)).toBe(true);
   });
 });
 
-describe('the default cost model prefers a hash join over sorting both inputs', () => {
-  it('leaves the merge join unchosen when neither input carries the join order', async () => {
+describe('the default cost model weighs the sort it would still owe', () => {
+  it('takes the merge join when that removes the sort above it', async () => {
     const sql = 'SELECT l.K, l.V FROM L l JOIN R r ON l.K = r.K ORDER BY l.K';
-    const chosen = await planAndRun(false, sql);
+    const chosen = await planAndRun(null, sql);
+
+    expect(chosen.operators).toContain('MergeJoin');
+    expect(chosen.operators).not.toContain('Sort');
+  });
+
+  it('keeps the hash join when no ordering is asked for', async () => {
+    const sql = 'SELECT l.K, l.V FROM L l JOIN R r ON l.K = r.K';
+    const chosen = await planAndRun(null, sql);
 
     expect(chosen.operators).toContain('HashJoin');
     expect(chosen.operators).not.toContain('MergeJoin');
+  });
+
+  it('keeps the hash join when the order asked for is one the join cannot deliver', async () => {
+    const sql = 'SELECT l.K, l.V FROM L l JOIN R r ON l.K = r.K ORDER BY l.V';
+    const chosen = await planAndRun(null, sql);
+
+    expect(chosen.operators).toContain('HashJoin');
+    expect(chosen.operators).toContain('Sort');
   });
 });

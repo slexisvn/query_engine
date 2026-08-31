@@ -82,7 +82,7 @@ describe('Lexer', () => {
     });
 
     it('throws on unterminated strings', () => {
-      expect(() => new Lexer("'unterminated")).toThrow('Unterminated string at position 0');
+      expect(() => new Lexer("'unterminated")).toThrow('Lex error at line 1, column 1: Unterminated string');
     });
 
     it('handles string with multiple escaped quotes', () => {
@@ -125,19 +125,19 @@ describe('Lexer', () => {
     });
 
     it('throws on $ without a following number', () => {
-      expect(() => new Lexer('$ ')).toThrow("Expected parameter number after '$' at position 0");
+      expect(() => new Lexer('$ ')).toThrow("Lex error at line 1, column 1: Expected parameter number after '$'");
     });
 
     it('throws on bare ! without =', () => {
-      expect(() => new Lexer('!')).toThrow("Unexpected character '!' at position 0");
+      expect(() => new Lexer('!')).toThrow("Lex error at line 1, column 1: Unexpected character '!'");
     });
 
     it('throws on bare | without second |', () => {
-      expect(() => new Lexer('|')).toThrow("Unexpected character '|' at position 0");
+      expect(() => new Lexer('|')).toThrow("Lex error at line 1, column 1: Unexpected character '|'");
     });
 
     it('throws on unexpected characters', () => {
-      expect(() => new Lexer('@')).toThrow("Unexpected character '@' at position 0");
+      expect(() => new Lexer('@')).toThrow("Lex error at line 1, column 1: Unexpected character '@'");
     });
   });
 
@@ -157,6 +157,29 @@ describe('Lexer', () => {
       expect(types).toEqual([TokenType.SELECT, TokenType.IDENT, TokenType.EOF]);
     });
 
+    it('skips block comments', () => {
+      const types = tokenTypes('SELECT /* dropped */ foo');
+      expect(types).toEqual([TokenType.SELECT, TokenType.IDENT, TokenType.EOF]);
+    });
+
+    it('skips block comments spanning lines', () => {
+      const types = tokenTypes('SELECT /* one\n two */ foo');
+      expect(types).toEqual([TokenType.SELECT, TokenType.IDENT, TokenType.EOF]);
+    });
+
+    it('skips nested block comments', () => {
+      const types = tokenTypes('SELECT /* a /* b */ c */ foo');
+      expect(types).toEqual([TokenType.SELECT, TokenType.IDENT, TokenType.EOF]);
+    });
+
+    it('throws on an unterminated block comment', () => {
+      expect(() => new Lexer('SELECT /* open')).toThrow('Unterminated block comment');
+    });
+
+    it('still lexes a bare slash as division', () => {
+      expect(tokenTypes('a / b')).toEqual([TokenType.IDENT, TokenType.SLASH, TokenType.IDENT, TokenType.EOF]);
+    });
+
     it('produces only EOF for empty input', () => {
       const lex = new Lexer('');
       expect(lex.tokens).toEqual([new Token(TokenType.EOF, '', 0)]);
@@ -166,6 +189,68 @@ describe('Lexer', () => {
       const lex = new Lexer('   \t\n  ');
       expect(lex.tokens.length).toBe(1);
       expect(lex.tokens[0].type).toBe(TokenType.EOF);
+    });
+  });
+
+  describe('delimited identifiers', () => {
+    it('lexes a double-quoted identifier as IDENT', () => {
+      const lex = new Lexer('"my col"');
+      expect(lex.tokens[0].type).toBe(TokenType.IDENT);
+      expect(lex.tokens[0].value).toBe('my col');
+      expect(lex.tokens[0].quoted).toBe(true);
+    });
+
+    it('escapes a reserved keyword', () => {
+      const lex = new Lexer('"select"');
+      expect(lex.tokens[0].type).toBe(TokenType.IDENT);
+      expect(lex.tokens[0].value).toBe('select');
+    });
+
+    it('preserves case exactly', () => {
+      expect(tokenValues('"MiXeD"')[0]).toBe('MiXeD');
+    });
+
+    it('unescapes doubled quotes', () => {
+      expect(tokenValues('"a""b"')[0]).toBe('a"b');
+    });
+
+    it('throws on an empty delimited identifier', () => {
+      expect(() => new Lexer('""')).toThrow('Empty delimited identifier');
+    });
+
+    it('throws on an unterminated delimited identifier', () => {
+      expect(() => new Lexer('"open')).toThrow('Unterminated delimited identifier');
+    });
+  });
+
+  describe('numeric exponents', () => {
+    it('lexes a positive exponent', () => {
+      const lex = new Lexer('1e3');
+      expect(lex.tokens[0]).toEqual(new Token(TokenType.NUMBER, '1e3', 0));
+    });
+
+    it('lexes a signed exponent on a decimal', () => {
+      expect(tokenValues('1.5E-3')[0]).toBe('1.5E-3');
+    });
+
+    it('lexes a plus exponent', () => {
+      expect(tokenValues('2e+10')[0]).toBe('2e+10');
+    });
+
+    it('does not consume a trailing identifier as an exponent', () => {
+      const types = tokenTypes('1 exp');
+      expect(types).toEqual([TokenType.NUMBER, TokenType.IDENT, TokenType.EOF]);
+    });
+
+    it('leaves a bare e after digits as a separate identifier', () => {
+      const lex = new Lexer('1e');
+      expect(lex.tokens.map(t => t.value)).toEqual(['1', 'e', '']);
+    });
+  });
+
+  describe('error positions', () => {
+    it('reports line and column for a later line', () => {
+      expect(() => new Lexer('SELECT a\nFROM @')).toThrow('Lex error at line 2, column 6');
     });
   });
 

@@ -3,26 +3,19 @@ import type {
   BoundExpr,
   BoundLiteralNode,
 } from '../binder/expression-binder.js';
-import { DataType, castToNumber, epochDaysToDate, dateToEpochDays, epochMsToTimestamp } from '../storage/data-type.js';
+import { DataType, castToType, epochDaysToDate, epochMsToTimestamp } from '../storage/data-type.js';
 import type { ColumnValue } from '../storage/data-type.js';
 import type { DataChunk } from '../storage/chunk.js';
 import type {
   EvalValue,
   CompiledExpr,
   ColumnMapping,
-  ExecColumn,
 } from './execution-types.js';
 import { resolveColumnIndex, UnresolvedReferenceError } from './column-resolve.js';
 import { exprKey } from '../binder/expr-key.js';
 import { binaryValueOp, unaryValueOp, normalizeComparable } from './value-ops.js';
 
 const LIKE_CACHE_MAX = 256;
-
-interface MappingSchema {
-  columns?: ExecColumn[];
-  alias?: string;
-  tableName?: string;
-}
 
 export function compileExpression(expr: BoundExpr | null, columnMapping: ColumnMapping | null): CompiledExpr {
   if (!expr) return () => null;
@@ -150,7 +143,7 @@ export function compileExpression(expr: BoundExpr | null, columnMapping: ColumnM
     case BoundExprKind.CAST: {
       const e = compileExpression(expr.expr, columnMapping);
       const targetType = expr.targetType as DataType;
-      return (c: DataChunk, r: number) => castValue(e(c, r), targetType);
+      return (c: DataChunk, r: number) => castToType(e(c, r) as ColumnValue, targetType);
     }
 
     case BoundExprKind.EXTRACT: {
@@ -294,54 +287,4 @@ function materializedColumnOf(expr: BoundExpr, columnMapping: ColumnMapping | nu
   if (!columnMapping || !MATERIALIZABLE_KINDS.has(expr.kind)) return null;
   const index = columnMapping.get(exprKey(expr));
   return index === undefined ? null : index;
-}
-
-function castValue(val: EvalValue, targetType: DataType): EvalValue {
-  if (val === null) return null;
-  switch (targetType) {
-    case DataType.INT32: {
-      const numeric = castToNumber(val as ColumnValue);
-      return numeric === null ? null : Math.trunc(numeric);
-    }
-    case DataType.INT64: {
-      const numeric = castToNumber(val as ColumnValue);
-      return numeric === null ? null : BigInt(Math.trunc(numeric));
-    }
-    case DataType.FLOAT64: return castToNumber(val as ColumnValue);
-    case DataType.VARCHAR: {
-      if (typeof val === 'bigint') return String(Number(val));
-      return String(val);
-    }
-    case DataType.BOOLEAN: return !!val;
-    case DataType.TIMESTAMP: {
-      if (typeof val === 'string') {
-        return new Date(val).getTime();
-      }
-      return Number(val);
-    }
-    case DataType.DATE: {
-      if (typeof val === 'string') {
-        const [y, m, d] = val.split('-').map(Number);
-        return dateToEpochDays(y, m, d);
-      }
-      return val;
-    }
-    default: return val;
-  }
-}
-
-export function buildColumnMapping(schemas: MappingSchema[] | ExecColumn[][]): ColumnMapping {
-  const mapping: ColumnMapping = new Map();
-  let idx = 0;
-  for (const schema of schemas as MappingSchema[]) {
-    const cols = (schema.columns || schema) as ExecColumn[];
-    for (const col of cols) {
-      const alias = schema.alias || schema.tableName || '';
-      const key = `${alias}.${col.name}`.toUpperCase();
-      mapping.set(key, idx);
-      mapping.set(col.name.toUpperCase(), idx);
-      idx++;
-    }
-  }
-  return mapping;
 }

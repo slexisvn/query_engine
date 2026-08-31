@@ -115,6 +115,22 @@ describe('DefaultCardinalityEstimator', () => {
       expect(est.estimatePlan(plan)).toBe(100);
     });
 
+    it('uses column NDVs when DISTINCT sits over a projection', () => {
+      const est = new DefaultCardinalityEstimator(makeStats());
+      const scan = { type: PlanNodeType.SCAN, table: 'orders' };
+      const project = LogicalProject([makeColRef('ORDERS', 'STATUS')], scan);
+      const plan = { type: PlanNodeType.DISTINCT, children: [project] };
+
+      expect(est.estimatePlan(plan)).toBe(5);
+    });
+
+    it('falls back to the square-root rule without a projection', () => {
+      const est = new DefaultCardinalityEstimator(makeStats());
+      const plan = { type: PlanNodeType.DISTINCT, children: [{ type: PlanNodeType.SCAN, table: 'orders' }] };
+
+      expect(est.estimatePlan(plan)).toBe(100);
+    });
+
     it('handles EMPTY node', () => {
       const est = new DefaultCardinalityEstimator(makeStats());
       expect(est.estimatePlan({ type: PlanNodeType.EMPTY })).toBe(0);
@@ -160,6 +176,42 @@ describe('DefaultCardinalityEstimator', () => {
       const singleResult = est.estimateJoin(10000, 10000, cond1);
       const doubleResult = est.estimateJoin(10000, 10000, combined);
       expect(doubleResult).toBeLessThan(singleResult);
+    });
+  });
+
+  describe('multi-predicate join selectivity damping', () => {
+    it('stays above the fully independent product', () => {
+      const est = new DefaultCardinalityEstimator(makeStats());
+      const idEq = makeBinary(makeColRef('ORDERS', 'ID'), '=', makeColRef('ORDERS', 'ID'));
+      const statusEq = makeBinary(makeColRef('ORDERS', 'STATUS'), '=', makeColRef('ORDERS', 'STATUS'));
+      const combined = makeBinary(idEq, 'AND', statusEq);
+
+      const idOnly = est.estimateJoin(10000, 10000, idEq);
+      const statusOnly = est.estimateJoin(10000, 10000, statusEq);
+      const both = est.estimateJoin(10000, 10000, combined);
+      const independent = (idOnly * statusOnly) / (10000 * 10000);
+
+      expect(both).toBeLessThan(idOnly);
+      expect(both).toBeGreaterThan(independent);
+    });
+
+    it('is unchanged for a single predicate', () => {
+      const est = new DefaultCardinalityEstimator(makeStats());
+      const idEq = makeBinary(makeColRef('ORDERS', 'ID'), '=', makeColRef('ORDERS', 'ID'));
+      expect(est.estimateJoin(10000, 10000, idEq)).toBe(Math.max(1, Math.round(10000 * 10000 / 1000)));
+    });
+
+    it('damps a residual predicate alongside the equalities', () => {
+      const est = new DefaultCardinalityEstimator(makeStats());
+      const idEq = makeBinary(makeColRef('ORDERS', 'ID'), '=', makeColRef('ORDERS', 'ID'));
+      const residual = makeBinary(makeColRef('ORDERS', 'AMOUNT'), '>', makeLiteral(5000));
+      const combined = makeBinary(idEq, 'AND', residual);
+
+      const equalityOnly = est.estimateJoin(10000, 10000, idEq);
+      const withResidual = est.estimateJoin(10000, 10000, combined);
+
+      expect(withResidual).toBeLessThan(equalityOnly);
+      expect(withResidual).toBeGreaterThan(equalityOnly * 0.5);
     });
   });
 

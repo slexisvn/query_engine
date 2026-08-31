@@ -43,6 +43,7 @@ export const Config = {
   parallelCombineMinGroups: env('QE_PARALLEL_COMBINE_MIN_GROUPS', 8192),
   aggSpillGroups: env('QE_AGG_SPILL_GROUPS', 1 << 17),
   aggSpillPartitions: env('QE_AGG_SPILL_PARTITIONS', 16),
+  aggSpillMaxRepartitionDepth: env('QE_AGG_SPILL_MAX_REPARTITION_DEPTH', 4),
   dedupSpillPartitions: env('QE_DEDUP_SPILL_PARTITIONS', 16),
   windowSpillPartitions: env('QE_WINDOW_SPILL_PARTITIONS', 16),
   vectorGroupRange: env('QE_VECTOR_GROUP_RANGE', 1 << 21),
