@@ -12,6 +12,7 @@ import type {
   Sink,
   SourceGenerator,
 } from '../execution-types.js';
+import type { ExecutionContext } from '../execution-context.js';
 import type {
   LogicalPlanNode,
   LogicalCTEAnchorNode,
@@ -25,17 +26,6 @@ export interface MaterializedCTE {
   columnMapping: ColumnMapping;
 }
 
-interface ExecutorLike {
-  buildPipeline(node: PhysicalPlanNode): Promise<CompiledPipeline>;
-  buildLogicalPipeline(node: LogicalPlanNode): Promise<CompiledPipeline>;
-  buildSchemaMapping(schema: ExecSchema, alias: string): ColumnMapping;
-  findCTEPlan(name: string): LogicalPlanNode | null;
-  _executeSubPipeline(compiled: CompiledPipeline): Promise<DataChunk[]>;
-  cteResults: Map<string, Promise<MaterializedCTE>>;
-  ctePipelines: Map<string, Promise<CompiledPipeline>>;
-  cteDefinitions: Map<string, LogicalPlanNode>;
-}
-
 function onceByKey<V>(cache: Map<string, Promise<V>>, key: string, start: () => Promise<V>): Promise<V> {
   const inFlight = cache.get(key);
   if (inFlight) return inFlight;
@@ -44,13 +34,13 @@ function onceByKey<V>(cache: Map<string, Promise<V>>, key: string, start: () => 
   return started;
 }
 
-function compiledCTEFor(executor: ExecutorLike, key: string, ctePlan: LogicalPlanNode): Promise<CompiledPipeline> {
-  return onceByKey(executor.ctePipelines, key, () => executor.buildLogicalPipeline(ctePlan));
+function compiledCTEFor(ctx: ExecutionContext, key: string, ctePlan: LogicalPlanNode): Promise<CompiledPipeline> {
+  return onceByKey(ctx.ctePipelines, key, () => ctx.buildLogicalPipeline(ctePlan));
 }
 
-function materializedCTEFor(executor: ExecutorLike, key: string, compiled: CompiledPipeline): Promise<MaterializedCTE> {
-  return onceByKey(executor.cteResults, key, async () => ({
-    chunks: await executor._executeSubPipeline(compiled),
+function materializedCTEFor(ctx: ExecutionContext, key: string, compiled: CompiledPipeline): Promise<MaterializedCTE> {
+  return onceByKey(ctx.cteResults, key, async () => ({
+    chunks: await ctx.executeSubPipeline(compiled),
     schema: compiled.schema,
     columnMapping: compiled.columnMapping,
   }));
@@ -68,12 +58,12 @@ function cloneChunk(chunk: DataChunk): DataChunk {
   return new DataChunk(columns, chunk.size);
 }
 
-export async function buildCTEAnchor(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+export async function buildCTEAnchor(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
   const node = physical.logical as LogicalCTEAnchorNode;
-  const producer = await executor.buildPipeline(physical.children[0]);
-  executor.cteDefinitions.set(node.cteName.toUpperCase(), node.children[0]);
+  const producer = await ctx.buildPipeline(physical.children[0]);
+  ctx.cteDefinitions.set(node.cteName.toUpperCase(), node.children[0]);
 
-  const consumer = await executor.buildPipeline(physical.children[1]);
+  const consumer = await ctx.buildPipeline(physical.children[1]);
 
   return {
     schema: consumer.schema,
@@ -84,7 +74,7 @@ export async function buildCTEAnchor(executor: ExecutorLike, physical: PhysicalP
       const producerPipelineId = graph.createPipeline(cteSink);
       producer.register(graph, producerPipelineId, cteSink);
       cteSink.finalize = async () => {
-        executor.cteResults.set(node.cteName.toUpperCase(), Promise.resolve({ chunks: cteChunks, schema: producer.schema, columnMapping: producer.columnMapping }));
+        ctx.cteResults.set(node.cteName.toUpperCase(), Promise.resolve({ chunks: cteChunks, schema: producer.schema, columnMapping: producer.columnMapping }));
       };
 
       graph.addDependency(currentPipelineId, producerPipelineId);
@@ -93,21 +83,21 @@ export async function buildCTEAnchor(executor: ExecutorLike, physical: PhysicalP
   };
 }
 
-export async function buildCTEScan(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+export async function buildCTEScan(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
   const node = physical.logical as LogicalCTEScanNode;
-  const ctePlan = executor.findCTEPlan(node.cteName);
+  const ctePlan = ctx.findCTEPlan(node.cteName);
   if (!ctePlan) throw new Error(`CTE not found: ${node.cteName}`);
 
   const key = node.cteName.toUpperCase();
-  const compiledCTE = await compiledCTEFor(executor, key, ctePlan);
+  const compiledCTE = await compiledCTEFor(ctx, key, ctePlan);
   const schema: ExecSchema = compiledCTE.schema.map((col) => ({ ...col, tableAlias: node.alias }));
 
   return {
     schema,
-    columnMapping: executor.buildSchemaMapping(schema, node.alias),
+    columnMapping: ctx.buildSchemaMapping(schema, node.alias),
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       const source: SourceGenerator = async function* () {
-        const stored = await materializedCTEFor(executor, key, compiledCTE);
+        const stored = await materializedCTEFor(ctx, key, compiledCTE);
 
         for (const chunk of stored.chunks.map(cloneChunk)) {
           await currentSink.consume(chunk);
@@ -120,8 +110,8 @@ export async function buildCTEScan(executor: ExecutorLike, physical: PhysicalPla
   };
 }
 
-export async function buildMaterialize(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
-  const child = await executor.buildPipeline(physical.children[0]);
+export async function buildMaterialize(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const child = await ctx.buildPipeline(physical.children[0]);
   return {
     schema: child.schema,
     columnMapping: child.columnMapping,
@@ -131,17 +121,17 @@ export async function buildMaterialize(executor: ExecutorLike, physical: Physica
   };
 }
 
-export async function buildDependentJoin(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+export async function buildDependentJoin(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
   const node = physical.logical as LogicalDependentJoinNode;
   if ((node.correlatedColumns || []).length > 0) {
     throw new Error(`Correlated ${node.subqueryType} subquery reached execution without being decorrelated; SubqueryUnnesting is required for correctness`);
   }
-  const outer = await executor.buildPipeline(physical.children[0]);
+  const outer = await ctx.buildPipeline(physical.children[0]);
   const dummyOp = new DependentJoinOperator(node.subqueryType, outer.schema, node.markColumn);
 
   return {
     schema: dummyOp.resultSchema,
-    columnMapping: executor.buildSchemaMapping(dummyOp.resultSchema, ''),
+    columnMapping: ctx.buildSchemaMapping(dummyOp.resultSchema, ''),
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       const outerChunks: DataChunk[] = [];
       const outerSink: Sink = { consume: async (c: DataChunk) => { outerChunks.push(c); } };
@@ -157,13 +147,13 @@ export async function buildDependentJoin(executor: ExecutorLike, physical: Physi
         for (const outerChunk of outerChunks) {
           for (const outerRow of outerChunk.toRows()) {
             if (innerChunks === null) {
-              const innerPipeline = await executor.buildPipeline(physical.children[1]);
+              const innerPipeline = await ctx.buildPipeline(physical.children[1]);
               const produced: DataChunk[] = [];
-              const innerGraph = new PipelineGraph();
+              const innerGraph = new PipelineGraph(ctx.cancelToken);
               const innerSink: Sink = { consume: async (c: DataChunk) => { produced.push(c); } };
               const innerPipelineId = innerGraph.createPipeline(innerSink);
               innerPipeline.register(innerGraph, innerPipelineId, innerSink);
-              await new TaskScheduler(Config.dependentJoinConcurrency).schedule(innerGraph);
+              await new TaskScheduler(Config.dependentJoinConcurrency).schedule(innerGraph, ctx.schedulerToken);
               innerChunks = produced;
             }
             await runtimeOp.processOuterRow(outerRow, innerChunks);

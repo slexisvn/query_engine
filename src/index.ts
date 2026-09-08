@@ -18,6 +18,7 @@ export {
   Col, col, lit, expr, sum, avg, min, max, count, countStar,
 } from './dataframe/index.js';
 export { createEngine, registerTable, registerStreamingTable } from './engine-entry.js';
+export { QueryCancelledError } from './execution/pipeline.js';
 export { NodeDescriptor, NodeRole } from './distributed/cluster/node-descriptor.js';
 export { RoundRobinPartitionStrategy } from './distributed/partition/partition-strategy.js';
 export { HttpTransport } from './distributed/transport/http-transport.js';

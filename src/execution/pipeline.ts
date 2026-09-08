@@ -12,17 +12,27 @@ export interface Pipeline {
   cancelled: boolean;
 }
 
+function seedCancelToken(sink: Sink, token: CancelToken): void {
+  if (sink.cancelToken) return;
+  const descriptor = Object.getOwnPropertyDescriptor(sink, 'cancelToken');
+  if (descriptor && !descriptor.set && !descriptor.writable) return;
+  sink.cancelToken = token;
+}
+
 export class PipelineGraph {
   pipelines: Map<number, Pipeline>;
   nextId: number;
+  readonly cancelToken: CancelToken | null;
 
-  constructor() {
+  constructor(cancelToken: CancelToken | null = null) {
     this.pipelines = new Map();
     this.nextId = 1;
+    this.cancelToken = cancelToken;
   }
 
   createPipeline(sink: Sink): number {
     const id = this.nextId++;
+    if (this.cancelToken) seedCancelToken(sink, this.cancelToken);
     this.pipelines.set(id, {
       id,
       sink,
@@ -88,18 +98,46 @@ export class PipelineGraph {
   }
 }
 
+export class QueryCancelledError extends Error {
+  constructor(message: string = 'Query cancelled') {
+    super(message);
+    this.name = 'QueryCancelledError';
+  }
+}
+
 export class CancelToken {
   cancelled: boolean;
+  readonly parent: CancelToken | null;
+  _detach: (() => void) | null;
 
-  constructor() {
+  constructor(parent: CancelToken | null = null) {
     this.cancelled = false;
+    this.parent = parent;
+    this._detach = null;
+  }
+
+  static fromSignal(signal: AbortSignal): CancelToken {
+    const token = new CancelToken();
+    if (signal.aborted) {
+      token.cancel();
+      return token;
+    }
+    const onAbort = (): void => token.cancel();
+    signal.addEventListener('abort', onAbort, { once: true });
+    token._detach = () => signal.removeEventListener('abort', onAbort);
+    return token;
   }
 
   cancel(): void {
     this.cancelled = true;
   }
 
+  detach(): void {
+    this._detach?.();
+    this._detach = null;
+  }
+
   get isCancelled(): boolean {
-    return this.cancelled;
+    return this.cancelled || (this.parent !== null && this.parent.isCancelled);
   }
 }

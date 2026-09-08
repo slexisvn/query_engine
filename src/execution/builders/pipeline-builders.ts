@@ -1,4 +1,3 @@
-import type { ParallelExpressionDispatch } from '../parallel-context.js';
 import type { PhysicalPlanNode } from '../physical-plan.js';
 import { compileExpression } from '../expression-eval.js';
 import { FilterOperator } from '../operators/filter.js';
@@ -38,24 +37,8 @@ import type {
   ProjectedExpr,
 } from '../../planner/logical-plan.js';
 
-import type { ChunkSpillStore } from '../../storage/spill-manager/spill-manager.js';
-
-interface TempManagerLike {
-  allocate(category: string, label: string): string;
-}
-
-interface StorageBackendLike {
-  createSpillManager(handle: string): ChunkSpillStore;
-}
-
-interface ExecutorLike {
-  buildPipeline(node: PhysicalPlanNode): Promise<CompiledPipeline>;
-  buildSchemaMapping(schema: ExecSchema, alias: string): ColumnMapping;
-  normalizeExecType(dt: DataType | string): DataType;
-  parallelDispatch: ParallelExpressionDispatch | null;
-  tempManager: TempManagerLike;
-  storageBackend: StorageBackendLike;
-}
+import { normalizeExecType } from '../fragment-spec.js';
+import type { ExecutionContext } from '../execution-context.js';
 
 interface ProjectExprMeta {
   outputName?: string;
@@ -80,11 +63,11 @@ function sortKeysOf(orderKeys: LogicalOrderKey[], columnMapping: ColumnMapping):
   }));
 }
 
-export async function buildFilter(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+export async function buildFilter(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
   const node = physical.logical as LogicalFilterNode;
-  const child = await executor.buildPipeline(physical.children[0]);
+  const child = await ctx.buildPipeline(physical.children[0]);
   const evalFn = compileExpression(node.condition, child.columnMapping);
-  const parallelDispatch = executor.parallelDispatch;
+  const parallelDispatch = ctx.resources.parallelDispatch;
 
   return {
     schema: child.schema,
@@ -109,13 +92,13 @@ export async function buildFilter(executor: ExecutorLike, physical: PhysicalPlan
   };
 }
 
-export async function buildProject(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+export async function buildProject(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
   const node = physical.logical as LogicalProjectNode;
-  const child = await executor.buildPipeline(physical.children[0]);
+  const child = await ctx.buildPipeline(physical.children[0]);
   const evaluators: CompiledExpr[] = node.expressions.map((expr: ProjectedExpr) => compileExpression(expr, child.columnMapping));
   const resultTypes: DataType[] = node.expressions.map((expr: ProjectedExpr) => {
     const meta = expr as ProjectExprMeta;
-    return executor.normalizeExecType(meta.dataType || meta.resultType || 'VARCHAR');
+    return normalizeExecType(meta.dataType || meta.resultType || 'VARCHAR');
   });
 
   const outputAlias = node.outputAlias || '';
@@ -124,17 +107,17 @@ export async function buildProject(executor: ExecutorLike, physical: PhysicalPla
     const name = projectedColumnName(expr, i);
     return {
       name,
-      dataType: executor.normalizeExecType(meta.dataType || meta.resultType || 'VARCHAR'),
+      dataType: normalizeExecType(meta.dataType || meta.resultType || 'VARCHAR'),
       tableAlias: projectedColumnAlias(expr, name, outputAlias),
     };
   });
-  const columnMapping = executor.buildSchemaMapping(schema, outputAlias);
+  const columnMapping = ctx.buildSchemaMapping(schema, outputAlias);
 
   return {
     schema,
     columnMapping,
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
-      const projOp = new ProjectionOperator(node.expressions, evaluators, resultTypes, child.columnMapping, executor.parallelDispatch);
+      const projOp = new ProjectionOperator(node.expressions, evaluators, resultTypes, child.columnMapping, ctx.resources.parallelDispatch);
       const childSink: Sink = {
         get cancelToken() { return currentSink.cancelToken; },
         async consume(chunk: DataChunk) {
@@ -151,17 +134,17 @@ export async function buildProject(executor: ExecutorLike, physical: PhysicalPla
   };
 }
 
-export async function buildSort(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+export async function buildSort(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
   const node = physical.logical as LogicalSortNode;
-  const child = await executor.buildPipeline(physical.children[0]);
+  const child = await ctx.buildPipeline(physical.children[0]);
   const keyExtractors: KeyExtractor[] = sortKeysOf(node.orderKeys, child.columnMapping);
 
   return {
     schema: child.schema,
     columnMapping: child.columnMapping,
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
-      const spillHandle = executor.tempManager.allocate('spill', 'sort');
-      const sortOp = new SortOperator(keyExtractors, node.limit ?? null, node.offset || 0, executor.storageBackend.createSpillManager(spillHandle));
+      const spillHandle = ctx.resources.tempManager.allocate('spill', 'sort');
+      const sortOp = new SortOperator(keyExtractors, node.limit ?? null, node.offset || 0, ctx.resources.storageBackend.createSpillManager(spillHandle));
       const sortSink: Sink = {
         async consume(chunk: DataChunk) { await sortOp.consume(chunk); },
         async finalize() {}
@@ -183,17 +166,17 @@ export async function buildSort(executor: ExecutorLike, physical: PhysicalPlanNo
   };
 }
 
-export async function buildTopN(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+export async function buildTopN(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
   const node = physical.logical as LogicalTopNNode;
-  const child = await executor.buildPipeline(physical.children[0]);
+  const child = await ctx.buildPipeline(physical.children[0]);
   const keyExtractors: KeyExtractor[] = sortKeysOf(node.orderKeys, child.columnMapping);
 
   return {
     schema: child.schema,
     columnMapping: child.columnMapping,
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
-      const spillHandle = executor.tempManager.allocate('spill', 'topn');
-      const sortOp = new SortOperator(keyExtractors, node.count, node.offset || 0, executor.storageBackend.createSpillManager(spillHandle));
+      const spillHandle = ctx.resources.tempManager.allocate('spill', 'topn');
+      const sortOp = new SortOperator(keyExtractors, node.count, node.offset || 0, ctx.resources.storageBackend.createSpillManager(spillHandle));
       const sortSink: Sink = {
         async consume(chunk: DataChunk) { await sortOp.consume(chunk); },
         async finalize() {}
@@ -215,9 +198,9 @@ export async function buildTopN(executor: ExecutorLike, physical: PhysicalPlanNo
   };
 }
 
-export async function buildLimit(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+export async function buildLimit(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
   const node = physical.logical as LogicalLimitNode;
-  const child = await executor.buildPipeline(physical.children[0]);
+  const child = await ctx.buildPipeline(physical.children[0]);
   const limit = node.count;
   const offset = node.offset || 0;
 
@@ -226,7 +209,7 @@ export async function buildLimit(executor: ExecutorLike, physical: PhysicalPlanN
     columnMapping: child.columnMapping,
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       const limitOp = new LimitOperator(limit, offset);
-      const cancelToken = new CancelToken();
+      const cancelToken = new CancelToken(currentSink.cancelToken ?? ctx.cancelToken);
       const emitPending = async () => {
         for (const chunk of limitOp.takeChunks()) {
           if (chunk.size > 0) await currentSink.consume(chunk);
@@ -252,15 +235,15 @@ export async function buildLimit(executor: ExecutorLike, physical: PhysicalPlanN
   };
 }
 
-export async function buildDistinct(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
-  const child = await executor.buildPipeline(physical.children[0]);
+export async function buildDistinct(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const child = await ctx.buildPipeline(physical.children[0]);
 
   return {
     schema: child.schema,
     columnMapping: child.columnMapping,
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
-      const spillHandle = executor.tempManager.allocate('spill', 'distinct');
-      const distinctOp = new DistinctOperator(executor.storageBackend.createSpillManager(spillHandle));
+      const spillHandle = ctx.resources.tempManager.allocate('spill', 'distinct');
+      const distinctOp = new DistinctOperator(ctx.resources.storageBackend.createSpillManager(spillHandle));
       const childSink: Sink = {
         async consume(chunk: DataChunk) {
           const result = await distinctOp.process(chunk);
@@ -280,24 +263,24 @@ export async function buildDistinct(executor: ExecutorLike, physical: PhysicalPl
   };
 }
 
-export async function buildSetOp(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+export async function buildSetOp(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
   const node = physical.logical as LogicalSetOpNode;
-  const left = await executor.buildPipeline(physical.children[0]);
-  const right = await executor.buildPipeline(physical.children[1]);
+  const left = await ctx.buildPipeline(physical.children[0]);
+  const right = await ctx.buildPipeline(physical.children[1]);
 
   const register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => void =
     node.op === SetOpType.UNION
-      ? registerUnion(executor, node, left, right)
+      ? registerUnion(ctx, node, left, right)
       : registerFilteringSetOp(node, left, right);
 
   return { schema: left.schema, columnMapping: left.columnMapping, register };
 }
 
-function registerUnion(executor: ExecutorLike, node: LogicalSetOpNode, left: CompiledPipeline, right: CompiledPipeline) {
+function registerUnion(ctx: ExecutionContext, node: LogicalSetOpNode, left: CompiledPipeline, right: CompiledPipeline) {
   return (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink): void => {
     if (!node.all) {
-      const spillHandle = executor.tempManager.allocate('spill', 'union');
-      const unionOp = new UnionOperator(false, executor.storageBackend.createSpillManager(spillHandle));
+      const spillHandle = ctx.resources.tempManager.allocate('spill', 'union');
+      const unionOp = new UnionOperator(false, ctx.resources.storageBackend.createSpillManager(spillHandle));
       const dedupSink: Sink = {
         async consume(chunk: DataChunk) {
           const result = await unionOp.process(chunk);
@@ -377,14 +360,14 @@ function registerFilteringSetOp(node: LogicalSetOpNode, left: CompiledPipeline, 
   };
 }
 
-export async function buildWindow(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+export async function buildWindow(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
   const node = physical.logical as LogicalWindowNode;
-  const child = await executor.buildPipeline(physical.children[0]);
+  const child = await ctx.buildPipeline(physical.children[0]);
   const windowExprs = node.windowExprs as BoundWindowNode[];
 
   const windowColumns: ExecSchema = windowExprs.map((w: BoundWindowNode, i: number): ExecColumn => ({
     name: `__window_${i}`,
-    dataType: executor.normalizeExecType(w.resultType || 'FLOAT64'),
+    dataType: normalizeExecType(w.resultType || 'FLOAT64'),
     tableAlias: '',
   }));
   const windowSchema: ExecSchema = [...child.schema, ...windowColumns];
@@ -397,13 +380,13 @@ export async function buildWindow(executor: ExecutorLike, physical: PhysicalPlan
     schema: windowSchema,
     columnMapping: windowMapping,
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
-      const spillHandle = executor.tempManager.allocate('spill', 'window');
+      const spillHandle = ctx.resources.tempManager.allocate('spill', 'window');
       const windowOp = new WindowOperator(
         windowExprs,
         child.schema,
         child.columnMapping,
         compileExpression,
-        executor.storageBackend.createSpillManager(spillHandle),
+        ctx.resources.storageBackend.createSpillManager(spillHandle),
       );
       const windowSink: Sink = {
         async consume(chunk: DataChunk) { await windowOp.consume(chunk); },

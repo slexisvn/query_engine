@@ -116,7 +116,7 @@ describe('buildExchange', () => {
       children: [scanNode('T', ['X'])],
     };
 
-    const compiled = await executor.buildLogicalPipeline(plan);
+    const compiled = await executor.newContext().buildLogicalPipeline(plan);
     expect(compiled.schema[0].name).toBe('X');
     expect(compiled.schema[0].dataType).toBe('INT32');
   });
@@ -142,7 +142,7 @@ describe('buildExchange', () => {
       children: [scanNode('TBL', ['A', 'B'])],
     };
 
-    const compiled = await executor.buildLogicalPipeline(plan);
+    const compiled = await executor.newContext().buildLogicalPipeline(plan);
     expect(compiled.columnMapping.get('A')).toBe(0);
     expect(compiled.columnMapping.get('B')).toBe(1);
   });
@@ -363,7 +363,7 @@ describe('buildMergeExchange', () => {
       children: [scanNode('T', ['A', 'B'])],
     };
 
-    const compiled = await executor.buildLogicalPipeline(plan);
+    const compiled = await executor.newContext().buildLogicalPipeline(plan);
     expect(compiled.schema.length).toBe(2);
     expect(compiled.schema[0].name).toBe('A');
     expect(compiled.schema[1].name).toBe('B');
@@ -454,12 +454,13 @@ describe('two-phase aggregate end-to-end', () => {
   });
 });
 
-describe('setDistributedContext', () => {
-  it('stores distributed context on executor', () => {
+describe('distributed context', () => {
+  it('scopes the distributed context to the run that was given it', () => {
     const catalog = mockCatalog({});
     const executor = new QueryExecutor(catalog, mockTempManager());
-    const ctx = { role: 'receiver', transport: {} };
-    executor.setDistributedContext(ctx);
-    expect(executor._distributedContext).toBe(ctx);
+    const distributedContext = { role: 'receiver', transport: {} };
+
+    expect(executor.newContext({ distributedContext }).distributedContext).toBe(distributedContext);
+    expect(executor.newContext().distributedContext).toBeNull();
   });
 });

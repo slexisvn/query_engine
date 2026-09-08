@@ -10,6 +10,7 @@ import type {
 } from '../../planner/logical-plan.js';
 import type { CompiledPipeline, ColumnMapping, ExecColumn, ExecSchema, Sink } from '../execution-types.js';
 import type { Transport } from '../../distributed/transport/transport.js';
+import type { ExecutionContext } from '../execution-context.js';
 import type { ExchangeType as ExchangeTypeEnum, KeyExtractor } from '../../distributed/distributed-types.js';
 
 interface ExchangeConfig {
@@ -40,12 +41,6 @@ export interface ChunkReceiver {
   cleanup(): void;
 }
 
-interface ExecutorLike {
-  buildPipeline(node: PhysicalPlanNode): Promise<CompiledPipeline>;
-  _distributedContext: DistributedExecutionContext | null;
-  _exchangeReceivers: Map<number, ChunkReceiver> | null;
-}
-
 function buildKeyExtractors(partitionKeys: BoundExpr[] | null, columnMapping: ColumnMapping): KeyExtractor[] {
   if (!partitionKeys || partitionKeys.length === 0) return [];
   return partitionKeys.map((key: BoundExpr) => {
@@ -54,13 +49,13 @@ function buildKeyExtractors(partitionKeys: BoundExpr[] | null, columnMapping: Co
   }) as KeyExtractor[];
 }
 
-export async function buildExchange(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+export async function buildExchange(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
   const node = physical.logical as LogicalExchangeNode;
-  const child = await executor.buildPipeline(physical.children[0]);
+  const child = await ctx.buildPipeline(physical.children[0]);
 
-  if (executor._distributedContext) {
-    const { transport, sourceNodes, channelId, exchangeType } = executor._distributedContext.getExchangeConfig(node);
-    const isReceiver = executor._distributedContext.role === 'receiver';
+  if (ctx.distributedContext) {
+    const { transport, sourceNodes, channelId, exchangeType } = ctx.distributedContext.getExchangeConfig(node);
+    const isReceiver = ctx.distributedContext.role === 'receiver';
 
     if (isReceiver) {
       const { ExchangeReceiver } = await import('../../distributed/execution/exchange-operator.js');
@@ -120,12 +115,12 @@ export async function buildExchange(executor: ExecutorLike, physical: PhysicalPl
   };
 }
 
-export async function buildMergeExchange(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+export async function buildMergeExchange(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
   const node = physical.logical as LogicalMergeExchangeNode;
-  const child = await executor.buildPipeline(physical.children[0]);
+  const child = await ctx.buildPipeline(physical.children[0]);
 
-  if (executor._distributedContext) {
-    const { transport, sourceNodes, channelId } = executor._distributedContext.getMergeExchangeConfig(node);
+  if (ctx.distributedContext) {
+    const { transport, sourceNodes, channelId } = ctx.distributedContext.getMergeExchangeConfig(node);
     const { MergeExchangeOperator } = await import('../../distributed/execution/merge-exchange.js');
     const merge = new MergeExchangeOperator(transport, sourceNodes, {
       orderKeys: node.orderKeys,
@@ -159,9 +154,9 @@ export async function buildMergeExchange(executor: ExecutorLike, physical: Physi
   };
 }
 
-export async function buildExchangeReceive(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+export async function buildExchangeReceive(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
   const node = physical.logical as LogicalExchangeReceiveNode;
-  const receivers = executor._exchangeReceivers;
+  const receivers = ctx.exchangeReceivers;
   const fragmentIds = node.sourceFragmentIds || [];
 
   const matchingReceivers: ChunkReceiver[] = [];

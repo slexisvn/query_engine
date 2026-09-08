@@ -3,11 +3,12 @@ import type { LogicalPlanNode } from '../../planner/logical-plan.js';
 import { QueryExecutor } from '../../execution/query-executor.js';
 import { ResultSink } from '../../execution/result-sink.js';
 import { CancelToken } from '../../execution/pipeline.js';
+import { TaskScheduler } from '../../execution/scheduler.js';
 import { ExchangeSender } from './exchange-operator.js';
 import { ExchangeReceiver } from './exchange-operator.js';
 import { fragmentOutputChannel } from '../planner/fragment.js';
 import type { Transport } from '../transport/transport.js';
-import type { CompiledPipeline } from '../../execution/execution-types.js';
+import type { ExecutionContextOptions } from '../../execution/execution-context.js';
 import type { DataChunk } from '../../storage/chunk.js';
 import type {
   FragmentId,
@@ -23,6 +24,8 @@ type CatalogLike = QueryExecutorArgs[0];
 type TempManagerLike = QueryExecutorArgs[1];
 
 type StorageBackendLike = NonNullable<QueryExecutorArgs[2]>;
+
+type ExchangeReceiverMap = NonNullable<ExecutionContextOptions['exchangeReceivers']>;
 
 interface FragmentLike {
   fragmentId: FragmentId;
@@ -45,9 +48,6 @@ interface ExecuteResult {
   receivers: Map<FragmentId, ExchangeReceiver>;
 }
 
-interface ExchangeReceiverHost {
-  _exchangeReceivers: Map<FragmentId, ExchangeReceiver> | null;
-}
 
 export class FragmentExecutor {
   _catalog: CatalogLike;
@@ -84,9 +84,9 @@ export class FragmentExecutor {
       const sink = new ResultSink(false);
       await sink.init();
 
-      await this._executePlan(fragment.planRoot, sink, receivers, cancelToken);
+      await this.executePlanInto(fragment.planRoot, sink, receivers, cancelToken);
 
-      if (sender && !cancelToken.cancelled) {
+      if (sender && !cancelToken.isCancelled) {
         for await (const chunk of sink) {
           await sender.consume(chunk);
         }
@@ -121,26 +121,18 @@ export class FragmentExecutor {
     return this._activeFragments.has(fragmentId);
   }
 
-  async _executePlan(
+  async executePlanInto(
     planRoot: LogicalPlanNode,
     sink: ResultSink,
     receivers: Map<FragmentId, ExchangeReceiver>,
-    cancelToken: CancelToken,
+    cancelToken: CancelToken | null = null,
   ): Promise<void> {
-    const executor = this._localExecutor;
-    (executor as QueryExecutor & ExchangeReceiverHost)._exchangeReceivers = receivers;
-    const compiled: CompiledPipeline = await executor.buildLogicalPipeline(planRoot);
-    (executor as QueryExecutor & ExchangeReceiverHost)._exchangeReceivers = null;
-
-    const { PipelineGraph } = await import('../../execution/pipeline.js');
-    const { TaskScheduler } = await import('../../execution/scheduler.js');
-
-    const graph = new PipelineGraph();
-    const rootPipelineId = graph.createPipeline(sink);
-    compiled.register(graph, rootPipelineId, sink);
-
-    const scheduler = new TaskScheduler();
-    await scheduler.schedule(graph);
+    const ctx = this._localExecutor.newContext({
+      exchangeReceivers: receivers as ExchangeReceiverMap,
+      cancelToken,
+    });
+    const graph = await ctx.buildGraph(planRoot, sink);
+    await new TaskScheduler().schedule(graph, ctx.schedulerToken);
   }
 
   async _setupReceivers(fragment: FragmentLike): Promise<Map<FragmentId, ExchangeReceiver>> {

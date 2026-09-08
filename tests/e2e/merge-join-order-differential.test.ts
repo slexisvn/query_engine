@@ -26,7 +26,7 @@ async function withEngine(preferMergeJoin, body) {
   registerTable(engine, 'L', LEFT);
   registerTable(engine, 'R', RIGHT);
   if (preferMergeJoin) {
-    engine.executor.physicalPlanner.costModel.C_HASH_INSERT = PROHIBITIVE;
+    engine.executor.resources.physicalPlanner.costModel.C_HASH_INSERT = PROHIBITIVE;
   }
   try {
     return await body(engine);

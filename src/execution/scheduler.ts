@@ -1,5 +1,7 @@
 import { Config } from '../config.js';
-import type { PipelineGraph, Pipeline } from './pipeline.js';
+import { yieldToEventLoop } from '../runtime/platform.js';
+import { QueryCancelledError } from './pipeline.js';
+import type { CancelToken, PipelineGraph, Pipeline } from './pipeline.js';
 
 interface PipelineOutcome {
   id: number;
@@ -13,11 +15,16 @@ export class TaskScheduler {
     this.concurrency = Math.max(1, concurrency);
   }
 
-  async schedule(pipelineGraph: PipelineGraph): Promise<void> {
+  async schedule(pipelineGraph: PipelineGraph, cancelToken: CancelToken | null = null): Promise<void> {
     const running = new Map<number, Promise<PipelineOutcome>>();
 
     for (;;) {
-      this.startReadyPipelines(pipelineGraph, running);
+      if (cancelToken?.isCancelled) {
+        this.cancelRunning(pipelineGraph, running);
+        throw new QueryCancelledError();
+      }
+
+      this.startReadyPipelines(pipelineGraph, running, cancelToken);
 
       if (running.size === 0) {
         if (this.countPending(pipelineGraph) > 0) {
@@ -39,11 +46,11 @@ export class TaskScheduler {
     }
   }
 
-  startReadyPipelines(pipelineGraph: PipelineGraph, running: Map<number, Promise<PipelineOutcome>>): void {
+  startReadyPipelines(pipelineGraph: PipelineGraph, running: Map<number, Promise<PipelineOutcome>>, cancelToken: CancelToken | null = null): void {
     for (const pipeline of pipelineGraph.getReadyPipelines()) {
       if (running.size >= this.concurrency) return;
       pipeline.state = 'RUNNING';
-      running.set(pipeline.id, this.runPipeline(pipeline));
+      running.set(pipeline.id, this.runPipeline(pipeline, cancelToken));
     }
   }
 
@@ -59,19 +66,25 @@ export class TaskScheduler {
     return pending;
   }
 
-  async runPipeline(pipeline: Pipeline): Promise<PipelineOutcome> {
+  async runPipeline(pipeline: Pipeline, cancelToken: CancelToken | null = null): Promise<PipelineOutcome> {
     try {
-      await this.drainSource(pipeline);
+      await this.drainSource(pipeline, cancelToken);
       return { id: pipeline.id, error: null };
     } catch (error) {
       return { id: pipeline.id, error };
     }
   }
 
-  async drainSource(pipeline: Pipeline): Promise<void> {
+  async drainSource(pipeline: Pipeline, cancelToken: CancelToken | null = null): Promise<void> {
     if (!pipeline.source) return;
+    let nextPollAt = Date.now() + Config.cancelPollMs;
     for await (const _ of pipeline.source()) {
-      if (pipeline.cancelled) return;
+      if (pipeline.cancelled || cancelToken?.isCancelled) return;
+      if (cancelToken && Date.now() >= nextPollAt) {
+        await yieldToEventLoop();
+        nextPollAt = Date.now() + Config.cancelPollMs;
+        if (cancelToken.isCancelled) return;
+      }
     }
   }
 }

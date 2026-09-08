@@ -91,7 +91,7 @@ async function runBoth(sql) {
 
   Config.parallelJoinThreshold = 0;
   const parallelEngine = new QueryEngine(buildCatalog());
-  parallelEngine.executor.setParallelContext(null, null, pool);
+  parallelEngine.executor.resources.fragmentPool = pool;
   const parallel = (await parallelEngine.run(sql)).rows;
   parallelEngine.close();
 
@@ -129,22 +129,26 @@ describe('parallel radix hash-join matches serial', () => {
   it('actually uses the parallel join path without silent serial fallback', async () => {
     Config.parallelJoinThreshold = 0;
     const engine = new QueryEngine(buildCatalog());
-    engine.executor.setParallelContext(null, null, pool);
+    engine.executor.resources.fragmentPool = pool;
 
     let parallelRuns = 0;
-    let serialFallbacks = 0;
+    let workerRows = 0;
     const originalRunJoinStream = pool.runJoinStream.bind(pool);
-    const originalBufferedSerial = engine.executor._runBufferedSerialJoin.bind(engine.executor);
-    const originalSubPipeline = engine.executor._executeSubPipeline.bind(engine.executor);
-    pool.runJoinStream = (...args) => { parallelRuns++; return originalRunJoinStream(...args); };
-    engine.executor._runBufferedSerialJoin = async (...args) => { serialFallbacks++; return originalBufferedSerial(...args); };
-    engine.executor._executeSubPipeline = async (...args) => { serialFallbacks++; return originalSubPipeline(...args); };
+    pool.runJoinStream = (...args) => {
+      parallelRuns++;
+      return (async function* () {
+        for await (const chunk of originalRunJoinStream(...args)) {
+          workerRows += chunk.size;
+          yield chunk;
+        }
+      })();
+    };
 
     try {
       const result = await engine.run('SELECT l.id, r.rid FROM L l JOIN R r ON l.k = r.k');
       expect(result.rows.length).toBeGreaterThan(0);
       expect(parallelRuns).toBe(1);
-      expect(serialFallbacks).toBe(0);
+      expect(workerRows).toBe(result.rows.length);
     } finally {
       pool.runJoinStream = originalRunJoinStream;
       engine.close();
@@ -159,24 +163,23 @@ describe('parallel radix hash-join matches serial', () => {
 
     Config.parallelJoinThreshold = 0;
     const engine = new QueryEngine(buildCatalog(), { statistics: new Map() });
-    engine.executor.physicalPlanner.costModel.C_COMPARE = 1e7;
-    engine.executor.setParallelContext(null, null, pool);
-    let captured = null;
-    const original = engine.executor._prepareParallelJoin.bind(engine.executor);
-    engine.executor._prepareParallelJoin = (...args) => {
-      captured = original(...args);
-      return captured;
+    engine.executor.resources.physicalPlanner.costModel.C_COMPARE = 1e7;
+    engine.executor.resources.fragmentPool = pool;
+    let dispatchedSpec = null;
+    const originalRunJoinStream = pool.runJoinStream.bind(pool);
+    pool.runJoinStream = (spec, ...rest) => {
+      dispatchedSpec = spec;
+      return originalRunJoinStream(spec, ...rest);
     };
 
     try {
       const got = (await engine.run(sql)).rows;
       expect(normalized(got)).toEqual(normalized(expected));
-      expect(captured).not.toBeNull();
-      expect(captured.buildSide.storage).toBeTruthy();
-      expect(captured.probeSide.storage).toBeTruthy();
-      const stageCount = captured.spec.build.stages.length + captured.spec.probe.stages.length;
-      expect(stageCount).toBeGreaterThan(0);
+      expect(dispatchedSpec).not.toBeNull();
+      expect(dispatchedSpec.build.stages.length).toBeGreaterThan(0);
+      expect(dispatchedSpec.probe.stages.length).toBeGreaterThan(0);
     } finally {
+      pool.runJoinStream = originalRunJoinStream;
       engine.close();
     }
   });
@@ -191,19 +194,22 @@ describe('parallel radix hash-join matches serial', () => {
     serialEngine.close();
 
     const engine = new QueryEngine(buildCatalog());
-    engine.executor.setParallelContext(null, null, pool);
+    engine.executor.resources.fragmentPool = pool;
     let parallelRuns = 0;
-    let serialFallbacks = 0;
+    let workerRows = 0;
     const originalRunAggregate = pool.runAggregate.bind(pool);
-    const originalSub = engine.executor._executeSubPipeline.bind(engine.executor);
-    pool.runAggregate = async (...args) => { parallelRuns++; return originalRunAggregate(...args); };
-    engine.executor._executeSubPipeline = async (...args) => { serialFallbacks++; return originalSub(...args); };
+    pool.runAggregate = async (...args) => {
+      parallelRuns++;
+      const chunks = await originalRunAggregate(...args);
+      workerRows += chunks.reduce((sum, c) => sum + c.size, 0);
+      return chunks;
+    };
 
     try {
       const got = (await engine.run(sql)).rows;
       expect(normalized(got)).toEqual(normalized(expected));
       expect(parallelRuns).toBe(1);
-      expect(serialFallbacks).toBe(0);
+      expect(workerRows).toBe(got.length);
     } finally {
       pool.runAggregate = originalRunAggregate;
       Config.parallelAggThreshold = savedAgg;

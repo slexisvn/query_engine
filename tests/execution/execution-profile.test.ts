@@ -91,17 +91,25 @@ describe('execution profile', () => {
     expect(result.profile.totalMs).toBeGreaterThanOrEqual(scan.lastOutputMs);
   });
 
-  it('stays off unless a run asks for it', async () => {
-    const plain = await engine.run('SELECT ID FROM ITEMS');
+  it('profiles only the run that asked for it', async () => {
+    const [plain, profiled] = await Promise.all([
+      engine.run('SELECT ID FROM ITEMS'),
+      engine.runProfiled(`SELECT ID FROM ITEMS WHERE PRICE > ${PRICE_THRESHOLD}`),
+    ]);
 
     expect(plain.rows).toHaveLength(ROW_COUNT);
-    expect(engine.executor.profiler).toBeNull();
+    expect(plain.profile).toBeUndefined();
+    expect(profileFor(profiled.profile.roots, PhysicalNodeType.FILTER).actualRows)
+      .toBe(countItems(item => item.PRICE > PRICE_THRESHOLD));
   });
 
-  it('clears the profiler when the run throws', async () => {
+  it('does not carry a failed run into the next profile', async () => {
     await expect(engine.runProfiled('SELECT ID FROM MISSING_TABLE')).rejects.toThrow();
 
-    expect(engine.executor.profiler).toBeNull();
+    const after = await engine.runProfiled(`SELECT ID FROM ITEMS WHERE PRICE > ${PRICE_THRESHOLD}`);
+
+    expect(flattenProfile(after.profile.roots).filter(entry => entry.node.type === PhysicalNodeType.TABLE_SCAN))
+      .toHaveLength(1);
   });
 
   it('renders actual counts beside estimates', async () => {

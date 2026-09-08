@@ -1,6 +1,7 @@
 import type { DataChunk } from '../../storage/chunk.js';
 import type { PipelineGraph } from '../pipeline.js';
-import type { ColumnMapping, CompiledPipeline, Sink } from '../execution-types.js';
+import type { ExecutionContext } from '../execution-context.js';
+import type { ColumnMapping, CompiledPipeline, Sink, SourceGenerator } from '../execution-types.js';
 import { SortOperator, type SortKey } from '../operators/sort.js';
 import type { ChunkSpillStore } from '../../storage/spill-manager/spill-manager.js';
 
@@ -51,4 +52,16 @@ export function registerSortedChild(
   compiled.register(graph, pipelineId, sink);
   graph.addDependency(currentPipelineId, pipelineId);
   return () => sortOp.stream();
+}
+
+export function scanSource(ctx: ExecutionContext, currentSink: Sink, chunks: () => AsyncIterable<DataChunk>): SourceGenerator {
+  return async function* (): AsyncGenerator<DataChunk> {
+    for await (const chunk of chunks()) {
+      if (currentSink.cancelToken?.isCancelled) break;
+      await currentSink.consume(chunk);
+      yield chunk;
+    }
+    if (ctx.cancelToken.isCancelled) return;
+    if (currentSink.finalize) await currentSink.finalize();
+  };
 }

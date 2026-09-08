@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import '../../../src/index.js';
 import { createEngine, registerTable } from '../../../src/engine-entry.js';
 import { flattenProfile } from '../../../src/execution/execution-profile.js';
+import { ExecutionContext } from '../../../src/execution/execution-context.js';
 import { DataType } from '../../../src/storage/data-type.js';
 
 const EMP_SCHEMA = [
@@ -93,13 +94,15 @@ function engineWithOrders() {
   return engine;
 }
 
-function countCompilations(engine) {
-  const executor = engine.executor;
-  const compile = executor.buildLogicalPipeline.bind(executor);
-  const counter = { calls: 0 };
-  executor.buildLogicalPipeline = (node) => {
+function countCompilations() {
+  const compile = ExecutionContext.prototype.buildLogicalPipeline;
+  const counter = {
+    calls: 0,
+    restore: () => { ExecutionContext.prototype.buildLogicalPipeline = compile; },
+  };
+  ExecutionContext.prototype.buildLogicalPipeline = function (node) {
     counter.calls++;
-    return compile(node);
+    return compile.call(this, node);
   };
   return counter;
 }
@@ -107,13 +110,14 @@ function countCompilations(engine) {
 describe('buildCTEScan', () => {
   it('compiles a twice-referenced CTE once', async () => {
     const engine = engineWithOrders();
-    const compilations = countCompilations(engine);
+    const compilations = countCompilations();
 
     const result = await engine.run(joinedTwice(PRICE_FLOOR));
 
     expect(compilations.calls).toBe(1);
     expect(result.rows).toEqual(SELF_JOINED_ROWS);
 
+    compilations.restore();
     engine.close();
   });
 
@@ -132,7 +136,7 @@ describe('buildCTEScan', () => {
 
   it('registers the shared pipeline once even when both scans run as independent pipelines', async () => {
     const engine = engineWithOrders();
-    const compilations = countCompilations(engine);
+    const compilations = countCompilations();
 
     const result = await engine.runProfiled(unionedTwice(PRICE_FLOOR));
     const [, cteRoot] = result.profile.roots;
@@ -142,6 +146,7 @@ describe('buildCTEScan', () => {
     expect(cteRoot.profile.invocations).toBe(1);
     expect(result.rows.map(row => row.ID)).toEqual([...keptIds(PRICE_FLOOR), ...keptIds(PRICE_FLOOR)]);
 
+    compilations.restore();
     engine.close();
   });
 

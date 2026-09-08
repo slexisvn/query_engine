@@ -56,12 +56,6 @@ interface FragmentMarkFailedLike {
 
 type FragmentReceivers = Map<FragmentId, ExchangeReceiver>;
 
-interface ExchangeReceiverHost {
-  _exchangeReceivers: FragmentReceivers | null;
-}
-
-type LocalExecutorHost = FragmentExecutor['_localExecutor'] & ExchangeReceiverHost;
-
 type FragmentExecuteResult = Awaited<ReturnType<FragmentExecutor['execute']>>;
 
 type BridgeFragment = Omit<Fragment, 'markFailed'> & FragmentMarkFailedLike;
@@ -265,20 +259,7 @@ export class QueryCoordinator {
     const sink = new ResultSink(false);
     await sink.init();
 
-    const executor = this._fragmentExecutor._localExecutor as LocalExecutorHost;
-    executor._exchangeReceivers = receivers;
-    const compiled = await executor.buildLogicalPipeline(rootFragment.planRoot);
-    executor._exchangeReceivers = null;
-
-    const { PipelineGraph } = await import('../../execution/pipeline.js');
-    const { TaskScheduler } = await import('../../execution/scheduler.js');
-
-    const graph = new PipelineGraph();
-    const rootPipelineId = graph.createPipeline(sink);
-    compiled.register(graph, rootPipelineId, sink);
-
-    const scheduler = new TaskScheduler();
-    await scheduler.schedule(graph);
+    await this._fragmentExecutor.executePlanInto(rootFragment.planRoot, sink, receivers);
 
     rootFragment.markCompleted();
     return { sink };
