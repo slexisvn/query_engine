@@ -8,8 +8,6 @@ import {
 } from '../../src/binder/expression-binder.js';
 import { DataType } from '../../src/storage/data-type.js';
 
-// ─── BoundColumnRef: isCorrelated logic ───────────────────────────────────────
-
 describe('BoundColumnRef correlation', () => {
   it('depth 0 → isCorrelated false', () => {
     expect(BoundColumnRef('T', 'ID', 0, DataType.INT32, 0).isCorrelated).toBe(false);
@@ -24,7 +22,6 @@ describe('BoundColumnRef correlation', () => {
   });
 
   it('default depth is 0 → isCorrelated false', () => {
-    // no explicit depth arg
     expect(BoundColumnRef('T', 'ID', 0, DataType.INT32).isCorrelated).toBe(false);
     expect(BoundColumnRef('T', 'ID', 0, DataType.INT32).depth).toBe(0);
   });
@@ -36,8 +33,6 @@ describe('BoundColumnRef correlation', () => {
     expect(a.columnName).not.toBe(b.columnName);
   });
 });
-
-// ─── Boolean-result-type contracts ────────────────────────────────────────────
 
 describe('Boolean result type contracts', () => {
   const col = () => BoundColumnRef('T', 'X', 0, DataType.INT32);
@@ -76,8 +71,6 @@ describe('Boolean result type contracts', () => {
   });
 });
 
-// ─── BoundExtract / BoundInterval fixed result types ─────────────────────────
-
 describe('Fixed result types', () => {
   it('BoundExtract always INT32 regardless of field', () => {
     const src = BoundColumnRef('T', 'D', 0, DataType.DATE);
@@ -93,8 +86,6 @@ describe('Fixed result types', () => {
   });
 });
 
-// ─── getExprType priority: resultType > dataType ──────────────────────────────
-
 describe('getExprType', () => {
   it('prefers resultType over dataType when both present', () => {
     const expr = { resultType: DataType.INT64, dataType: DataType.INT32 };
@@ -109,7 +100,7 @@ describe('getExprType', () => {
     const bin = BoundBinary('+',
       BoundLiteral(1, DataType.INT32),
       BoundLiteral(2, DataType.INT32),
-      DataType.FLOAT64,  // promoted type
+      DataType.FLOAT64,
     );
     expect(getExprType(bin)).toBe(DataType.FLOAT64);
   });
@@ -127,8 +118,6 @@ describe('getExprType', () => {
     expect(getExprType({ kind: 'X', resultType: undefined, dataType: undefined })).toBeNull();
   });
 });
-
-// ─── collectCorrelatedColumns: tree walking logic ─────────────────────────────
 
 describe('collectCorrelatedColumns', () => {
   const outer = (name, idx = 0) => BoundColumnRef('OUTER', name, idx, DataType.INT32, 1);
@@ -279,7 +268,7 @@ describe('collectCorrelatedColumns', () => {
   });
 
   it('does not walk into SUBQUERY plan (subquery refs stay opaque)', () => {
-    const plan = { kind: BoundExprKind.COLUMN_REF, isCorrelated: true }; // fake inner
+    const plan = { kind: BoundExprKind.COLUMN_REF, isCorrelated: true };
     const refs = collectCorrelatedColumns(BoundSubquery(plan, 'SCALAR'));
     expect(refs).toEqual([]);
   });
@@ -290,8 +279,6 @@ describe('collectCorrelatedColumns', () => {
     expect(refs[0]).toBe(corr);
   });
 });
-
-// ─── mapExpr: structural rewriting ────────────────────────────────────────────
 
 describe('mapExpr', () => {
   const swapId = (node) =>

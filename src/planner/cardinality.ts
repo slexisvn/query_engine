@@ -30,10 +30,6 @@ const LITERAL_COMPARISONS: Readonly<Record<string, (left: Comparable, right: Com
   '>=': (left, right) => left >= right,
 };
 
-/**
- * True or false for a predicate that depends on no column at all — `1 = 1`, `1 = 0`, a bare TRUE.
- * Returns null when the predicate is not constant, so the caller falls back to statistics.
- */
 function constantTruth(predicate: BoundExpr): boolean | null {
   if (predicate.kind === BoundExprKind.LITERAL) {
     return typeof predicate.value === 'boolean' ? predicate.value : null;
@@ -177,10 +173,6 @@ export class DefaultCardinalityEstimator {
     return tableStats ? tableStats.rowCount : Config.defaultCardinality;
   }
 
-  /**
-   * An index scan carries its own predicate in `scanKey` / `scanLow` / `scanHigh`. Costing it as a
-   * full table read would make the selective access path look like the expensive one.
-   */
   estimateIndexScan(node: LogicalIndexScanNode): number {
     const rows = this.estimateScan(node.table);
     const stats = this.stats.get(node.table.toUpperCase())?.columnStats?.get(node.columnName.toUpperCase()) ?? null;
@@ -236,7 +228,7 @@ export class DefaultCardinalityEstimator {
 
     const selectivities = equiPreds.map(pred =>
       this.estimateEquiJoinSelectivity(pred.left, pred.right, leftCard, rightCard));
-    // Anything the join tests beyond the equalities still throws rows away.
+    
     for (const residual of this.residualConjuncts(condition)) {
       selectivities.push(this.estimateSelectivity(residual));
     }

@@ -246,7 +246,6 @@ describe('BinderScope', () => {
   describe('addColumn', () => {
     it('multiple columns under same alias are all resolvable via getAllColumns', () => {
       const scope = new BinderScope();
-      // add a table so getAllColumns includes these columns
       scope.addTable('t', { originalName: 'T', columns: makeColumns('R1', 'R2') });
 
       const cols = scope.getAllColumns();

@@ -541,12 +541,12 @@ describe('partial export/absorb (parallel combine contract)', () => {
 describe('AvgFinalAccumulator (distributed AVG combine)', () => {
   it('combines (sum,count) partials into a weighted average, not average-of-averages', () => {
     const acc = new AvgFinalAccumulator();
-    // three workers with uneven partition sizes: sums 1650/1620/1631 over counts 67/67/66
+    
     acc.add([1650, 67]);
     acc.add([1620, 67]);
     acc.add([1631, 66]);
     expect(acc.result()).toBeCloseTo((1650 + 1620 + 1631) / (67 + 67 + 66), 9);
-    // average-of-averages would be ((1650/67)+(1620/67)+(1631/66))/3 — different value
+    
     const avgOfAvg = (1650 / 67 + 1620 / 67 + 1631 / 66) / 3;
     expect(acc.result()).not.toBeCloseTo(avgOfAvg, 4);
   });

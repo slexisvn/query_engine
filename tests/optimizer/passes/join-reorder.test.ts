@@ -353,10 +353,6 @@ describe('JoinReorder', () => {
       const stats = makeStats({ a: 100, b: 100, c: 100, d: 100 });
       const pass = new JoinReorder(stats);
 
-      // Two local equi-joins (A-B, C-D) plus one bridge spanning all four:
-      // (A.fk + B.fk) = (C.fk + D.fk). The bridge must NOT be decomposed into an
-      // all-pairs clique (which would let the planner pick e.g. A⋈C at a leaf and
-      // attach the bridge there, referencing absent tables B,D).
       const bridge = bin(
         bin(colRef('a', 'fk'), '+', colRef('b', 'fk')),
         '=',
@@ -372,8 +368,6 @@ describe('JoinReorder', () => {
 
       const result = pass.apply(plan);
 
-      // Invariant the clique bug violated: a join's condition may only reference
-      // tables that exist beneath that join.
       const violations = [];
       walkJoins(result, (join) => {
         const available = new Set(collectScanTables(join).map((t) => t.toUpperCase()));
@@ -389,8 +383,6 @@ describe('JoinReorder', () => {
   describe('predicate preservation', () => {
     it('keeps a predicate whose two sides share a table', () => {
       const pass = new JoinReorder(makeStats({ a: 100, b: 200 }));
-      // (A.fk + B.fk) = B.id — the two operand sides overlap on B, so it is not a
-      // clean two-sided edge, but it still constrains the result.
       const overlapping = bin(bin(colRef('a', 'fk'), '+', colRef('b', 'fk')), '=', colRef('b', 'id'));
       const plan = LogicalJoin(
         JoinType.INNER,

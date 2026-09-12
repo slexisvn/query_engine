@@ -157,7 +157,7 @@ describe('distributed execution (real fan-out across in-process nodes)', () => {
     'SELECT id, SUM(val) OVER (PARTITION BY cat) AS w FROM SALES',
     'SELECT t.cat AS g, COUNT(*) AS c, SUM(d.val) AS s FROM SALES t JOIN SALES d ON t.id = d.id GROUP BY t.cat',
     'SELECT t.id AS tid, d.val AS dv FROM SALES t LEFT JOIN SALES d ON t.id = d.id WHERE t.val > 30',
-    // joins on `cat` (NOT the partition key `id`) force a hash-SHUFFLE join across workers
+    
     'SELECT COUNT(*) AS c, SUM(t.val) AS s FROM SALES t JOIN SALES d ON t.cat = d.cat WHERE t.id < 15 AND d.id < 15',
     'SELECT t.id AS tid, d.id AS did FROM SALES t LEFT JOIN SALES d ON t.cat = d.cat WHERE t.id < 6 AND d.val < 4',
   ];
@@ -283,8 +283,6 @@ describe('distributed execution (real fan-out across in-process nodes)', () => {
       });
     }
 
-    // rows that must be matched sit on different workers here: ids 1,2,3 and 51,52,53 carry the
-    // same values but land on different partitions, so a per-partition INTERSECT/EXCEPT is wrong.
     const crossPartitionMatching = [
       'SELECT COUNT(*) AS c FROM (SELECT val AS v FROM SALES WHERE id IN (1,2,3) INTERSECT SELECT val AS v FROM SALES WHERE id IN (51,52,53)) X',
       'SELECT COUNT(*) AS c FROM (SELECT val AS v FROM SALES WHERE id IN (1,2,3) EXCEPT SELECT val AS v FROM SALES WHERE id IN (51,52,53)) X',
@@ -473,8 +471,6 @@ describe('distributed execution (real fan-out across in-process nodes)', () => {
       expect(Number(rows[0].c)).toBe(5);
     });
 
-    // the local TopN now sits under the exchange, so its output schema has to survive the gather
-    // for the coordinator's re-ranking comparator to resolve its keys
     const computedSortKeyCases = [
       'SELECT id FROM SALES ORDER BY CASE WHEN cat IS NULL THEN 0 ELSE 1 END ASC, id ASC LIMIT 25',
       'SELECT id, cat FROM SALES ORDER BY UPPER(cat) ASC, id ASC LIMIT 20',

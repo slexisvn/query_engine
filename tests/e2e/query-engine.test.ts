@@ -1114,8 +1114,6 @@ describe('QueryEngine', () => {
 });
 
 describe('LEFT/FULL join outer-side semantics (HASH path)', () => {
-  // Regression: a LEFT join must preserve only the LEFT side. A bug emitted unmatched
-  // BUILD-side (right/inner) rows too (FULL semantics) whenever the HASH strategy was used.
   function engine(tRows, dRows) {
     const tSchema = [{ name: 'k', dataType: 'INT32' }, { name: 'tv', dataType: 'INT32' }];
     const dSchema = [{ name: 'dk', dataType: 'INT32' }, { name: 'w', dataType: 'INT32' }];
@@ -1130,31 +1128,30 @@ describe('LEFT/FULL join outer-side semantics (HASH path)', () => {
   }
 
   it('LEFT join drops unmatched right rows and keeps unmatched left rows', async () => {
-    // L keys 0..49 (200 rows), R keys 0..24 + 200..224 (250 rows). R keys 200..224 are unmatched.
     const tRows = [], dRows = [];
     for (let i = 0; i < 200; i++) tRows.push([i % 50, i]);
     for (let i = 0; i < 200; i++) dRows.push([i % 25, i]);
-    for (let i = 0; i < 50; i++) dRows.push([200 + (i % 25), i]); // unmatched right keys
+    for (let i = 0; i < 50; i++) dRows.push([200 + (i % 25), i]);
     const e = engine(tRows, dRows);
     const rows = (await e.run('SELECT l.k AS k, r.w AS w FROM L l LEFT JOIN R r ON l.k = r.dk')).rows;
-    // no output row may have a key from R-only (>=200): all output keys come from L (0..49)
+    
     expect(rows.every(r => r.k !== null && r.k < 50)).toBe(true);
-    // every L row appears at least once (matched fan-out or null-filled)
+    
     const lKeys = new Set(rows.map(r => r.k));
     for (let k = 0; k < 50; k++) expect(lKeys.has(k)).toBe(true);
-    // L keys 25..49 are unmatched -> appear exactly once each with null w
+    
     const unmatched = rows.filter(r => r.k >= 25 && r.k < 50);
     expect(unmatched.every(r => r.w === null)).toBe(true);
-    expect(unmatched.length).toBe(100); // 25 keys * 4 L rows each
+    expect(unmatched.length).toBe(100);
   });
 
   it('FULL join keeps unmatched rows from both sides', async () => {
     const tRows = [], dRows = [];
-    for (let i = 0; i < 60; i++) tRows.push([i % 30, i]);   // L keys 0..29
-    for (let i = 0; i < 60; i++) dRows.push([15 + (i % 30), i]); // R keys 15..44
+    for (let i = 0; i < 60; i++) tRows.push([i % 30, i]);
+    for (let i = 0; i < 60; i++) dRows.push([15 + (i % 30), i]);
     const e = engine(tRows, dRows);
     const rows = (await e.run('SELECT l.k AS lk, r.dk AS rk FROM L l FULL OUTER JOIN R r ON l.k = r.dk')).rows;
-    // L-only keys 0..14 present with null rk; R-only keys 30..44 present with null lk
+    
     expect(rows.some(r => r.lk !== null && r.lk < 15 && r.rk === null)).toBe(true);
     expect(rows.some(r => r.rk !== null && r.rk >= 30 && r.lk === null)).toBe(true);
   });

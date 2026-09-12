@@ -599,7 +599,6 @@ describe('complex real-world queries', () => {
     const scans = findAll(plan, PlanNodeType.SCAN);
     expect(scans).toHaveLength(4);
     const tables = scans.map(s => s.table).sort();
-    // 'S'(83) < '_'(95) so ORDERS sorts before ORDER_ITEMS
     expect(tables).toEqual(['ORDERS', 'ORDER_ITEMS', 'PRODUCTS', 'USERS']);
 
     expect(findAll(plan, PlanNodeType.JOIN)).toHaveLength(3);

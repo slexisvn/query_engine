@@ -35,7 +35,6 @@ function registerMockTable(catalog, name, schema, chunks) {
   catalog.registerTableStorage(name, mockStorage(chunks, schema));
 }
 
-// t1: columns id, col1..col6 (all INT32); within each row every column equals id.
 function makeT1Engine(ids = [1, 2, 3]) {
   const names = ['id', 'col1', 'col2', 'col3', 'col4', 'col5', 'col6'];
   const schema = names.map(n => ({ name: n.toUpperCase(), dataType: 'INT32' }));
@@ -45,7 +44,6 @@ function makeT1Engine(ids = [1, 2, 3]) {
   return new QueryEngine(catalog);
 }
 
-// people: id INT32, name VARCHAR, active BOOLEAN, big INT64
 function makePeopleEngine() {
   const schema = [
     { name: 'ID', dataType: 'INT32' },
@@ -133,8 +131,6 @@ describe('CREATE TABLE ... AS (CTAS)', () => {
           AND t1.id + t2.id + t3.id = t4.id + t5.id + t6.id
       `);
 
-      // All six equalities force every table to pick the same id, so exactly one
-      // combination per id value survives → ids {1,2,3}.
       expect(result.rows).toHaveLength(3);
       expect(result.rows.map(r => r.id).sort()).toEqual([1, 2, 3]);
       engine.close();
@@ -185,7 +181,7 @@ describe('CREATE TABLE ... AS (CTAS)', () => {
       expect(out.columns).toEqual(['ID', 'NAME', 'ACTIVE', 'BIG']);
       const alice = out.rows.find(r => r.NAME === 'Alice');
       expect(alice.ACTIVE).toBe(true);
-      // CTAS persists what the query yields (agrees with a direct SELECT).
+      
       const direct = await engine.run('SELECT big FROM people WHERE id = 1');
       expect(Number(alice.BIG)).toBe(5000000000);
       expect(Number(alice.BIG)).toBe(Number(direct.rows[0].big));
@@ -250,7 +246,7 @@ describe('CREATE TABLE ... AS (CTAS)', () => {
       const r = await engine.run('CREATE TABLE IF NOT EXISTS x AS SELECT id FROM people');
       expect(r.message).toMatch(/already exists/);
       const out = await engine.run('SELECT id FROM x');
-      expect(out.rows).toHaveLength(1); // unchanged, not re-materialized
+      expect(out.rows).toHaveLength(1);
       engine.close();
     });
 
@@ -263,9 +259,6 @@ describe('CREATE TABLE ... AS (CTAS)', () => {
     });
 
     it('CTAS persists exactly what the query yields (consistent with a plain SELECT)', async () => {
-      // CTAS must mirror the source query's own output, not invent a
-      // representation of its own — a materialized COALESCE column matches a
-      // plain SELECT (and stays numeric).
       const engine = makeT1Engine([1, 2, 3]);
       const direct = await engine.run('SELECT COALESCE(NULL, id) AS y FROM t1');
       await engine.run('CREATE TABLE c AS SELECT COALESCE(NULL, id) AS y FROM t1');
