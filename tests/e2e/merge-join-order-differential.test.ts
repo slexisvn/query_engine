@@ -21,7 +21,7 @@ const FIXED_STATISTICS = () => {
 };
 
 function forceJoinOperator(engine, type) {
-  const planner = engine.executor.physicalPlanner;
+  const planner = engine.executor.resources.physicalPlanner;
   const original = planner.joinCandidates.bind(planner);
   planner.joinCandidates = (node, children) => {
     const candidates = original(node, children);

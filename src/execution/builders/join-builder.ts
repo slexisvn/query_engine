@@ -1,4 +1,3 @@
-import type { ExecutionCatalog } from '../execution-catalog.js';
 import { PhysicalNodeType, isPhysicalJoin, type PhysicalJoinNode, type PhysicalPlanNode } from '../physical-plan.js';
 import type { TableStorage } from '../../storage/table-storage.js';
 import { JoinType } from '../../planner/logical-plan.js';
@@ -22,7 +21,6 @@ import { RowMemoryBudget } from '../memory-budget.js';
 import { combinedMappingOf, registerBufferedChild, registerSortedChild } from './builder-utils.js';
 import { DataType } from '../../storage/data-type.js';
 import type { BoundExpr } from '../../binder/expression-binder.js';
-import type { ColumnInfo } from '../../binder/scope.js';
 import type { DataChunk } from '../../storage/chunk.js';
 import type { PipelineGraph } from '../pipeline.js';
 import type {
@@ -34,7 +32,7 @@ import type {
   Sink,
 } from '../execution-types.js';
 
-import type { ChunkSpillStore } from '../../storage/spill-manager/spill-manager.js';
+import type { ExecutionContext } from '../execution-context.js';
 export type MakeBuildSide = () => HashJoinBuild;
 export type MakeProbeOp = (buildSide: HashJoinBuild) => HashJoinProbe;
 
@@ -71,47 +69,6 @@ export interface FragmentPoolLike {
   ): AsyncGenerator<DataChunk>;
 }
 
-interface TempManagerLike {
-  allocate(category: string, label: string): string;
-}
-
-interface StorageBackendLike {
-  createSpillManager(handle: string): ChunkSpillStore;
-}
-
-
-
-interface ExecutorLike {
-  buildPipeline(node: PhysicalPlanNode): Promise<CompiledPipeline>;
-  buildSchemaMapping(schema: ExecSchema, alias: string): ColumnMapping;
-  resolveProjectedColumnIndexes(storageSchema: ExecSchema, planColumns: ColumnInfo[] | null): number[] | null;
-  catalog: ExecutionCatalog;
-  tempManager: TempManagerLike;
-  storageBackend: StorageBackendLike;
-  fragmentPool: FragmentPoolLike | null;
-  _estimatePlanRows(node: LogicalPlanNode): number;
-  _prepareParallelJoin(
-    physical: PhysicalJoinNode,
-    buildInput: CompiledPipeline,
-    probeInput: CompiledPipeline,
-    buildNode: LogicalPlanNode,
-    probeNode: LogicalPlanNode,
-    buildKeys: BoundExpr[],
-    probeKeys: BoundExpr[],
-    residualCondition: BoundExpr | null,
-    combinedMapping: ColumnMapping,
-  ): ParallelJoinPrep | null;
-  _runBufferedSerialJoin(
-    makeBuildSide: MakeBuildSide,
-    makeProbeOp: MakeProbeOp,
-    buildChunks: DataChunk[],
-    probeChunks: DataChunk[],
-    buildPreserved: boolean,
-    probeColCount: number,
-  ): Promise<DataChunk[]>;
-  _executeSubPipeline(compiled: CompiledPipeline): Promise<DataChunk[]>;
-}
-
 interface JoinBuildCtx {
   left: CompiledPipeline;
   right: CompiledPipeline;
@@ -127,11 +84,11 @@ interface JoinBuildCtx {
   markSchema?: ExecSchema | null;
 }
 
-export async function buildJoin(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+export async function buildJoin(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
   if (!isPhysicalJoin(physical)) throw new Error(`Not a join operator: ${physical.type}`);
   const node = physical.logical as LogicalJoinNode;
-  const left = await executor.buildPipeline(physical.children[0]);
-  const right = await executor.buildPipeline(physical.children[1]);
+  const left = await ctx.buildPipeline(physical.children[0]);
+  const right = await ctx.buildPipeline(physical.children[1]);
 
   const isSemiAnti = node.joinType === JoinType.SEMI || node.joinType === JoinType.ANTI;
   const isMark = node.joinType === JoinType.MARK;
@@ -169,11 +126,11 @@ export async function buildJoin(executor: ExecutorLike, physical: PhysicalPlanNo
   const resultMapping = isSemiAnti
     ? left.columnMapping
     : isMark
-      ? executor.buildSchemaMapping(markSchema!, '')
+      ? ctx.buildSchemaMapping(markSchema!, '')
       : combinedMapping;
 
   if (physical.type === PhysicalNodeType.MERGE_JOIN) {
-    return buildMergeJoin(executor, node, {
+    return buildMergeJoin(ctx, node, {
       left, right, buildInput, probeInput,
       buildKeys, probeKeys, conditionEvaluator,
       resultSchema, resultMapping,
@@ -189,12 +146,12 @@ export async function buildJoin(executor: ExecutorLike, physical: PhysicalPlanNo
     });
   }
 
-  const joinSpillHandle = executor.tempManager.allocate('spill', 'join');
+  const joinSpillHandle = ctx.resources.tempManager.allocate('spill', 'join');
   const makeBuildSide: MakeBuildSide = () => new HashJoinBuild(
     buildKeys.map((k: BoundExpr) => compileExpression(k, buildInput.columnMapping)),
     node.joinType,
     physical.dedupeBuild && !conditionEvaluator,
-    executor.storageBackend.createSpillManager(joinSpillHandle),
+    ctx.resources.storageBackend.createSpillManager(joinSpillHandle),
     buildPreserved,
     physical.runtimeFilterEntries,
   );
@@ -250,7 +207,8 @@ export async function buildJoin(executor: ExecutorLike, physical: PhysicalPlanNo
     }
   };
 
-  const parallelJoin = executor._prepareParallelJoin(
+  const parallelJoin = prepareParallelJoin(
+    ctx,
     physical, buildInput, probeInput, buildNode, probeNode,
     buildKeys, probeKeys, residualCondition, combinedMapping
   );
@@ -286,8 +244,8 @@ export async function buildJoin(executor: ExecutorLike, physical: PhysicalPlanNo
         const emitSerial = async function* (): AsyncGenerator<DataChunk> {
           const bothBuffered = bufferedBuild !== null && bufferedProbe !== null;
           const resultChunks = bothBuffered
-            ? await executor._runBufferedSerialJoin(makeBuildSide, makeProbeOp, buildChunks, probeChunks, buildPreserved, probeInput.schema.length)
-            : await executor._executeSubPipeline(serialCompiled);
+            ? await runBufferedSerialJoin(makeBuildSide, makeProbeOp, buildChunks, probeChunks, buildPreserved, probeInput.schema.length)
+            : await ctx.executeSubPipeline(serialCompiled);
           for (const chunk of resultChunks) {
             if (!chunk || chunk.size === 0) continue;
             await currentSink.consume(chunk);
@@ -314,7 +272,7 @@ export async function buildJoin(executor: ExecutorLike, physical: PhysicalPlanNo
 
         let emitted = false;
         try {
-          const stream = executor.fragmentPool!.runJoinStream(
+          const stream = ctx.resources.fragmentPool!.runJoinStream(
             parallelJoin.spec,
             { chunks: buildChunks, columnIndexes: parallelJoin.buildSide.columnIndexes },
             { chunks: probeChunks, columnIndexes: parallelJoin.probeSide.columnIndexes },
@@ -336,26 +294,26 @@ export async function buildJoin(executor: ExecutorLike, physical: PhysicalPlanNo
   };
 }
 
-function buildMergeJoin(executor: ExecutorLike, node: LogicalJoinNode, ctx: JoinBuildCtx): CompiledPipeline {
-  const { left, right, buildInput, probeInput, conditionEvaluator } = ctx;
+function buildMergeJoin(ctx: ExecutionContext, node: LogicalJoinNode, join: JoinBuildCtx): CompiledPipeline {
+  const { left, right, buildInput, probeInput, conditionEvaluator } = join;
   let mergeBuild = buildInput;
   let mergeProbe = probeInput;
-  let mergeBuildKeys = ctx.buildKeys;
-  let mergeProbeKeys = ctx.probeKeys;
-  let mergeSchema = ctx.resultSchema;
-  let mergeMapping = ctx.resultMapping;
+  let mergeBuildKeys = join.buildKeys;
+  let mergeProbeKeys = join.probeKeys;
+  let mergeSchema = join.resultSchema;
+  let mergeMapping = join.resultMapping;
   if (node.joinType === JoinType.LEFT && buildInput !== left) {
     mergeBuild = left;
     mergeProbe = right;
-    mergeBuildKeys = ctx.probeKeys;
-    mergeProbeKeys = ctx.buildKeys;
+    mergeBuildKeys = join.probeKeys;
+    mergeProbeKeys = join.buildKeys;
     mergeSchema = [...left.schema, ...right.schema];
     mergeMapping = combinedMappingOf(left, right);
   } else if (node.joinType === JoinType.RIGHT && buildInput !== right) {
     mergeBuild = right;
     mergeProbe = left;
-    mergeBuildKeys = ctx.probeKeys;
-    mergeProbeKeys = ctx.buildKeys;
+    mergeBuildKeys = join.probeKeys;
+    mergeProbeKeys = join.buildKeys;
     mergeSchema = [...right.schema, ...left.schema];
     mergeMapping = combinedMappingOf(right, left);
   }
@@ -369,12 +327,12 @@ function buildMergeJoin(executor: ExecutorLike, node: LogicalJoinNode, ctx: Join
       const buildRows = registerSortedChild(
         graph, currentPipelineId, mergeBuild,
         mergeJoinSortKeys(buildKeyExprs),
-        executor.storageBackend.createSpillManager(executor.tempManager.allocate('spill', 'merge-join-build')),
+        ctx.resources.storageBackend.createSpillManager(ctx.resources.tempManager.allocate('spill', 'merge-join-build')),
       );
       const probeRows = registerSortedChild(
         graph, currentPipelineId, mergeProbe,
         mergeJoinSortKeys(probeKeyExprs),
-        executor.storageBackend.createSpillManager(executor.tempManager.allocate('spill', 'merge-join-probe')),
+        ctx.resources.storageBackend.createSpillManager(ctx.resources.tempManager.allocate('spill', 'merge-join-probe')),
       );
 
       graph.setSource(currentPipelineId, async function* (): AsyncGenerator<DataChunk> {
@@ -399,8 +357,8 @@ function buildMergeJoin(executor: ExecutorLike, node: LogicalJoinNode, ctx: Join
   };
 }
 
-function buildNestedLoopJoin(node: LogicalJoinNode, ctx: JoinBuildCtx): CompiledPipeline {
-  const { left, right, buildInput, probeInput, isSemiAnti, isMark, markSchema } = ctx;
+function buildNestedLoopJoin(node: LogicalJoinNode, join: JoinBuildCtx): CompiledPipeline {
+  const { left, right, buildInput, probeInput, isSemiAnti, isMark, markSchema } = join;
   const nlOuter = buildInput === left ? buildInput : probeInput;
   const nlInner = buildInput === left ? probeInput : buildInput;
   const nlMapping = combinedMappingOf(nlOuter, nlInner);
@@ -408,7 +366,7 @@ function buildNestedLoopJoin(node: LogicalJoinNode, ctx: JoinBuildCtx): Compiled
     ? compileExpression(node.condition, nlMapping)
     : null;
   const nlSchema = [...nlOuter.schema, ...nlInner.schema];
-  const nlResultMapping = isSemiAnti ? left.columnMapping : isMark ? ctx.resultMapping : nlMapping;
+  const nlResultMapping = isSemiAnti ? left.columnMapping : isMark ? join.resultMapping : nlMapping;
   const nlResultSchema = isSemiAnti ? left.schema : isMark ? markSchema! : nlSchema;
   return {
     schema: nlResultSchema,
@@ -438,7 +396,7 @@ function buildNestedLoopJoin(node: LogicalJoinNode, ctx: JoinBuildCtx): Compiled
 }
 
 export function prepareParallelJoin(
-  executor: ExecutorLike,
+  ctx: ExecutionContext,
   physical: PhysicalJoinNode,
   buildInput: CompiledPipeline,
   probeInput: CompiledPipeline,
@@ -450,12 +408,12 @@ export function prepareParallelJoin(
   combinedMapping: ColumnMapping,
 ): ParallelJoinPrep | null {
   const node = physical.logical;
-  if (!executor.fragmentPool) return null;
+  if (!ctx.resources.fragmentPool) return null;
   if (buildKeys.length === 0 || node.joinType === JoinType.CROSS) return null;
-  if (executor._estimatePlanRows(node) < Config.parallelJoinThreshold) return null;
+  if (ctx.estimatePlanRows(node) < Config.parallelJoinThreshold) return null;
 
-  const buildSide = prepareJoinSide(executor, buildNode, buildInput);
-  const probeSide = prepareJoinSide(executor, probeNode, probeInput);
+  const buildSide = prepareJoinSide(ctx, buildNode, buildInput);
+  const probeSide = prepareJoinSide(ctx, probeNode, probeInput);
 
   const buildPreserved = isBuildSidePreserved(node.joinType, buildNode === node.children[0]);
 
@@ -476,7 +434,7 @@ export function prepareParallelJoin(
   return { spec, buildSide, probeSide };
 }
 
-function prepareJoinSide(executor: ExecutorLike, planNode: LogicalPlanNode | null, input: CompiledPipeline): JoinSide {
+function prepareJoinSide(ctx: ExecutionContext, planNode: LogicalPlanNode | null, input: CompiledPipeline): JoinSide {
   const sideSchema = plainSchemaOf(input.schema);
   const buffered: JoinSide = {
     spec: { baseSchema: sideSchema, stages: [] },
@@ -486,11 +444,11 @@ function prepareJoinSide(executor: ExecutorLike, planNode: LogicalPlanNode | nul
 
   const fragment = planNode ? extractScanChain(planNode) : null;
   if (!fragment) return buffered;
-  const storage = executor.catalog.getTableStorage(fragment.table);
+  const storage = ctx.resources.catalog.getTableStorage(fragment.table);
   if (!storage || typeof storage.scan !== 'function') return buffered;
 
   const storageSchema = storage.getSchema();
-  const projected = executor.resolveProjectedColumnIndexes(storageSchema, fragment.scanColumns);
+  const projected = ctx.resolveProjectedColumnIndexes(storageSchema, fragment.scanColumns);
   const columnIndexes = projected || storageSchema.map((_: ExecColumn, i: number) => i);
   const baseSchema: ExecSchema = columnIndexes.map((i: number) => ({
     name: storageSchema[i].name,

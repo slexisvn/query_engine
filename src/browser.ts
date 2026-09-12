@@ -17,3 +17,4 @@ export {
   Col, col, lit, expr, sum, avg, min, max, count, countStar,
 } from './dataframe/index.js';
 export { createEngine, registerTable, registerStreamingTable } from './engine-entry.js';
+export { QueryCancelledError } from './execution/pipeline.js';

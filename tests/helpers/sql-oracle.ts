@@ -52,7 +52,7 @@ export async function makeEngine() {
 }
 
 export function forceJoinOperator(engine, type) {
-  const planner = engine.executor.physicalPlanner;
+  const planner = engine.executor.resources.physicalPlanner;
   const original = planner.joinCandidates.bind(planner);
   const forced = { count: 0 };
   planner.joinCandidates = (node, children) => {

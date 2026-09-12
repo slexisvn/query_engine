@@ -30,6 +30,7 @@ export const Config = {
   pageCachePages: env('QE_PAGE_CACHE_PAGES', 50),
   wasmMinChunkSize: env('QE_WASM_MIN_CHUNK', 4096),
   sinkQueueCapacity: env('QE_SINK_QUEUE_CAPACITY', 8),
+  cancelPollMs: env('QE_CANCEL_POLL_MS', 10),
   btreeOrder: env('QE_BTREE_ORDER', 128),
   indexScanSelectivityThreshold: envFloat('QE_INDEX_SELECTIVITY_THRESHOLD', 0.3),
   dependentJoinConcurrency: env('QE_DEPENDENT_JOIN_CONCURRENCY', 1),

@@ -27,3 +27,14 @@ export function getEnvFlag(key: string, fallback: boolean): boolean {
 export function getCpuCount(): number {
   return globalThis.navigator?.hardwareConcurrency ?? SINGLE_THREADED;
 }
+
+type ImmediateScheduler = (callback: () => void) => unknown;
+
+const scheduleMacrotask: ImmediateScheduler =
+  typeof setImmediate === 'function'
+    ? (callback) => setImmediate(callback)
+    : (callback) => setTimeout(callback, 0);
+
+export function yieldToEventLoop(): Promise<void> {
+  return new Promise<void>(resolve => { scheduleMacrotask(resolve); });
+}

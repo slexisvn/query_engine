@@ -1,14 +1,11 @@
-import type { ExecutionCatalog } from '../execution-catalog.js';
 import type { PhysicalPlanNode } from '../physical-plan.js';
 import { ScanOperator } from '../operators/scan.js';
 import { IndexScanOperator } from '../operators/index-scan.js';
 import { DataChunk } from '../../storage/chunk.js';
 import type { PipelineGraph } from '../pipeline.js';
 import type {
-  ColumnMapping,
   CompiledPipeline,
   ExecColumn,
-  ExecSchema,
   Sink,
   SourceGenerator,
 } from '../execution-types.js';
@@ -16,31 +13,25 @@ import type {
   LogicalScanNode,
   LogicalIndexScanNode,
 } from '../../planner/logical-plan.js';
-import type { ColumnInfo } from '../../binder/scope.js';
 import { isPagedTableStorage } from '../../storage/table-storage.js';
 import { compileChunkPruner, schemaColumnResolver } from '../zone-map-pruner.js';
+import type { ExecutionContext } from '../execution-context.js';
 import { Config } from '../../config.js';
+import { scanSource } from './builder-utils.js';
 
-interface ExecutorLike {
-  catalog: ExecutionCatalog;
-  buildPipeline(node: PhysicalPlanNode): Promise<CompiledPipeline>;
-  resolveProjectedColumnIndexes(schema: ExecSchema, planColumns: ColumnInfo[] | null): number[] | null;
-  buildSchemaMapping(schema: ExecSchema, alias: string): ColumnMapping;
-}
-
-export async function buildScan(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+export async function buildScan(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
   const node = physical.logical as LogicalScanNode;
-  const storage = executor.catalog.getTableStorage(node.table);
+  const storage = ctx.resources.catalog.getTableStorage(node.table);
   if (!storage) throw new Error(`No storage for table: ${node.table}`);
 
   const schema = storage.getSchema();
-  const projectedColumns = executor.resolveProjectedColumnIndexes(schema, node.columns);
+  const projectedColumns = ctx.resolveProjectedColumnIndexes(schema, node.columns);
   const outputSchema = projectedColumns
     ? projectedColumns.map((i: number) => schema[i])
     : schema;
   const alias = node.alias || node.table;
   const finalSchema = outputSchema.map((c: ExecColumn) => ({ ...c, tableAlias: alias }));
-  const columnMapping = executor.buildSchemaMapping(finalSchema, alias);
+  const columnMapping = ctx.buildSchemaMapping(finalSchema, alias);
   const pruner = Config.zoneMapPruning
     ? compileChunkPruner(node.pruningFilter ?? null, schemaColumnResolver(schema, alias))
     : null;
@@ -51,33 +42,25 @@ export async function buildScan(executor: ExecutorLike, physical: PhysicalPlanNo
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
       const scanOp = new ScanOperator(storage, projectedColumns, pruner);
 
-      const source: SourceGenerator = async function* () {
-        for await (const chunk of scanOp.scan()) {
-          if (currentSink.cancelToken?.isCancelled) break;
-          await currentSink.consume(chunk);
-          yield chunk;
-        }
-        if (currentSink.finalize) await currentSink.finalize();
-      };
-      graph.setSource(currentPipelineId, source);
+      graph.setSource(currentPipelineId, scanSource(ctx, currentSink, () => scanOp.scan()));
     }
   };
 }
 
-export async function buildIndexScan(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+export async function buildIndexScan(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
   const node = physical.logical as LogicalIndexScanNode;
-  const storage = executor.catalog.getTableStorage(node.table);
+  const storage = ctx.resources.catalog.getTableStorage(node.table);
   if (!storage) throw new Error(`No storage for table: ${node.table}`);
   if (!isPagedTableStorage(storage)) throw new Error(`Index scan requires paged storage for table: ${node.table}`);
 
-  const btree = executor.catalog.getIndexForColumn(node.table, node.columnName);
+  const btree = ctx.resources.catalog.getIndexForColumn(node.table, node.columnName);
   if (!btree) throw new Error(`No index for ${node.table}.${node.columnName}`);
 
   const schema = storage.getSchema();
-  const projectedColumns = executor.resolveProjectedColumnIndexes(schema, node.columns);
+  const projectedColumns = ctx.resolveProjectedColumnIndexes(schema, node.columns);
   const outputSchema = projectedColumns ? projectedColumns.map((i: number) => schema[i]) : schema;
   const finalSchema = outputSchema.map((c: ExecColumn) => ({ ...c, tableAlias: node.alias || node.table }));
-  const columnMapping = executor.buildSchemaMapping(finalSchema, node.alias || node.table);
+  const columnMapping = ctx.buildSchemaMapping(finalSchema, node.alias || node.table);
 
   return {
     schema: finalSchema,
@@ -88,20 +71,12 @@ export async function buildIndexScan(executor: ExecutorLike, physical: PhysicalP
         node.scanLow, node.scanHigh, node.lowInc, node.highInc,
         projectedColumns
       );
-      const source: SourceGenerator = async function* () {
-        for await (const chunk of scanOp.scan()) {
-          if (currentSink.cancelToken?.isCancelled) break;
-          await currentSink.consume(chunk);
-          yield chunk;
-        }
-        if (currentSink.finalize) await currentSink.finalize();
-      };
-      graph.setSource(currentPipelineId, source);
+      graph.setSource(currentPipelineId, scanSource(ctx, currentSink, () => scanOp.scan()));
     }
   };
 }
 
-export async function buildSingleRow(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+export async function buildSingleRow(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
   return {
     schema: [],
     columnMapping: new Map(),
@@ -117,8 +92,8 @@ export async function buildSingleRow(executor: ExecutorLike, physical: PhysicalP
   };
 }
 
-export async function buildEmpty(executor: ExecutorLike, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
-  const child = await executor.buildPipeline(physical.children[0]);
+export async function buildEmpty(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {
+  const child = await ctx.buildPipeline(physical.children[0]);
   return {
     schema: child.schema,
     columnMapping: child.columnMapping,

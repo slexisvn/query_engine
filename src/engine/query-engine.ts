@@ -13,6 +13,7 @@ import { QueryExecutor } from '../execution/query-executor.js';
 import { PhysicalPlanner } from '../execution/physical-planner.js';
 import { QueryResult } from '../execution/query-result.js';
 import { ExecutionProfiler, profileToString } from '../execution/execution-profile.js';
+import { CancelToken } from '../execution/pipeline.js';
 import { BTreeIndex } from '../storage/btree.js';
 import { StatisticsCache } from '../catalog/statistics-cache.js';
 import { LRUCache } from '../utils/lru-cache.js';
@@ -81,6 +82,10 @@ interface SqlFrame {
 interface SqlOptions {
   frames?: SqlFrame[];
   params?: readonly QueryParam[];
+}
+
+export interface RunOptions {
+  signal?: AbortSignal;
 }
 
 interface DistributedClusterConfig {
@@ -193,7 +198,6 @@ export class QueryEngine {
   statsCache: StatisticsCache;
   optimizer: Optimizer;
   _distributedPasses?: DistributedPassEntry[];
-  _activeCancel?: AbortController | null;
   planCache: LRUCache<string, CompiledQuery>;
   workerPool?: WorkerPoolLike | null;
   fragmentPool?: FragmentPoolLike | null;
@@ -218,7 +222,7 @@ export class QueryEngine {
     this.statsCache = new StatisticsCache(catalog);
     this.planCache = new LRUCache(Config.planCacheEntries);
     this.optimizer = this.createOptimizer(this.precomputedStats);
-    this.executor.setPhysicalPlanner(new PhysicalPlanner(this.precomputedStats ?? new Map()));
+    this.executor.resources.physicalPlanner = new PhysicalPlanner(this.precomputedStats ?? new Map());
   }
 
   _nextDfId(): number {
@@ -328,7 +332,7 @@ export class QueryEngine {
     if (!collected || this.statsCache.generation === generationBefore) return;
 
     this.optimizer = this.createOptimizer(collected);
-    this.executor.setPhysicalPlanner(new PhysicalPlanner(collected));
+    this.executor.resources.physicalPlanner = new PhysicalPlanner(collected);
     if (this._distributedPasses) {
       this._applyDistributedPasses(this.optimizer, this._distributedPasses);
     }
@@ -391,7 +395,7 @@ export class QueryEngine {
 
   async _formatPlan(plan: LogicalPlanNode): Promise<string> {
     const { physicalPlanToString } = await import('../execution/physical-plan.js');
-    const physical = this.executor.physicalPlanner.plan(plan);
+    const physical = this.executor.resources.physicalPlanner.plan(plan);
     return `${await this._formatLogicalPlan(plan)}
 Physical Plan:
 ${physicalPlanToString(physical)}`;
@@ -405,32 +409,26 @@ ${physicalPlanToString(physical)}`;
   async _runPlan(plan: LogicalPlanNode, outputColumns: OutputColumn[], streaming: boolean = false, cteMap: Map<string, LogicalPlanNode> | null = null): Promise<QueryResult> {
     await this._ensureStatistics(referencedTables(plan, cteMap));
     const optimized = this.optimize(plan);
-    this.executor.cteDefinitions = this.optimizeCTEMap(cteMap || new Map<string, LogicalPlanNode>(), optimized);
-    const { sink, columnNames } = await this.executor.execute(optimized, outputColumns as ExecutorColumns, streaming);
+    const cteDefinitions = this.optimizeCTEMap(cteMap || new Map<string, LogicalPlanNode>(), optimized);
+    const { sink, columnNames } = await this.executor.execute(optimized, outputColumns as ExecutorColumns, { cteDefinitions, streaming });
     return new QueryResult(columnNames, sink);
   }
 
-  async _collectRows(plan: LogicalPlanNode, outputColumns: OutputColumn[], cteMap: Map<string, LogicalPlanNode>): Promise<RunRowsResult> {
-    this.executor.cteDefinitions = cteMap;
-    const { sink, columnNames } = await this.executor.execute(plan, outputColumns as ExecutorColumns);
+  async _collectRows(plan: LogicalPlanNode, outputColumns: OutputColumn[], cteMap: Map<string, LogicalPlanNode>, profiler: ExecutionProfiler | null = null, cancelToken: CancelToken | null = null): Promise<RunRowsResult> {
+    const { sink, columnNames } = await this.executor.execute(plan, outputColumns as ExecutorColumns, { cteDefinitions: cteMap, profiler, cancelToken });
     const result = new QueryResult(columnNames, sink);
     return { rows: await result.toArray(), columns: columnNames, rowKeys: result.rowKeys };
   }
 
-  async _profiled<T>(body: () => Promise<T>): Promise<{ value: T; profile: ExecutionProfile }> {
+  async _profiled<T>(body: (profiler: ExecutionProfiler) => Promise<T>): Promise<{ value: T; profile: ExecutionProfile }> {
     const profiler = new ExecutionProfiler();
-    this.executor.profiler = profiler;
-    try {
-      const value = await body();
-      return { value, profile: profiler.snapshot() };
-    } finally {
-      this.executor.profiler = null;
-    }
+    const value = await body(profiler);
+    return { value, profile: profiler.snapshot() };
   }
 
   async _analyzeResult(plan: LogicalPlanNode, outputColumns: OutputColumn[], cteMap: Map<string, LogicalPlanNode>): Promise<RunRowsResult> {
     const logicalStr = await this._formatLogicalPlan(plan);
-    const { value, profile } = await this._profiled(() => this._collectRows(plan, outputColumns, cteMap));
+    const { value, profile } = await this._profiled(profiler => this._collectRows(plan, outputColumns, cteMap, profiler));
     const analyzeStr = `${logicalStr}
 Physical Plan:
 ${profileToString(profile)}Execution Time: ${profile.totalMs.toFixed(EXPLAIN_MS_DECIMALS)} ms
@@ -438,7 +436,17 @@ Rows Returned: ${value.rows.length}`;
     return { rows: [{ 'EXPLAIN_ANALYZE': analyzeStr }], columns: ['EXPLAIN_ANALYZE'] };
   }
 
-  async run(sql: string, params: readonly QueryParam[] = []): Promise<DDLResult | RunRowsResult> {
+  async _cancellable<T>(signal: AbortSignal | undefined, body: (cancelToken: CancelToken | null) => Promise<T>): Promise<T> {
+    if (!signal) return body(null);
+    const cancelToken = CancelToken.fromSignal(signal);
+    try {
+      return await body(cancelToken);
+    } finally {
+      cancelToken.detach();
+    }
+  }
+
+  async run(sql: string, params: readonly QueryParam[] = [], options: RunOptions = {}): Promise<DDLResult | RunRowsResult> {
     const compiled = await this.compile(sql, params);
 
     if (compiled.ddl) {
@@ -455,15 +463,11 @@ Rows Returned: ${value.rows.length}`;
       return this._analyzeResult(plan, outputColumns, cteMap);
     }
 
-    this._activeCancel = new AbortController();
-    try {
-      return await this._collectRows(plan, outputColumns, cteMap);
-    } finally {
-      this._activeCancel = null;
-    }
+    return this._cancellable(options.signal, cancelToken =>
+      this._collectRows(plan, outputColumns, cteMap, null, cancelToken));
   }
 
-  async runProfiled(sql: string, params: readonly QueryParam[] = []): Promise<DDLResult | ProfiledRunResult> {
+  async runProfiled(sql: string, params: readonly QueryParam[] = [], options: RunOptions = {}): Promise<DDLResult | ProfiledRunResult> {
     const compiled = await this.compile(sql, params);
 
     if (compiled.ddl) {
@@ -479,19 +483,10 @@ Rows Returned: ${value.rows.length}`;
       return { ...explained, profile: null };
     }
 
-    this._activeCancel = new AbortController();
-    try {
-      const { value, profile } = await this._profiled(() => this._collectRows(plan, outputColumns, cteMap));
-      return { ...value, profile };
-    } finally {
-      this._activeCancel = null;
-    }
-  }
-
-  cancel(): void {
-    if (this._activeCancel) {
-      this._activeCancel.abort();
-    }
+    const { value, profile } = await this._profiled(profiler =>
+      this._cancellable(options.signal, cancelToken =>
+        this._collectRows(plan, outputColumns, cteMap, profiler, cancelToken)));
+    return { ...value, profile };
   }
 
   async executeDDL(ddl: DDLStmt): Promise<DDLResult> {
@@ -627,7 +622,7 @@ Rows Returned: ${value.rows.length}`;
     return { rows: [], columns: [], message: `Table ${tableName} dropped` };
   }
 
-  async stream(sql: string): Promise<DDLResult | RunRowsResult | QueryResult> {
+  async stream(sql: string, options: RunOptions = {}): Promise<DDLResult | RunRowsResult | QueryResult> {
     const compiled = await this.compile(sql);
     if (compiled.ddl) return this.executeDDL(compiled.ddl);
 
@@ -637,8 +632,8 @@ Rows Returned: ${value.rows.length}`;
       return this._explainPlanResult(plan);
     }
 
-    this.executor.cteDefinitions = cteMap;
-    const { sink, columnNames } = await this.executor.execute(plan, outputColumns as ExecutorColumns, true);
+    const cancelToken = options.signal ? CancelToken.fromSignal(options.signal) : null;
+    const { sink, columnNames } = await this.executor.execute(plan, outputColumns as ExecutorColumns, { cteDefinitions: cteMap, streaming: true, cancelToken });
     return new QueryResult(columnNames, sink);
   }
 
@@ -722,7 +717,9 @@ Rows Returned: ${value.rows.length}`;
       const { FragmentPool } = await import('../parallel/fragment-pool.js');
       const fragmentPool = new FragmentPool(Config.parallelWorkers, Config.aggMorselRows);
 
-      this.executor.setParallelContext(pool, parallelDispatch, fragmentPool);
+      this.executor.resources.workerPool = pool;
+      this.executor.resources.parallelDispatch = parallelDispatch;
+      this.executor.resources.fragmentPool = fragmentPool;
       this.workerPool = pool;
       this.fragmentPool = fragmentPool;
       this.parallelEnabled = true;
