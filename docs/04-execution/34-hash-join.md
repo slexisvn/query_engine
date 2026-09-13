@@ -6,18 +6,40 @@
 
 Join 150,000 customers to 1,500,000 orders. The naive nested loop does 225 billion comparisons. The fix everyone reaches for is a hash map from customer key to customer row: build it once, then scan orders and look each one up. Two passes, 1.65 million operations instead of 225 billion.
 
-Now make the build side ten times larger than memory.
+First follow that lookup on the book's small dataset. Then we can ask what happens when the lookup structure is larger than memory.
 
-The hash map is the whole algorithm, and you cannot have one. Everything difficult about hash join lives in that sentence, and it is why [`src/execution/operators/hash-join.ts`](../../src/execution/operators/hash-join.ts) is 556 lines instead of forty.
+## Build and probe, one row at a time
+
+For this hand-worked **inner join**, push the segment filter onto the customers first. The build input is Alice (key 1) and Carol (key 3). Inserting them gives this conceptual lookup table:
+
+| Join key | Stored customer rows |
+|---:|---|
+| 1 | Alice |
+| 3 | Carol |
+
+Now scan the orders. A **probe** asks whether the table contains that order's customer key:
+
+| Order | Customer key | Lookup | Join output |
+|---:|---:|---|---|
+| 10 | 1 | Alice | Alice, 100 |
+| 11 | 1 | Alice | Alice, 250 |
+| 12 | 2 | no match | no row for this inner join |
+| 13 | 3 | Carol | Carol, 300 |
+
+The join emits three rows. It does not sum them; the aggregate above it later turns them into Alice 350 and Carol 300. The lookup is reused for every order instead of scanning every customer again. On such tiny inputs the physical planner may still prefer a nested loop; this trace demonstrates the hash algorithm, not the plan chosen for three customers.
+
+A hash value chooses where to search; an equality check confirms the key. Two different keys can hash to the same location without matching. One key can also belong to several build rows, so a general join stores a list and emits every matching pair. The familiar `Map<key, row>` example works only when the build key is unique.
+
+At larger sizes, partitioning and spilling preserve this build/probe idea while limiting how much of the lookup must be resident at once. The rest of the chapter follows that implementation in [hash-join.ts](../../src/execution/operators/hash-join.ts).
 
 ## Two operators, not one
 
-A hash join is not a function that takes two tables. It is two operators that run at different times:
+This engine implements a hash join with two operators that run at different times:
 
 - [`HashJoinBuild`](../../src/execution/operators/hash-join.ts) consumes every chunk of the build side and, when it has seen all of them, constructs the lookup structure.
 - [`HashJoinProbe`](../../src/execution/operators/hash-join.ts) then streams the probe side through, emitting matches as it goes.
 
-The build side must be **fully consumed before the probe side starts**. That ordering is not an implementation detail — it is the reason the plan is split into pipelines with dependencies between them, which chapter 30 covers. The build is a blocking operator; the probe is streaming.
+In this implementation the build side is **fully consumed before probing starts**. That requirement creates a pipeline dependency, as chapter 30 explains. Other hash-join designs can interleave work differently; here the build is blocking and the resident probe path is streaming.
 
 ### Which side builds
 
@@ -31,7 +53,7 @@ export function chooseJoinBuildSide(joinType, leftCardinality, rightCardinality)
 }
 ```
 
-The last line is the intuition: build from the **smaller** side, because that is the side that has to fit in memory. The two lines above it override that preference. `LEFT`, `SEMI`, `ANTI`, `MARK`, and `SINGLE` joins must emit output driven by their left input — every left row appears, or is tested, or is marked — so the left input has to be the streaming side no matter how big it is. Cardinality is a preference; semantics is a constraint.
+The last line prefers building from the **smaller** side to reduce memory and insertion work. The earlier branches reflect this engine's operator design: for `LEFT`, `SEMI`, `ANTI`, `MARK`, and `SINGLE`, the probe loop is driven by the left input, so the build is on the right. This is not the only possible implementation of those SQL semantics; preserving the build side instead would need additional matching and output bookkeeping.
 
 Note that these cardinalities are *estimates*, produced by the optimizer from statistics. Choosing the build side is one of the places where a bad estimate turns into a slow query rather than a wrong one.
 
@@ -54,7 +76,7 @@ if (!part.spilled) {
 
 Nothing has been hashed into a table yet. This is only bookkeeping — sixteen buckets of rows, sorted by hash. The count comes from `Config.hashJoinPartitions`, tunable through `QE_HASH_JOIN_PARTITIONS`.
 
-Partitioning first is what makes running out of memory survivable. **All rows with the same key land in the same partition, on both sides of the join.** So a partition of the build side only ever needs to meet the corresponding partition of the probe side — and a pair of partitions can be joined completely independently of every other pair. A join of two enormous tables becomes sixteen joins of tables one sixteenth the size, and if that is still too big, sixteen again.
+Partitioning first makes spilling manageable. **Equal keys land in the same partition on both inputs**, so a build partition only needs to meet its corresponding probe partition. With a reasonably balanced key distribution, sixteen partitions are roughly one sixteenth of the data each. A frequent key can make one much larger; the repartitioning section below explains why hashing cannot split that key's rows.
 
 ## Running out of memory
 
@@ -226,15 +248,25 @@ Relevant configuration, all overridable by environment variable in [`src/config.
 
 ## Exercises
 
-1. Run a join and confirm the physical plan says `HashJoin`. Then shrink both tables to three rows and confirm it says `NestedLoopJoin`. Find the threshold in the cost model that flips it.
+### Understand
 
-2. Force spilling: set `QE_MEMORY_LIMIT_BYTES` to something tiny (say 65536) and run a join over a few hundred thousand rows. Verify the result is identical to the unspilled run. This is the single most valuable test you can write against this operator.
+A build bucket contains two rows with key 7. One probe row also has key 7. How many rows does an inner equality join emit?
 
-3. Instrument `runtimeFilterRejections` and print it after a join with a highly selective build side. What fraction of probe rows never reach the hash table?
+### Practice
 
-4. Delete the `depth` term from `partitionOf` so repartitioning uses the same hash at every level. Construct an input that spills, and observe what happens. Explain the behavior in terms of where the rows end up.
+1. **Observe.** Run a join and confirm the physical plan says `HashJoin`. Then shrink both tables to three rows and confirm it says `NestedLoopJoin`. Find the threshold in the cost model that flips it.
 
-5. `chooseJoinBuildSide` returns `'right'` for `SEMI` joins regardless of size. Construct a semi join whose right side is a hundred times larger than its left, and reason about what that costs. Is the constraint avoidable?
+2. **Observe.** Force spilling: set `QE_MEMORY_LIMIT_BYTES` to something tiny (say 65536) and run a join over a few hundred thousand rows. Verify the result is identical to the unspilled run. This is the single most valuable test you can write against this operator.
+
+3. **Extend (optional).** Instrument `runtimeFilterRejections` and print it after a join with a highly selective build side. What fraction of probe rows never reach the hash table?
+
+4. **Extend (optional).** Delete the `depth` term from `partitionOf` so repartitioning uses the same hash at every level. Construct an input that spills, and observe what happens. Explain the behavior in terms of where the rows end up.
+
+5. **Observe.** `chooseJoinBuildSide` returns `'right'` for `SEMI` joins regardless of size. Construct a semi join whose right side is a hundred times larger than its left, and reason about what that costs. Is the constraint avoidable?
+
+### Hints and expected observations
+
+Two, assuming no residual predicate rejects either pair. Hashing finds candidates; equality checks confirm matches and duplicate keys preserve multiplicity.
 
 ## Recap
 

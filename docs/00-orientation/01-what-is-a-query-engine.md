@@ -4,7 +4,22 @@
 
 ## The question
 
-Here is a query. Two tables, a join, a filter, a group-by, a sort, a limit.
+We want the customers in the `BUILDING` segment with the largest order totals. Start with these two small tables, available as [customer.csv](../examples/customer.csv) and [orders.csv](../examples/orders.csv).
+
+| C_CUSTKEY | C_NAME | C_MKTSEGMENT |
+|---:|---|---|
+| 1 | Alice | BUILDING |
+| 2 | Bob | MACHINERY |
+| 3 | Carol | BUILDING |
+
+| O_ORDERKEY | O_CUSTKEY | O_TOTALPRICE |
+|---:|---:|---:|
+| 10 | 1 | 100 |
+| 11 | 1 | 250 |
+| 12 | 2 | 900 |
+| 13 | 3 | 300 |
+
+`C_CUSTKEY` identifies a customer; `O_CUSTKEY` says which customer placed an order. The join pairs rows with the same customer key. `WHERE` keeps the requested segment, `GROUP BY` collects each customer's rows, `SUM` adds the prices, and `ORDER BY ... DESC LIMIT 10` asks for up to ten results, largest first. This example groups by name for readability; a real application should group by the customer key too if names need not be unique.
 
 ```sql
 SELECT c.C_NAME, SUM(o.O_TOTALPRICE) AS TOTAL
@@ -27,7 +42,7 @@ And here is what this engine answers, on a tiny three-customer dataset:
 2 row(s) returned.
 ```
 
-Nothing surprising. But notice what you did *not* say. You did not say which table to read first. You did not say whether to filter before or after joining. You did not say whether to build a hash table or sort both inputs. You did not say how much memory to use, or what to do when it runs out.
+You can check the answer by hand. Alice's two orders total 350; Carol's one order totals 300. Bob's order is larger, but his segment excludes him. Notice what the query leaves open: which table to read first, when to apply the filter, which join algorithm to use, and how much memory to spend.
 
 SQL is a language in which you describe **what you want**, and something else decides **how to get it**. That something else is the query engine, and this book is about what it does with the enormous freedom you just handed it.
 
@@ -47,18 +62,18 @@ On the three customers and four orders above, that is twelve comparisons. Fine. 
 
 **TPC-H** is a standard benchmark: a fixed set of eight tables describing customers, orders, and parts, a fixed set of queries over them, and a *scale factor* that says how much data to generate. Database vendors publish TPC-H numbers, so the schema is the closest thing the field has to a shared example, and this book uses it for the same reason. It ships with the engine in [`src/catalog/tpch-schema.ts`](../../src/catalog/tpch-schema.ts).
 
-At scale factor 1 — the smallest standard size — `CUSTOMER` holds 150,000 rows and `ORDERS` holds 1,500,000. The nested loop above then does **225 billion comparisons**, of which all but a handful are wasted, because roughly four fifths of those customers are not in the `BUILDING` segment and never needed to be looked at.
+At scale factor 1, `CUSTOMER` holds 150,000 rows and `ORDERS` holds 1,500,000. The nested loop above then does **225 billion key comparisons**. Roughly four fifths of the customers are outside the `BUILDING` segment. Filtering those customers first avoids about 180 billion comparisons; using a lookup table avoids most of the remaining pairwise search.
 
 Two rearrangements fix most of it:
 
 1. **Filter first.** Discard non-`BUILDING` customers before joining, not after. Same answer, one fifth of the rows entering the join.
 2. **Hash instead of loop.** Build a lookup table on `C_CUSTKEY` once, then probe it once per order. That turns a multiplication into an addition — 150,000 + 1,500,000 instead of 150,000 × 1,500,000.
 
-Neither is clever. Both are mechanical, and both can be decided by a program looking at the query. That program is the optimizer, and the fact that it can be mechanical is the entire reason SQL is worth having: you write the *what* once, and the *how* gets better every time someone improves the engine, without you rewriting anything.
+Neither change requires knowing the answer in advance. The optimizer can discover both from the query's structure, then use information about the data to choose between alternatives. You write the *what* once, and improvements to the engine can improve the *how* without changing your query.
 
 ## The six stages
 
-Every query that runs through this engine passes through the same six stages. You can see them laid out in order inside [`compileUncached`](../../src/engine/query-engine.ts), which is the honest one-page summary of the whole system:
+A SQL `SELECT` follows six stages. Cached queries can reuse compilation work, and table-creation statements take a separate path. For a first read, follow the uncached query through [`compileUncached`](../../src/engine/query-engine.ts):
 
 ```typescript
 const ast = this.parseSQL(sql);
@@ -108,7 +123,7 @@ This is the stage that produces the errors you actually see day to day: *no such
             -> Seq Scan on ORDERS as O
 ```
 
-Read it bottom-up: scan both tables, join them, filter the result, group it, sort it, take ten, keep two columns. That is a direct, unimaginative transcription of what SQL says — and note that it is exactly the bad plan from the section above. **The planner's job is to be correct, not fast.** Being fast is somebody else's job.
+Read the data flow bottom-up: scan both tables, join them, filter the result, group it, sort it, keep the requested columns, then take ten. On our data, the join produces four rows, the filter keeps three, and the aggregate produces the two totals above. This tree describes the operations; it does not yet choose a nested loop or a hash join. **The planner's first job is correctness.** Optimization and physical planning decide how to make that work efficient.
 
 Two details worth noticing now, because they recur throughout the book. First, the tree is upside down relative to how you read SQL: `SELECT` is at the top but runs nearly last, and `FROM` is at the bottom but runs first. Second, the filter sits *above* the join, because that is where `WHERE` sits in the text.
 
@@ -128,7 +143,7 @@ On our query, three of them fire. `PredicatePushdown` slides the filter down pas
         -> Seq Scan on ORDERS as O
 ```
 
-The filter has moved two levels down and now guards the `CUSTOMER` scan directly. `Sort` and `Limit` have become one node. **Both trees compute the same answer on every possible database.** That equivalence is the contract the whole optimizer is built on, and Part 3 is about how each pass earns the right to claim it.
+The filter now guards the `CUSTOMER` scan directly. `Sort` and `Limit` have become one node. **Both trees must satisfy the same query semantics.** That includes preserving duplicates and null behavior, while allowing different choices among ties the query does not resolve. Part 3 examines the conditions that make each rewrite legal.
 
 ### 5. Physical plan — choosing algorithms
 
@@ -169,9 +184,9 @@ Everything else in `src/` — parallelism, distribution, the DataFrame API — i
 
 ## Traps
 
-**The plan tree is not the execution order.** It is a dataflow tree: children produce rows, parents consume them. The root is the last thing to run, not the first. When someone says "the scan is at the bottom", they mean it starts first.
+**The plan tree describes data flow, not a complete execution schedule.** Children produce rows and parents consume them. Streaming operators can overlap: a root `Limit` can receive its first rows while a scan is still running. Read bottom-up to understand where values come from; chapter 30 explains scheduling and blocking operators.
 
-**"Optimized" does not mean "optimal".** No engine searches all possible plans; the space is astronomically large. The optimizer applies rules that are usually improvements and estimates that are frequently wrong. Chapter 53 is entirely about what to do when it guesses badly.
+**"Optimized" does not mean "optimal".** An engine may exhaustively search a restricted space for a small query, but it cannot do so for arbitrary queries. This optimizer combines rules, bounded searches, and estimates. Chapter 53 explains what to do when its estimates lead to a poor choice.
 
 **Nested loop join is not always a bug.** Above, it was correct. Judging a plan requires knowing the data, which is exactly why the engine collects statistics before optimizing rather than after.
 
@@ -179,11 +194,16 @@ Everything else in `src/` — parallelism, distribution, the DataFrame API — i
 
 ## Exercises
 
-1. Run the query yourself. Build with `npm run build:ts`, then create a file and run it with `node`:
+### Understand
+
+With the three customers and four orders, how many rows remain after filtering customers, joining orders, and grouping by name?
+
+### Practice
+
+1. **Observe.** Run the query yourself. Build with `npm run build:ts`, save this as `first-query.mjs` in the repository root, and run `node first-query.mjs`. The checked-in equivalent is available through `npm run book:query`:
 
    ```javascript
-   import { createEngine, registerTable } from './dist/engine-entry.js';
-   import './dist/index.js';
+   import { createEngine, registerTable } from './dist/index.js';
 
    const sql = `SELECT c.C_NAME, SUM(o.O_TOTALPRICE) AS TOTAL
      FROM CUSTOMER c JOIN ORDERS o ON c.C_CUSTKEY = o.O_CUSTKEY
@@ -203,15 +223,19 @@ Everything else in `src/` — parallelism, distribution, the DataFrame API — i
      { O_ORDERKEY: 13, O_CUSTKEY: 3, O_TOTALPRICE: 300.0 },
    ]);
 
-   console.log((await engine.run(sql)).rows);
-   engine.close();
+   try {
+     console.log((await engine.run(sql)).rows);
+     // Put the plan-inspection code from the following exercises here.
+   } finally {
+     await engine.close();
+   }
    ```
 
    `engine.run` returns an object with `rows`, `columns`, and `rowKeys`; the bordered table above is how the command-line tool renders that same result, and [chapter 2](02-running-it-yourself.md) shows it in place.
 
-2. Prefix the query with `EXPLAIN` and confirm you get the same optimized plan printed above, followed by the physical plan.
+2. **Observe.** Inside the `try` block, run `engine.run('EXPLAIN ' + sql)` and inspect its rows. Compare the logical shape with the example above and find the appended physical plan; exact operator choices can change.
 
-3. Print the *unoptimized* plan. The engine exposes each stage separately:
+3. **Observe.** Inside the same `try` block, print the *unoptimized* plan. The engine exposes each stage separately:
 
    ```javascript
    const { formatPlan } = await import('./dist/planner/plan-formatter.js');
@@ -221,16 +245,20 @@ Everything else in `src/` — parallelism, distribution, the DataFrame API — i
 
    Compare it to the optimized version. Which nodes moved?
 
-4. Add a fourth customer in the `BUILDING` segment with 5,000 orders, then re-run `EXPLAIN`. Does the physical plan still say `NestedLoopJoin`?
+4. **Extend (optional).** Add a fourth customer in the `BUILDING` segment with 5,000 orders, then re-run `EXPLAIN`. Does the physical plan still say `NestedLoopJoin`?
 
-5. Write down, before reading Part 1, what you think has to happen for `SELECT *` to work. What does the engine need to know, and when does it need to know it?
+5. **Observe.** Write down, before reading Part 1, what you think has to happen for `SELECT *` to work. What does the engine need to know, and when does it need to know it?
+
+### Hints and expected observations
+
+There are 2 customers, 3 joined order rows, and 2 groups. Bob's 900 is excluded before the totals are calculated.
 
 ## Recap
 
 - A **query engine** compiles a declarative description of a result into a procedure that produces it. SQL says what; the engine decides how.
-- Compilation runs in six stages: **parse**, **bind**, **plan**, **optimize**, **physical plan**, **execute**.
+- A query's path has six stages: **parse**, **bind**, **plan**, **optimize**, **physical plan**, **execute**. The last stage runs the compiled work.
 - The **logical plan** is a tree of relational operations, read bottom-up. It is built for correctness, not speed.
-- The **optimizer** rewrites that tree into an equivalent one. Every rewrite must preserve the answer on every possible database.
+- The **optimizer** rewrites that tree into an equivalent one. A rewrite must preserve the query's semantics for every input satisfying its assumptions, including null, duplicate, and metadata constraints.
 - The **physical plan** picks concrete algorithms, using **statistics** about your actual data. The same SQL over different data yields different machinery.
 - Rows move through execution in **chunks** of 2048, stored column by column.
 

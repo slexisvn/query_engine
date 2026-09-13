@@ -10,7 +10,7 @@ The lexer handed us a flat list. `SELECT`, `IDENT`, `PLUS`, `IDENT`, `STAR`, `NU
 (a + b) * 2          a + (b * 2)
 ```
 
-Everyone knows the second is right. The question is how a program knows, and the answer this parser gives involves no precedence table, no operator stack, and no grammar generator. It is 1,048 lines of ordinary functions calling each other, in [`src/parser/parser.ts`](../../src/parser/parser.ts).
+Multiplication binds more tightly than addition, so the second grouping gives the usual arithmetic meaning. The question is how a program knows, and the answer this parser gives involves no precedence table, no operator stack, and no grammar generator. It is 1,048 lines of ordinary functions calling each other, in [`src/parser/parser.ts`](../../src/parser/parser.ts).
 
 ## One function per precedence level
 
@@ -85,7 +85,7 @@ One comparison operator, then return. So `a = b = c` consumes `a = b` and hands 
 
 ```
 SELECT a = b = c FROM T
-  -> Parse error at position 13: Unexpected token EQ
+  -> Parse error at line 1, column 14: Unexpected token EQ
 ```
 
 This is deliberate and matches the SQL standard. In C, `a == b == c` is legal and means comparing a boolean to `c`, which is almost never intended. Making it a syntax error costs one omitted loop and removes a class of silent bugs.
@@ -169,8 +169,8 @@ The difference is that the first three positions are places where the parser has
 Genuinely reserved words behave as you would expect:
 
 ```
-SELECT SELECT FROM T  -> Parse error at position 7: Unexpected token SELECT (SELECT)
-SELECT WHERE FROM T   -> Parse error at position 7: Unexpected token WHERE (WHERE)
+SELECT SELECT FROM T  -> Parse error at line 1, column 8: Unexpected token SELECT (SELECT)
+SELECT WHERE FROM T   -> Parse error at line 1, column 8: Unexpected token WHERE (WHERE)
 ```
 
 ## Statements
@@ -193,8 +193,8 @@ expect(type: TokenType): Token {
 Every syntax error in the engine comes from `expect`, `expectIdent`, or a `default` branch, and every one of them carries the position the lexer recorded:
 
 ```
-SELECT a FROM   -> Parse error at position 13: Expected identifier, got EOF ()
-SELECT FROM T   -> Parse error at position 7: Unexpected token FROM (FROM)
+SELECT a FROM   -> Parse error at line 1, column 14: Expected identifier, got EOF ()
+SELECT FROM T   -> Parse error at line 1, column 8: Unexpected token FROM (FROM)
 ```
 
 ## In the code
@@ -222,22 +222,33 @@ SELECT FROM T   -> Parse error at position 7: Unexpected token FROM (FROM)
 
 ## Exercises
 
-1. Print the AST for `SELECT a + b * 2 AS X FROM T WHERE a > 1`:
+### Understand
+
+Draw the expression tree for SELECT 2 + 3 * 4. What changes if the query uses (2 + 3) * 4?
+
+### Practice
+
+1. **Observe.** Print the AST for `SELECT a + b * 2 AS X FROM T WHERE a > 1`:
 
    ```javascript
    const { parse } = await import('./dist/parser/parser.js');
+   const sql = 'SELECT a + b * 2 AS X FROM T WHERE a > 1';
    console.log(JSON.stringify(parse(sql), null, 1));
    ```
 
    Find the `+` node and confirm the `*` is its right child.
 
-2. Parse `1 - 2 - 3` and `SELECT a = b = c FROM T`. Explain each result in terms of one detail of `parseAddition` and `parseComparison` respectively.
+2. **Observe.** Parse `SELECT 1 - 2 - 3` and `SELECT a = b = c FROM T`. Explain each result in terms of one detail of `parseAddition` and `parseComparison` respectively.
 
-3. Add a `^` exponentiation operator that binds tighter than `*` and is **right**-associative. Two decisions: which function it lives between, and loop versus recursion.
+3. **Extend (optional).** Add a `^` exponentiation operator that binds tighter than `*` and is **right**-associative. Two decisions: which function it lives between, and loop versus recursion.
 
-4. Add `ILIKE` as a case-insensitive `LIKE`. You will need a token type, a keyword, a branch in `parseComparison`, and an AST node — or, more cheaply, a flag on the existing one. Which choice makes the binder's job easier?
+4. **Extend (optional).** Add `ILIKE` as a case-insensitive `LIKE`. You will need a token type, a keyword, a branch in `parseComparison`, and an AST node — or, more cheaply, a flag on the existing one. Which choice makes the binder's job easier?
 
-5. `isSubqueryStart` scans forward from the current position on every call. Construct a deeply nested query where this becomes quadratic. Does it matter in practice, and how would you find out rather than guess?
+5. **Observe.** `isSubqueryStart` scans forward from the current position on every call. Construct a deeply nested query where this becomes quadratic. Does it matter in practice, and how would you find out rather than guess?
+
+### Hints and expected observations
+
+The first root is + with a * on its right, yielding 14. Parentheses make * the root with + on its left, yielding 20. SELECT 1 - 2 - 3 groups as (1 - 2) - 3.
 
 ## Recap
 
@@ -246,7 +257,7 @@ SELECT FROM T   -> Parse error at position 7: Unexpected token FROM (FROM)
 - Comparisons **do not chain** — `parseComparison` handles at most one operator, making `a = b = c` a syntax error by design.
 - The parser **backtracks** by saving and restoring a token index, which works because nothing has been constructed yet.
 - It uses **unbounded lookahead** to tell a subquery from a parenthesized expression, which is only possible because the lexer produced an array.
-- **58 non-reserved keywords** are accepted where the parser explicitly asks for a name, but not as bare column references.
+- **Non-reserved keywords** are accepted where the parser explicitly asks for a name, but not as bare column references.
 - Every error here is about **syntax**. Nothing has been checked against a real table.
 
 Next: [chapter 7](07-the-ast-and-its-limits.md) takes the tree we just built and shows precisely what it cannot tell us.

@@ -18,6 +18,10 @@ The first line looks like laziness — the scan stopped early because nobody wan
 
 So the `LIMIT` cannot stop the scan by not asking. It has to reach back and interrupt it. Understanding why is the whole of this chapter, and every other chapter in Part 4 depends on it.
 
+## Follow one batch
+
+Consider a scan batch `[5, 20, 30]`, a filter `value > 10`, and a final ascending sort. The scan pushes three values into the filter. The filter passes the visible values `[20, 30]` to the sort, which stores them. When the scan reaches end of input, `finalize` travels through the filter to the sort. Only then can a full sort emit its result. With another scan batch still to come, even a small value such as 1 could change the first output row. This is a hand-worked dataflow trace; pipeline ids in an actual plan are separate bookkeeping.
+
 ## Push, not pull
 
 The familiar way to build an execution engine is the **iterator model**, sometimes called Volcano: every operator has a `next()` method, the root calls `next()`, and each operator calls `next()` on its child to get the row it needs. Data is *pulled* up the tree.
@@ -431,19 +435,29 @@ The first three stop about when they were asked to. The last two are the honest 
 
 ## Exercises
 
-1. Reproduce the pipeline trace. Patch `PipelineGraph.prototype.createPipeline`, `addDependency`, and `setSource` to log, then run the running query on three rows and on 30,000. Confirm you get five pipelines and four.
+### Understand
 
-2. Count chunks in the scan for `LIMIT 1`, `LIMIT 2048`, and `LIMIT 2049`. Explain each number in terms of where the token is checked.
+A scan feeds a filter, which feeds a sort. Which stages can pass batches onward immediately, and which needs an end-of-input signal?
 
-3. Set `QE_PIPELINE_CONCURRENCY=1` and rerun the tiny query with the scheduler trace. Which line of output changes, and why does the answer not?
+### Practice
 
-4. Break the chain deliberately: in `buildFilter`, delete the `finalize` forwarding. Predict what a `SELECT ... ORDER BY` above a filter will return before you run it, then run it.
+1. **Extend (optional).** Reproduce the pipeline trace. Patch `PipelineGraph.prototype.createPipeline`, `addDependency`, and `setSource` to log, then run the running query on three rows and on 30,000. Confirm you get five pipelines and four.
 
-5. `Distinct` is registered as a streaming sink but holds a hash set of every row it has seen, and emits leftovers from `finalize`. Argue whether it is a blocking operator. Then look at [`buildDistinct`](../../src/execution/builders/pipeline-builders.ts) and see whether the engine agrees with you.
+2. **Observe.** Count chunks in the scan for `LIMIT 1`, `LIMIT 2048`, and `LIMIT 2049`. Explain each number in terms of where the token is checked.
 
-6. Time a cancellation. Reproduce the table above with your own machine's numbers, then set `QE_CANCEL_POLL_MS=1000` and rerun it. Explain the new numbers before you look at `drainSource`.
+3. **Observe.** Set `QE_PIPELINE_CONCURRENCY=1` and rerun the tiny query with the scheduler trace. Which line of output changes, and why does the answer not?
 
-7. Reintroduce the bug. Make `newContext` in [`query-executor.ts`](../../src/execution/query-executor.ts) cache and return one context instead of building a fresh one, then run the two `byPriority` queries above concurrently and reproduce the crossed answers. Now give the two CTEs *different* names and predict the result before you run it: the failure is louder and has a different cause. Find that cause in [`ExecutionContext`](../../src/execution/execution-context.ts), then undo the change and confirm `tests/e2e/concurrent-queries.test.ts` goes green again.
+4. **Extend (optional).** Break the chain deliberately: in `buildFilter`, delete the `finalize` forwarding. Predict what a `SELECT ... ORDER BY` above a filter will return before you run it, then run it.
+
+5. **Observe.** `Distinct` is registered as a streaming sink but holds a hash set of every row it has seen, and emits leftovers from `finalize`. Argue whether it is a blocking operator. Then look at [`buildDistinct`](../../src/execution/builders/pipeline-builders.ts) and see whether the engine agrees with you.
+
+6. **Extend (optional).** Time a cancellation. Reproduce the table above with your own machine's numbers, then set `QE_CANCEL_POLL_MS=1000` and rerun it. Explain the new numbers before you look at `drainSource`.
+
+7. **Extend (optional).** Reintroduce the bug. Make `newContext` in [`query-executor.ts`](../../src/execution/query-executor.ts) cache and return one context instead of building a fresh one, then run the two `byPriority` queries above concurrently and reproduce the crossed answers. Now give the two CTEs *different* names and predict the result before you run it: the failure is louder and has a different cause. Find that cause in [`ExecutionContext`](../../src/execution/execution-context.ts), then undo the change and confirm `tests/e2e/concurrent-queries.test.ts` goes green again.
+
+### Hints and expected observations
+
+The scan and filter can stream batches. A full sort needs all its input before emitting sorted rows; finalize tells it that collection is complete.
 
 ## Recap
 

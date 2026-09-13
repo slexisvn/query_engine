@@ -4,14 +4,14 @@
 
 ## The question
 
-Two correlated scalar subqueries. They differ by a single character:
+Two correlated scalar subqueries. The first matches customer keys; the second compares order prices against the outer key:
 
 ```sql
 SELECT c.C_NAME, (SELECT COUNT(*) FROM ORDERS o WHERE o.O_CUSTKEY = c.C_CUSTKEY) AS N FROM CUSTOMER c
 SELECT c.C_NAME, (SELECT COUNT(*) FROM ORDERS o WHERE o.O_TOTALPRICE > c.C_CUSTKEY) AS N FROM CUSTOMER c
 ```
 
-The first decorrelates into three nodes:
+The first can decorrelate by grouping orders on customer key and joining the counts back:
 
 ```
 -> Project (C.C_NAME, COALESCE(_scalar_0, 0))
@@ -38,7 +38,11 @@ The second grows a whole second copy of `CUSTOMER`:
                 -> Seq Scan on CUSTOMER as C
 ```
 
-An `=` became a `>` and the plan acquired a cross join against every distinct value of the correlating column. That relation has a name — the **domain** — and choosing whether to build it is the central decision in decorrelation.
+Replacing the key equality with the price inequality makes the plan acquire a cross join against distinct values of the correlating column. That relation has a name — the **domain** — and choosing whether to build it is the central decision in decorrelation.
+
+## A domain, worked by hand
+
+Suppose the outer rows have keys `[1, 1, 2]` and the inner values are `[1, 3]`. The subquery asks how many inner values are greater than the outer key. Its answer is 1 for key 1 and 1 for key 2. A domain relation `[1, 2]` lets us compute those two answers once each; joining them back yields three outer results `[1, 1, 1]`. Keeping the distinct domain as the final outer relation would incorrectly lose a row. This hand-computed example separates avoiding repeated work from preserving duplicates.
 
 ## What has to happen
 
@@ -254,15 +258,25 @@ A plain `=` never matches `NULL` to `NULL`. If the correlating column can be nul
 
 ## Exercises
 
-1. Reproduce the two opening plans. Then change `>` back to `=` but move the correlation into the `SELECT` list of the subquery instead of its `WHERE`, and predict which domain is chosen before running it.
+### Understand
 
-2. Write a correlated subquery that returns the two most expensive orders per customer with `LIMIT 2` and confirm the `ROW_NUMBER` gate. Then add `OFFSET 1` and read the gate again.
+The outer rows contain customer keys [1, 1, 2]. Why can a domain relation use [1, 2] while the final result still needs both outer rows with key 1?
 
-3. Make the correlating column nullable and find a query where the plan uses `nullSafeEquals` and one where it does not. Explain the difference from `rejectsNullDomain`.
+### Practice
 
-4. Add `SET_OP` handling that allows both sides to be correlated in `branchesAreLiftable`, then find out from `pushSetOp` why it is currently refused.
+1. **Observe.** Reproduce the two opening plans. Then change `>` back to `=` but move the correlation into the `SELECT` list of the subquery instead of its `WHERE`, and predict which domain is chosen before running it.
 
-5. Instrument `chooseDomain` to log which domain it picked, then run the whole corpus in `tests/e2e/subquery-unnesting-differential.test.ts`. What fraction of correlated queries need the materialized path?
+2. **Observe.** Write a correlated subquery that returns the two most expensive orders per customer with `LIMIT 2` and confirm the `ROW_NUMBER` gate. Then add `OFFSET 1` and read the gate again.
+
+3. **Extend (optional).** Make the correlating column nullable and find a query where the plan uses `nullSafeEquals` and one where it does not. Explain the difference from `rejectsNullDomain`.
+
+4. **Extend (optional).** Add `SET_OP` handling that allows both sides to be correlated in `branchesAreLiftable`, then find out from `pushSetOp` why it is currently refused.
+
+5. **Extend (optional).** Instrument `chooseDomain` to log which domain it picked, then run the whole corpus in `tests/e2e/subquery-unnesting-differential.test.ts`. What fraction of correlated queries need the materialized path?
+
+### Hints and expected observations
+
+The domain avoids repeating dependent work for an identical key. Joining results back must preserve the outer input's multiplicity, not replace it with the distinct domain.
 
 ## Recap
 

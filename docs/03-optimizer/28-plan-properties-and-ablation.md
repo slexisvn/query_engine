@@ -1,6 +1,6 @@
 # 28. Plan properties and the ablation invariant
 
-> After this chapter you will be able to run the experiment that validates every pass in Part 3 — and avoid the version of it that silently tests nothing.
+> After this chapter you will be able to design a pass-ablation experiment and distinguish evidence from a test corpus from a proof of equivalence.
 
 ## The question
 
@@ -39,11 +39,13 @@ The pass came back. Removing it did nothing, the plan is the fully optimized one
 
 Part 3 has described twenty-three passes. Every one of them is bound by a rule stated in [chapter 14](14-why-optimize.md) and never since revisited:
 
-**Removing any single pass from the pipeline must change how fast a query runs, and nothing else.**
+**Removing an optional optimization pass may change performance, but must preserve the query's specified result.**
 
-That is a strong claim, and it is the thing worth testing. It is also mostly false about optimizers in general — a pass that produces a wrong plan produces a plan that still runs, still returns rows, and usually returns *almost* the right ones. Chapter 17's `isNullRejecting` check, chapter 20's primary-key test, chapter 25's null-rejected middle, chapter 27's null-safe join-back: remove any of them and queries keep answering, differently.
+A pass need not change performance on every query. Some transformations are required lowering steps rather than optional optimizations; this engine's subquery unnesting is one such exception.
 
-Unit tests do not catch this. A test asserting that `PredicatePushdown` moves a filter below a join asserts that the pass does what it does. What is needed is a test that compares *answers* across pipelines.
+This is a contract to test, not an automatic property of tree rewriting. Disabling a complete optional pass and deleting a guard inside a pass are different experiments. Deleting the null-rejection, uniqueness, or null-safe comparison checks from earlier chapters can make an enabled rewrite unsound.
+
+Unit tests can catch unsound rewrites when they assert meaningful semantic cases. A test checking only that a filter moved is weaker. Comparing answers across pipelines adds coverage of interactions between passes and operators.
 
 One pass is exempt, and the test names it:
 
@@ -139,9 +141,9 @@ Three companion tests cover the edges: every corpus query must answer without er
 
 The other differential tests in `tests/e2e/` apply the same shape to other axes. `join-reorder-differential.test.ts` compares answers with and without `JoinReorder` over a generated corpus that exercises every join keyword; `merge-join-order-differential.test.ts` compares a merge-join plan against sorting above a hash join; `column-encoding-differential.test.ts` compares every storage encoding against the unencoded build. **Same technique, different thing held constant.**
 
-## The pass that has nothing to ablate
+## Estimates and guarantees are different properties
 
-There is one pass in the pipeline that this test can never catch, and it is worth ending on.
+An annotation can influence correctness even when it changes no visible node. To see why, distinguish an estimate from a guarantee.
 
 [`PlanProperties`](../../src/optimizer/passes/plan-properties.ts) adds no nodes, removes none, and rewrites no expressions. It annotates:
 
@@ -176,11 +178,13 @@ planSignature(optimized) === planSignature(withProperties)   // true
 formatPlan(optimized)    === formatPlan(withProperties)      // true
 ```
 
-Both fields start with `_`, so [`planSignature`](../../src/optimizer/plan-signature.ts) skips them, exactly as [chapter 15](15-passes-and-fixpoints.md) described. And `formatPlan` never printed them. The pass is invisible to plan identity, invisible to the printer, and — because its output only affects *choices* made by `SortElimination` and the physical planner, never the rows — invisible to the differential test.
+Both fields start with `_`, so [`planSignature`](../../src/optimizer/plan-signature.ts) skips them, as chapter 15 described. `formatPlan` also omits them. That makes them invisible to these two inspection tools, not necessarily to an answer comparison: an annotation can cause a later pass to delete work.
 
-That is not a gap. It is what "changes speed and nothing else" looks like when a pass is doing its job perfectly: the annotation is a *hint*, and every consumer of it must remain correct when the hint is wrong. The physical planner asks whether an input is already sorted and adds a sort when the answer is no; `SortElimination` deletes a sort only when the annotation says the order is already there. A stale or missing `_sortedBy` costs a redundant sort. A stale `_cardinality` costs a worse join algorithm. Neither costs a row.
+`_cardinality` is an estimate: underestimating a build input can lead to a poor algorithm or unexpected spilling. `_sortedBy` is a guarantee: claiming an unsorted input is sorted can make `SortElimination` remove a necessary sort. A missing ordering fact can cost performance; a false positive can change the answer.
 
-**The invariant is what lets the rest of the optimizer be approximate.** Cardinality estimates can be off by 4.3 times, the cost model's units can be arbitrary, the join-order search can give up at fourteen relations — and none of it can produce a wrong answer, because the passes that *would* change an answer are the ones held to an exact standard and tested against it.
+For a hand-worked counterexample, consider rows `[3, 1, 2]` and `ORDER BY x LIMIT 1`. The answer must be `1`. If an incorrect ordering annotation licenses skipping the sort and taking the first input row, the result becomes `3`. A test that sorts the final outputs before comparing them can also miss order-only bugs on larger results. Ordered queries need ordered comparisons.
+
+**Approximate planning needs exact legality checks.** Costs and cardinalities guide a choice among valid plans. Ordering, uniqueness, null behavior, and pruning decisions justify whether work can be removed at all. Those properties must be sound. Differential tests provide evidence on their corpus, and targeted tests should exercise missing, correct, and falsely claimed properties.
 
 ## In the code
 
@@ -205,28 +209,38 @@ That is not a gap. It is what "changes speed and nothing else" looks like when a
 
 **`listPasses()` is the check that matters.** Print it after compiling, not after `removePass`. The opening example passes the second check and fails the first.
 
-**A pass that only annotates cannot fail the differential test.** `PlanProperties` and `ScanPruning` are both invisible to it. Their correctness is enforced by their consumers being written to tolerate a wrong hint, which is a design constraint, not a tested property.
+**Annotations can produce wrong answers through their consumers.** A false ordering claim can delete a required sort; an unsound pruning predicate can skip matching rows. Test these consequences, including result order when SQL specifies it. The physical planner may recompute properties, so removing one annotation pass alone need not exercise all of those cases.
 
-**The corpus is the specification.** The invariant holds for the 51 queries in the file. A correlated shape nobody wrote a query for is not covered — adding a shape to the corpus is how you extend the guarantee.
+**The corpus samples the specification.** Passing the queries in the file is evidence for those cases, not a proof for every SQL query. Add cases for new shapes, and keep some expected answers independent of the default pipeline: two variants can share the same bug.
 
 ## Exercises
 
-1. Reproduce the opening. Run `removePass` before any query and print `listPasses().length` before and after compiling. Then warm the statistics first and confirm the ablated plan appears.
+### Understand
 
-2. Take one pass you have modified while reading Part 3, break it deliberately in a way that changes an answer, and run `npm run test:e2e`. Does the differential test name your pass? Is the failure message enough to find the bug?
+Why can disabling SortElimination preserve answers while falsely annotating an unsorted scan as sorted can change them?
 
-3. Add a query to `CORPUS` that the current corpus does not cover — a correlated subquery inside a `HAVING` clause, say — and confirm the test still passes. Then break `PredicateInference` and see whether your query catches it.
+### Practice
 
-4. Write a differential test for a pass with no coverage today: build two engines, one with and one without `SortElimination`, run a corpus of `ORDER BY` queries, and compare rows *in order* rather than sorted.
+1. **Observe.** Reproduce the opening. Run `removePass` before any query and print `listPasses().length` before and after compiling. Then warm the statistics first and confirm the ablated plan appears.
 
-5. Delete the `_` prefix from `_sortedBy` throughout, rebuild, and run the whole suite. Which fixpoint stage now runs to its cap, and what does that do to optimization time?
+2. **Observe.** Take one pass you have modified while reading Part 3, break it deliberately in a way that changes an answer, and run `npm run test:e2e`. Does the differential test name your pass? Is the failure message enough to find the bug?
+
+3. **Extend (optional).** Add a query to `CORPUS` that the current corpus does not cover — a correlated subquery inside a `HAVING` clause, say — and confirm the test still passes. Then break `PredicateInference` and see whether your query catches it.
+
+4. **Extend (optional).** Write a differential test for a pass with no coverage today: build two engines, one with and one without `SortElimination`, run a corpus of `ORDER BY` queries, and compare rows *in order* rather than sorted.
+
+5. **Extend (optional).** Delete the `_` prefix from `_sortedBy` throughout, rebuild, and run the whole suite. Which fixpoint stage now runs to its cap, and what does that do to optimization time?
+
+### Hints and expected observations
+
+Disabling the pass keeps an unnecessary sort. A false ordering guarantee can remove a necessary sort, so ORDER BY and LIMIT may choose the wrong row.
 
 ## Recap
 
 - The **ablation invariant**: removing any single pass may change speed and nothing else. One pass is exempt — `SubqueryUnnesting`, whose removal makes correlated queries fail, tested in its own direction.
 - [`_ensureStatistics`](../../src/engine/query-engine.ts) rebuilds the optimizer from [`createDefaultOptimizer`](../../src/optimizer/optimizer-pipeline.ts) the first time statistics are collected, which **silently undoes** a `removePass` performed beforehand. Warm the statistics first, or override `createOptimizer` as the tests do.
 - The differential tests run a corpus across every trimmed pipeline and compare **answers**, not plans — 23 pipelines times 51 queries in the subquery test alone.
-- [`PlanProperties`](../../src/optimizer/passes/plan-properties.ts) annotates `_cardinality` and `_sortedBy` on every node. Both are invisible to `planSignature`, to `formatPlan`, and to the differential test, because they change **choices** and not rows.
-- That separation is what buys the rest of Part 3 its freedom: estimates can be wrong by a factor of four, costs can be unitless, and the search can give up — none of it can produce a wrong answer.
+- [`PlanProperties`](../../src/optimizer/passes/plan-properties.ts) annotates `_cardinality` and `_sortedBy`. Both are omitted by `planSignature` and `formatPlan`, but their downstream effects can be visible in query answers.
+- Cardinality and cost estimates may be approximate. Ordering, uniqueness, and pruning facts used to remove work must be sound; false positives can change results.
 
 That closes Part 3. The query is now a plan the engine believes is a good one. Next: Part 4 opens with chapter 29, which turns that plan into operators and finds out whether the belief was justified.

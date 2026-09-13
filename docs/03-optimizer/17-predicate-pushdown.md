@@ -1,6 +1,6 @@
 # 17. Predicate pushdown
 
-> After this chapter you will be able to predict where any `WHERE` clause ends up in the plan, and explain the single most notorious gotcha in SQL as a consequence of one line in this pass.
+> After this chapter you will be able to follow conjuncts through an inner or outer join and explain why moving a predicate can change null-padded results.
 
 ## The question
 
@@ -239,26 +239,36 @@ The second occurrence exists because [`JoinReorder`](../../src/optimizer/passes/
 
 **Pushing a predicate down is not always faster.** Evaluating an expensive predicate on a large scan can cost more than evaluating a cheap one on a small join result. This pass does not care — it pushes unconditionally, and [`FilterOrdering`](../../src/optimizer/passes/filter-ordering.ts) later reorders conjuncts within a filter by estimated cost and selectivity, the fraction of rows a predicate keeps ([chapter 21](21-access-paths-and-orderings.md) puts a number on it). Separating "where can it go" from "is it worth it" keeps both passes simple.
 
-**Column references are compared by uppercased alias and name**, built into strings like `C.C_CUSTKEY` in `collectColumnRefs`. Two different subqueries using the same alias would collide, which is precisely why the binder guarantees unique aliases before the optimizer ever runs.
+**Column references are compared by uppercased alias and name**, built into strings like `C.C_CUSTKEY` in `collectColumnRefs`. Such keys must identify a binding unambiguously in the region being rewritten. Reused names in nested scopes require care: an alias spelling alone is not a universal relation identity. Inspect the bound references when moving predicates across a query boundary.
 
 **`remaining` is not a failure.** A predicate left above the join is often correct and unavoidable — a `LEFT JOIN` with `WHERE o.x IS NULL` (the anti-join idiom) must keep its filter exactly where you wrote it, and the plan is right to look "unoptimized".
 
 ## Exercises
 
-1. Reproduce the four plans in this chapter. Build the optimizer with only this pass registered so nothing else muddies the output:
+### Understand
+
+Using Alice, Bob, and Carol, why does filtering orders in a LEFT JOIN's ON clause preserve more customers than the same filter in WHERE?
+
+### Practice
+
+1. **Observe.** Reproduce the four plans in this chapter. Build the optimizer with only this pass registered so nothing else muddies the output:
 
    ```javascript
    const optimizer = new Optimizer().registerPass(new PredicatePushdown());
    console.log(formatPlan(optimizer.optimize(engine.plan(engine.bind(engine.parseSQL(sql))), {})));
    ```
 
-2. Replace `WHERE o.O_TOTALPRICE > 50` with `WHERE o.O_TOTALPRICE IS NULL` and confirm the join stays `LEFT`. Which function made that decision?
+2. **Observe.** Replace `WHERE o.O_TOTALPRICE > 50` with `WHERE o.O_TOTALPRICE IS NULL` and confirm the join stays `LEFT`. Which function made that decision?
 
-3. Write a query where one conjunct of the `WHERE` clause reaches a scan and another is stranded above the join. Predict the plan before running it.
+3. **Observe.** Write a query where one conjunct of the `WHERE` clause reaches a scan and another is stranded above the join. Predict the plan before running it.
 
-4. Delete the `isNullRejecting` check so every right-only predicate pushes and the join always demotes to `INNER`. Run `npm run test:e2e`. Which test catches you, and does its failure message actually explain what broke?
+4. **Extend (optional).** Delete the `isNullRejecting` check so every right-only predicate pushes and the join always demotes to `INNER`. Run `npm run test:e2e`. Which test catches you, and does its failure message actually explain what broke?
 
-5. Comment out the second `PredicatePushdown` registration in `createDefaultOptimizer` and find a query whose plan gets worse. Hint: it needs a join order that only becomes favorable after `JoinReorder` runs.
+5. **Extend (optional).** Comment out the second `PredicatePushdown` registration in `createDefaultOptimizer` and find a query whose plan gets worse. Hint: it needs a join order that only becomes favorable after `JoinReorder` runs.
+
+### Hints and expected observations
+
+ON decides which orders match, then the join pads unmatched customers. WHERE runs on that padded result and can reject the NULL rows. The executable semantics example checks both forms.
 
 ## Recap
 

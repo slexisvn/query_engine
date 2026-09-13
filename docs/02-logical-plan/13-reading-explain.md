@@ -319,15 +319,25 @@ The general shape of all four: the printers are honest about **structure** and l
 
 ## Exercises
 
-1. Print the same plan through both printers in one script, side by side. Then find a query where the compact printer is genuinely more useful, and one where it is genuinely worse.
+### Understand
 
-2. Run `EXPLAIN` and `EXPLAIN ANALYZE` on a query over a few thousand rows and find a node whose `est` is off by more than 10x. Which of the two trees does the estimate appear on, and why is it not on the other?
+A physical plan contains HashJoin above two scans. What does that establish, and what must EXPLAIN ANALYZE or instrumentation add?
 
-3. Teach [`formatExpression`](../../src/planner/plan-formatter.ts) to render `BoundExprKind.LIKE` and `BoundExprKind.BETWEEN`. Confirm that `Filter (condition: <BoundLike>)` becomes something readable, then run `npm run test:unit` and see whether any test pinned the old output.
+### Practice
 
-4. Make `EXPLAIN` print CTE bodies. The map is on `plan._cteMap`; the hard part is deciding where in the output they go and how to make it clear they are not children of the `CTEScan`. Write down your design before you write code.
+1. **Observe.** Print the same plan through both printers in one script, side by side. Then find a query where the compact printer is genuinely more useful, and one where it is genuinely worse.
 
-5. Add estimated cardinality to `formatNode` as a suffix such as `(rows=1500)`. Run it on the running query and decide whether the extra column helps or clutters — then argue for keeping or reverting it.
+2. **Observe.** Run `EXPLAIN` and `EXPLAIN ANALYZE` on a query over a few thousand rows and find a node whose `est` is off by more than 10x. Which of the two trees does the estimate appear on, and why is it not on the other?
+
+3. **Extend (optional).** Teach [`formatExpression`](../../src/planner/plan-formatter.ts) to render `BoundExprKind.LIKE` and `BoundExprKind.BETWEEN`. Confirm that `Filter (condition: <BoundLike>)` becomes something readable, then run `npm run test:unit` and see whether any test pinned the old output.
+
+4. **Extend (optional).** Make `EXPLAIN` print CTE bodies. The map is on `plan._cteMap`; the hard part is deciding where in the output they go and how to make it clear they are not children of the `CTEScan`. Write down your design before you write code.
+
+5. **Extend (optional).** Add estimated cardinality to `formatNode` as a suffix such as `(rows=1500)`. Run it on the running query and decide whether the extra column helps or clutters — then argue for keeping or reverting it.
+
+### Hints and expected observations
+
+It identifies the chosen algorithm and inputs. It does not establish actual row counts, elapsed time, spilling, or the worker path that ran.
 
 ## Recap
 

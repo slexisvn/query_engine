@@ -36,6 +36,10 @@ So the filter runs, and the operator the physical plan names does not run it. Wh
 
 Two other things in that output are worth holding onto. The parallel run was **slower**. And the filter did not disappear into some generic thread pool — it disappeared into one specific call, `runAggregate`.
 
+## Claiming a morsel
+
+With ten input chunks and three chunks per morsel, workers can claim ranges `[0,3)`, `[3,6)`, `[6,9)`, and `[9,10)`. Each atomic claim reserves a disjoint range before the worker starts processing it. A faster worker may claim several ranges while another processes one. This hand-worked schedule explains load balancing without assuming that worker 1 always receives the first rows.
+
 ## What actually ran
 
 The engine does not parallelize operator by operator. It looks for a **fragment**: a chain of scan, filter, and projection ending at a table, with an aggregate on top. [`extractScanChain`](../../src/execution/fragment-spec.ts) walks down from the aggregate's child and accepts exactly three node types:
@@ -238,15 +242,25 @@ Configuration, all in [`src/config.ts`](../../src/config.ts):
 
 ## Exercises
 
-1. Reproduce the opening measurement. Wrap `FilterOperator.prototype.process` with a counter, run the filtered count with and without `enableParallel()`, and confirm the count goes to zero while the answer does not change.
+### Understand
 
-2. Read the shared counter after a parallel aggregate — patch `MorselScheduler.prototype.descriptor` to keep a reference, then print `counter[0]` when the query finishes. Predict the value from the chunk count, the morsel size, and the worker count before you look.
+There are ten chunks and each morsel claims three. What ranges can workers receive?
 
-3. Set `QE_AGG_MORSEL_ROWS=2048` and re-run. How many morsels are there now, and how many wasted claims? Then set it to 262144 and explain why the parallelism disappears.
+### Practice
 
-4. Change the hardcoded `1` in `_analyzeComparison` to the chunk's row count so the real size reaches `canParallelize`. Does anything now dispatch to `workerPool`? Explain the result using `Config.parallelThreshold` and the chunk size.
+1. **Extend (optional).** Reproduce the opening measurement. Wrap `FilterOperator.prototype.process` with a counter, run the filtered count with and without `enableParallel()`, and confirm the count goes to zero while the answer does not change.
 
-5. Find a query whose aggregate sits directly on a scan chain and one whose aggregate sits on a join. Confirm from the table above which one reaches `runAggregate`, then read [`extractAggregateFragment`](../../src/execution/fragment-spec.ts) and say why.
+2. **Extend (optional).** Read the shared counter after a parallel aggregate — patch `MorselScheduler.prototype.descriptor` to keep a reference, then print `counter[0]` when the query finishes. Predict the value from the chunk count, the morsel size, and the worker count before you look.
+
+3. **Observe.** Set `QE_AGG_MORSEL_ROWS=2048` and re-run. How many morsels are there now, and how many wasted claims? Then set it to 262144 and explain why the parallelism disappears.
+
+4. **Extend (optional).** Change the hardcoded `1` in `_analyzeComparison` to the chunk's row count so the real size reaches `canParallelize`. Does anything now dispatch to `workerPool`? Explain the result using `Config.parallelThreshold` and the chunk size.
+
+5. **Observe.** Find a query whose aggregate sits directly on a scan chain and one whose aggregate sits on a join. Confirm from the table above which one reaches `runAggregate`, then read [`extractAggregateFragment`](../../src/execution/fragment-spec.ts) and say why.
+
+### Hints and expected observations
+
+Ranges [0,3), [3,6), [6,9), and [9,10). Claims are disjoint; which worker receives each range depends on scheduling. Final unsuccessful claims may advance the shared counter further.
 
 ## Recap
 

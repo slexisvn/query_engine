@@ -1,10 +1,10 @@
 # 37. Sorting and top-N
 
-> After this chapter you will be able to explain why asking a query for ten rows can be nearly three times slower than asking it for four hundred thousand, and where the engine's two sorting algorithms hand over to each other.
+> After this chapter you will be able to explain full sorting and the current top-N implementation, including why a small limit does not guarantee less runtime.
 
 ## The question
 
-One table, 400,000 integers, one `ORDER BY`. Four queries that differ only in their `LIMIT`:
+The original manuscript reported these timings for one table of 400,000 integers and four queries differing in their `LIMIT`. They illustrate a candidate-maintenance cost, rather than a reproducible timing guarantee; the runtime and hardware provenance is unavailable:
 
 ```
 query                                 | ms    | rows
@@ -16,7 +16,11 @@ ORDER BY V DESC                       | 103.2 | 400000
 
 Asking for ten rows costs 285 ms. Asking for a hundred thousand costs 56. Asking for all four hundred thousand costs 103, less than half of what ten cost.
 
-This is not measurement noise — it reproduces, and the whole curve falls out of two constants and one `if`. There is also a second surprise hiding in it: the plan for `LIMIT 10` says `TopN`, and there is no heap anywhere in the operator that runs it.
+The current candidate-trimming strategy can produce this shape; exact times and crossover points depend on the workload and environment. There is also a second surprise hiding in it: the plan for `LIMIT 10` says `TopN`, and there is no heap anywhere in the operator that runs it.
+
+## What top-N must preserve
+
+For values `[9, 1, 7, 3, 5]`, `ORDER BY value ASC LIMIT 2 OFFSET 1` asks for `[3, 5]`. An implementation can retain the best three candidates `[1, 3, 5]`, then discard the first. As more input arrives, it must still compare that input against its candidates; a small limit does not let an unsorted source stop early. A bounded heap is one possible algorithm. The operator below uses a different candidate-maintenance strategy.
 
 ## One operator for both
 
@@ -134,7 +138,7 @@ trim events: 500
 
 Memory is bounded beautifully — ten rows after a million. But the threshold is 40 rows and a chunk is 2,048, so **every single chunk triggers a trim**, and every trim is a full sort of about 2,058 rows plus a `gather` of every column. Two thousand rows is below `radixSortMinRows`, so each of those sorts is a comparison sort.
 
-That is the entire explanation of the table at the top:
+Those branches explain the work pattern behind the opening table:
 
 | Query | `topN * 4` | What happens |
 |---|---|---|
@@ -226,7 +230,7 @@ A whole chunk within the window is kept by reference; a partial chunk gets a sel
 
 ## Traps
 
-**`Top-N` is a full sort with periodic truncation.** The plan node name promises a partial sort and the operator does not deliver one. Memory is bounded; time is not.
+**This `Top-N` periodically sorts and truncates its resident candidates.** `Top-N` names the requested result, not a promise to use a heap. The current method limits retained candidates but can do substantially more comparison work than a bounded heap.
 
 **Default null ordering depends on direction.** [`nullsFirstFor`](../../src/execution/operators/sort.ts) returns true for `DESC` and false for `ASC` unless `NULLS FIRST`/`NULLS LAST` was written explicitly. The effect is that a null behaves as though it were larger than every real value: it comes last under `ASC` and first under `DESC`. So reversing the direction *does* move the nulls, and a query that reads the first row of a `DESC` sort to get the maximum gets a null instead whenever the column has one.
 
@@ -238,15 +242,25 @@ A whole chunk within the window is kept by reference; a partial chunk gets a sel
 
 ## Exercises
 
-1. Reproduce the limit sweep on 400,000 rows. Then set `QE_RADIX_SORT_MIN_ROWS=1` and rerun. Which row of the table changes most, and does the `LIMIT 10` case get faster or slower?
+### Understand
 
-2. Instrument `SortOperator.consume` to count trims. Run `LIMIT 10` and `LIMIT 1000` over the same input and report both counts.
+For [9,1,7,3,5] ordered ascending with LIMIT 2 OFFSET 1, which rows are returned and how many best candidates must a top-N retain?
 
-3. Change the trim threshold from `this.topN * 4` to `Math.max(this.topN * 4, 4 * DEFAULT_CHUNK_SIZE)` and rerun the sweep. Explain the new numbers, and say what you have given up.
+### Practice
 
-4. Replace the top-N path with a bounded heap using `PriorityQueue`, keeping the largest N. Measure `LIMIT 10` before and after, and check that ties still come back in the same order — or explain why they do not have to.
+1. **Observe.** Reproduce the limit sweep on 400,000 rows. Then set `QE_RADIX_SORT_MIN_ROWS=1` and rerun. Which row of the table changes most, and does the `LIMIT 10` case get faster or slower?
 
-5. Sort 100,000 rows on a `FLOAT64` column, then multiply every value by 1,000 and cast to integer and sort again. Report both times and confirm which path each took.
+2. **Extend (optional).** Instrument `SortOperator.consume` to count trims. Run `LIMIT 10` and `LIMIT 1000` over the same input and report both counts.
+
+3. **Extend (optional).** Change the trim threshold from `this.topN * 4` to `Math.max(this.topN * 4, 4 * DEFAULT_CHUNK_SIZE)` and rerun the sweep. Explain the new numbers, and say what you have given up.
+
+4. **Extend (optional).** Replace the top-N path with a bounded heap using `PriorityQueue`, keeping the best `N + OFFSET` rows under the complete sort comparator, then applying the offset. Measure `LIMIT 10` before and after, and check that ties still come back in the same order — or explain why they do not have to.
+
+5. **Observe.** Sort 100,000 rows on a `FLOAT64` column, then multiply every value by 1,000 and cast to integer and sort again. Report both times and confirm which path each took.
+
+### Hints and expected observations
+
+Return [3,5]. Retain the best three candidates before discarding the first. A heap implementation must follow direction, null ordering, and every sort key.
 
 ## Recap
 

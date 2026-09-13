@@ -13,11 +13,26 @@ A table is rows. A query result is rows. So the obvious representation is an arr
 ]
 ```
 
-This engine never does that internally. Between the storage layer and the final result, data is held column by column, in batches of a fixed size, and the reason has nothing to do with elegance.
+The engine's storage and streaming interfaces use a columnar representation. Some operators, including hash joins, materialize rows internally; chapter 34 explains that boundary.
 
-Consider `WHERE C_MKTSEGMENT = 'BUILDING'` over a million customers. With row objects, the engine walks a million heap objects, each one a separate allocation with a hash map of property names, touching `C_CUSTKEY` and `C_NAME` — which the predicate does not care about — on every single one, because they live in the same object. With columns, it walks one contiguous array of segment values and touches nothing else.
+Consider `WHERE C_MKTSEGMENT = 'BUILDING'` over a million customers. With row objects, the engine follows references to records whose layout includes fields the predicate does not use. Reading one field does not evaluate all the others, but the memory access can bring unrelated bytes into a cache line. Columns place values of the same field together, so a scan can concentrate on that field. JavaScript objects also do not necessarily store a private hash map of properties: V8 supports several layouts, including shared shapes and directly stored properties; see [V8's explanation](https://v8.dev/blog/fast-properties).
 
-That is the entire argument, and everything in this chapter follows from it.
+That access pattern motivates the layout. Its performance depends on the operator and workload; chapter 31 measures where batching helps.
+
+## Three rows, viewed two ways
+
+Add Carol to the two rows above. The same logical table can be written as three arrays:
+
+```text
+row position:   0            1             2
+C_CUSTKEY:     [1,           2,            3]
+C_NAME:        ['Alice',     'Bob',        'Carol']
+C_MKTSEGMENT:  ['BUILDING',  'MACHINERY',  'BUILDING']
+```
+
+This is a hand-written layout diagram, not the physical string encoding. Position 1 still denotes Bob across all three columns. To filter on segment, inspect the last array and remember positions `[0, 2]`. Reading the corresponding names gives Alice and Carol. A **chunk** packages these aligned columns and their row count so an operator can receive them together.
+
+Keep that example in mind through the representation details below. On a first read, understand column alignment, chunks, and selection vectors; the exact typed arrays and string-encoding limits are implementation reference material.
 
 ## One column, one typed array
 
@@ -42,7 +57,7 @@ The type mapping is in [`data-type.ts`](../../src/storage/data-type.ts), and it 
 | `TIMESTAMP` | `BigInt64Array` | 8 |
 | `VARCHAR` | offsets plus a byte buffer | variable |
 
-Eight types. `DATE` is an `Int32Array` of day numbers; `TIMESTAMP` and `DECIMAL` are `BigInt64Array`s with an agreed interpretation. No `Date` object is ever stored in a column or passed between operators — a date is an integer until the moment it is formatted for output. A few places construct one transiently to borrow the calendar arithmetic, such as parsing a string into a timestamp in [`castValue`](../../src/execution/expression-eval.ts), but the object never outlives the expression.
+Eight types. `DATE` is an `Int32Array` of day numbers; `TIMESTAMP` and `DECIMAL` are `BigInt64Array`s with an agreed interpretation. No `Date` object is ever stored in a column or passed between operators — a date is an integer until the moment it is formatted for output. A few places construct one transiently to borrow the calendar arithmetic, such as parsing a string into a timestamp in [`castToType`](../../src/storage/data-type.ts), but the object never outlives the expression.
 
 Nulls are not stored in the array. They live in a separate `nullBitmap`, one bit per row, packed into a `Uint32Array`. So a null `INT32` still occupies four bytes of the data array holding whatever was there, and the bitmap is the authority on whether to look. This is why `hasNulls` exists as a flag: an operator can skip null checking entirely for a column that has none, which is the common case.
 
@@ -160,22 +175,32 @@ Two related methods matter for the same reason. [`project`](../../src/storage/ch
 
 ## Exercises
 
-1. Reproduce the chunk boundaries. Build 5,000 rows, hand them to `InMemoryRelation.fromRows`, and print `chunks.map(c => c.size)`. Then change `DEFAULT_CHUNK_SIZE` and confirm the boundaries move.
+### Understand
 
-2. Print `chunk.columns.map(c => c.constructor.name)` for a table with an integer and a string column. Confirm you get `Column, DictionaryColumn`.
+A column contains [10, 20, 30, 40] and its selection vector is [1, 3]. What are the two visible values, and what remains in storage?
 
-3. Overflow a dictionary. Append 70,000 distinct strings to a single `DictionaryColumn` and confirm the error. Find the constant that governs the limit, then explain why the message says *per chunk* — what does that imply about a table of a million distinct names?
+### Practice
 
-4. Set a selection vector by hand, read a value through `getValue`, then read the same index directly off the column with `get`. Explain the difference in one sentence.
+1. **Extend (optional).** Reproduce the chunk boundaries. Build 5,000 rows, hand them to `InMemoryRelation.fromRows`, and print `chunks.map(c => c.size)`. Then change `DEFAULT_CHUNK_SIZE` and confirm the boundaries move.
 
-5. Estimate the memory for a 2,048-row chunk of TPC-H `ORDERS` — nine columns of mixed types. Then estimate the same data as an array of JavaScript objects. The ratio is the reason this chapter exists.
+2. **Observe.** Print `chunk.columns.map(c => c.constructor.name)` for a table with an integer and a string column. Confirm you get `Column, DictionaryColumn`.
+
+3. **Extend (optional).** Overflow a dictionary. Append 70,000 distinct strings to a single `DictionaryColumn` and confirm the error. Find the constant that governs the limit, then explain why the message says *per chunk* — what does that imply about a table of a million distinct names?
+
+4. **Observe.** Set a selection vector by hand, read a value through `getValue`, then read the same index directly off the column with `get`. Explain the difference in one sentence.
+
+5. **Observe.** Estimate the memory for a 2,048-row chunk of TPC-H `ORDERS` — nine columns of mixed types. Then estimate the same data as an array of JavaScript objects. State assumptions about string sizes and object layout; measure allocations if you need a ratio for a particular runtime.
+
+### Hints and expected observations
+
+The visible values are 20 and 40. The four stored values remain; the selection maps logical row positions to physical indices.
 
 ## Recap
 
 - Data is stored **column by column**, so an operator touches only the columns it needs.
 - A **`Column`** is a typed array plus a **null bitmap**; nulls occupy their slot in the data array and are recorded out of band.
 - Strings are usually **dictionary-encoded** — a `Uint16Array` of indices into a table of distinct values — which turns string comparison into integer comparison. The 16-bit index is a hard ceiling: past id 65,535 the column throws rather than falling back.
-- A **`DataChunk`** is a set of columns plus a size, and it is the unit that moves between operators. The default is **2,048 rows**, chosen to amortize per-chunk overhead while keeping the working set cache-resident.
+- A **`DataChunk`** is a set of columns plus a size, and it is the unit that moves between operators. The default is **2,048 rows**, used to amortize per-chunk overhead. Cache fit also depends on row width, live columns, and hardware.
 - A **selection vector** lets a filter narrow a chunk without copying anything; `flatten` is where the engine finally materializes.
 
 That completes Part 0. Next: Part 1 starts at the beginning of the pipeline, [turning SQL text into tokens](../01-frontend/05-the-lexer.md).

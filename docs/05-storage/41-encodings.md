@@ -1,6 +1,6 @@
 # 41. Encodings
 
-> After this chapter you will be able to predict which of three encodings any integer column gets, why it is sometimes declined outright, and why the column that looks most compressible gets one of the worst ratios in the table.
+> After this chapter you will be able to compare three integer encoding strategies and explain why an encoder accepts or declines a column.
 
 ## The question
 
@@ -21,6 +21,10 @@ Ask the engine what it stored:
 ```
 
 Thirty-six bytes against 2,821. The column a human would call the most compressible thing in the table — a regular arithmetic sequence, reconstructible from two numbers — comes out seventy-eight times larger than the blocky one. Everything here follows from *what the three encoders actually look at*.
+
+## Compare the representations first
+
+For `[1000, 1000, 1000, 1001]`, run-length encoding records `(1000,3)` and `(1001,1)`. Frame of reference records base 1000 and offsets `[0,0,0,1]`. Bit packing the original non-negative values needs ten bits per value, because 1001 needs ten binary digits. These are hand-computed payloads: real encodings also store headers, null information, and alignment. Those fixed costs can outweigh a payload saving on a tiny column.
 
 ## Three encoders, one shape
 
@@ -207,15 +211,25 @@ The answer stays correct, because `get` consults the bitmap first, but the page 
 
 ## Exercises
 
-1. Reproduce the two opening measurements. Build a 2,048-value `Column` for each shape, call `summarizeIntegers` on `column.data`, and print each encoder's `plan` alongside `chooseEncoder`'s answer.
+### Understand
 
-2. Find the smallest change to the sequential-id column that makes run-length win, then the smallest that makes it stay flat.
+How would run-length encoding and frame of reference represent [1000,1000,1000,1001]?
 
-3. Set `QE_ENCODING_MIN_COMPRESSION_RATIO=1.0` and re-measure the six-column table. Which columns become encoded, and what does the total become? Now set it to `0.1`.
+### Practice
 
-4. Add a fourth encoder — delta, storing the first value and the differences between neighbors — with an unused id, declining when a difference does not fit in a byte. Confirm the sequential-id column drops below 3,000 bytes and the differential test still passes.
+1. **Observe.** Reproduce the two opening measurements. Build a 2,048-value `Column` for each shape, call `summarizeIntegers` on `column.data`, and print each encoder's `plan` alongside `chooseEncoder`'s answer.
 
-5. Instrument the `data` getter to log a stack trace when it decodes, then run the book's query with `QE_WASM_MIN_CHUNK=1`. Which operators force columns back to flat, and what does it cost across the scan?
+2. **Observe.** Find the smallest change to the sequential-id column that makes run-length win, then the smallest that makes it stay flat.
+
+3. **Observe.** Set `QE_ENCODING_MIN_COMPRESSION_RATIO=1.0` and re-measure the six-column table. Which columns become encoded, and what does the total become? Now set it to `0.1`.
+
+4. **Extend (optional).** Add a fourth encoder — delta, storing the first value and the differences between neighbors — with an unused id, declining when a difference does not fit in a byte. Confirm the sequential-id column drops below 3,000 bytes and the differential test still passes.
+
+5. **Extend (optional).** Instrument the `data` getter to log a stack trace when it decodes, then run the book's query with `QE_WASM_MIN_CHUNK=1`. Which operators force columns back to flat, and what does it cost across the scan?
+
+### Hints and expected observations
+
+Run length stores runs (1000,3) and (1001,1). Frame of reference stores base 1000 and offsets [0,0,0,1]. Compare headers as well as payload size before choosing.
 
 ## Recap
 

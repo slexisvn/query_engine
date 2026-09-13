@@ -44,6 +44,10 @@ The first eleven significant figures agree on every row; the digits after that d
 
 That should bother you. `SUM` composes — a sum of sums is a sum. `AVG` does not: the average of two averages is the true average only when both halves have the same number of rows, and nothing guarantees that. The worker logs say each worker returned 7 rows, one per date. Whatever those 7 rows held, it was not an average.
 
+## What crosses the exchange
+
+Suppose one worker sees amounts `[10,20]` and another sees `[100]`. Sending partial SUM values 30 and 100 is sufficient to produce 130. Sending partial averages 15 and 100 is insufficient without their counts: averaging them would give 57.5 instead of `130/3`. Sending `(sum,count)` pairs `(30,2)` and `(100,1)` gives the final stage enough information. This hand-worked example is the reason an exchange's schema may describe aggregate state rather than final query columns.
+
 ## Distribution is more passes
 
 Before anything is cut up, note where the distributed rewrites live. [`enableDistributed`](../../src/engine/query-engine.ts) does not build a second compiler. It adds six passes to the existing pipeline:
@@ -341,15 +345,25 @@ A remote fragment is fire-and-forget over HTTP: the worker acknowledges with `20
 
 ## Exercises
 
-1. Reproduce the fragment listing. Build a `DistributedPlanner` against a partition map with two workers, call `fragmentize` on an optimized plan, and print each fragment's `targetNodes`, `outputPartitioning`, and `exchangeInputs`.
+### Understand
 
-2. Replace `AVG` with `COUNT(DISTINCT o.O_CUSTKEY)` and confirm the plan keeps a plain `Aggregate`. Then work out how many rows must cross the network in each case.
+Worker A counts 4 rows and worker B counts 7. What operation combines the partial counts? How does AVG differ?
 
-3. Add `STDDEV` to `DECOMPOSABLE_FUNCTIONS`. What is its intermediate state, and which accumulator would you have to write? You do not have to implement it — write down the state and the merge rule.
+### Practice
 
-4. Comment out the `registerPass(new PartialAggregatePass())` line in `enableDistributed` and re-run the opening query on a live cluster. Where does aggregation happen now, and how many rows cross the wire?
+1. **Observe.** Reproduce the fragment listing. Build a `DistributedPlanner` against a partition map with two workers, call `fragmentize` on an optimized plan, and print each fragment's `targetNodes`, `outputPartitioning`, and `exchangeInputs`.
 
-5. Instrument `FragmentExecutor.execute` to log each fragment id and output row count, and match it against the `[fragment] Fragment N completed: R rows` lines the worker prints.
+2. **Observe.** Replace `AVG` with `COUNT(DISTINCT o.O_CUSTKEY)` and confirm the plan keeps a plain `Aggregate`. Then work out how many rows must cross the network in each case.
+
+3. **Extend (optional).** Add `STDDEV` to `DECOMPOSABLE_FUNCTIONS`. What is its intermediate state, and which accumulator would you have to write? You do not have to implement it — write down the state and the merge rule.
+
+4. **Extend (optional).** Comment out the `registerPass(new PartialAggregatePass())` line in `enableDistributed` and re-run the opening query on a live cluster. Where does aggregation happen now, and how many rows cross the wire?
+
+5. **Extend (optional).** Instrument `FragmentExecutor.execute` to log each fragment id and output row count, and match it against the `[fragment] Fragment N completed: R rows` lines the worker prints.
+
+### Hints and expected observations
+
+SUM combines counts into 11. AVG needs each worker's sum and non-null count, followed by one final division, rather than an unweighted average of local averages.
 
 ## Recap
 

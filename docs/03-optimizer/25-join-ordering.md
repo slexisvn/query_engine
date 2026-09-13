@@ -42,6 +42,24 @@ Six rows versus four. Associativity does not hold for outer joins in general, an
 
 This chapter is about the machinery that tells those two cases apart, and the search that uses it.
 
+## A small search before the hypergraph
+
+Start with three inner-joined relations A, B, and C, connected as A–B–C. Suppose the estimated sizes are A = 1,000, B = 100, C = 10, A join B = 100, B join C = 5, and the final result = 5 rows. These are assumptions for a hand-worked example, not a claim that sizes can be derived from row counts alone.
+
+Use a deliberately simple teaching cost: a join costs `left rows + right rows + output rows`. Ignore scans, spilling, and build-side differences for this trace.
+
+| Relations already combined | Best cost so far | Estimated rows | How it was obtained |
+|---|---:|---:|---|
+| A, B, or C alone | 0 each | 1,000 / 100 / 10 | starting entries |
+| A and B | 1,200 | 100 | 1,000 + 100 + 100 |
+| B and C | 115 | 5 | 100 + 10 + 5 |
+| A, B, C via (A join B) join C | 1,315 | 5 | 1,200 + (100 + 10 + 5) |
+| A, B, C via A join (B join C) | **1,125** | 5 | 115 + (1,000 + 5 + 5) |
+
+The last two rows compete for the same memo entry: “best plan for {A, B, C}.” Keep the cheaper one. This reuse of the best smaller answers is **dynamic programming**. A and C have no connecting predicate here, so the connected search does not first build their cross product.
+
+Assign bits A = `001`, B = `010`, C = `100`. The memo entries for {A, B} and {B, C} become keys `011` and `110`; the completed query is `111`. The masks below encode these sets, not a new kind of query semantics. The real implementation uses the cost model from chapter 24 and adds constraints for outer joins. Its numeric winner need not match this simplified cost model.
+
 ## Reordering is a rewrite over a block
 
 [`JoinReorder`](../../src/optimizer/passes/join-reorder.ts) does not touch one join at a time. Its rewriter finds a maximal contiguous region of join nodes — a **join block** — and replans the whole region.
@@ -258,15 +276,25 @@ A join that came from an original operator is rebuilt by **spreading that operat
 
 ## Exercises
 
-1. Reproduce the opening pair. Build the right-deep plan by hand from the raw plan's nodes, run both through `_collectRows`, and confirm six rows versus four. Then remove `OR b.BX IS NULL` and confirm `JoinReorder` performs the rewrite itself.
+### Understand
 
-2. Add a table to a chain query one at a time and time `JoinReorder`. Where does the curve bend, and does it match the 14-relation threshold or the 120,000-pair budget?
+In the small memo example, why can the optimizer retain the cheapest known plan for each relation subset instead of every construction history?
 
-3. Set `QE_JOIN_ORDER_MAX_PAIRS` to 100 and find a query where DPhyp gives up. Confirm from the plan that greedy produced a different, worse order.
+### Practice
 
-4. Give two relations in one join block the same alias so `ambiguousAlias` fires. You will need a subquery. Confirm the plan is left untouched.
+1. **Observe.** Reproduce the opening pair. Build the right-deep plan by hand from the raw plan's nodes, run both through `_collectRows`, and confirm six rows versus four. Then remove `OR b.BX IS NULL` and confirm `JoinReorder` performs the rewrite itself.
 
-5. Change `ASSOCIATIVITY[LEFT][LEFT]` from `MIDDLE_MUST_BE_NULL_REJECTED` to `ALWAYS` and run `npm run test:e2e`. Which test catches you, and how many rows does it report?
+2. **Observe.** Add a table to a chain query one at a time and time `JoinReorder`. Where does the curve bend, and does it match the 14-relation threshold or the 120,000-pair budget?
+
+3. **Extend (optional).** Set `QE_JOIN_ORDER_MAX_PAIRS` to 100 and find a query where DPhyp gives up. Confirm from the plan that greedy produced a different, worse order.
+
+4. **Extend (optional).** Give two relations in one join block the same alias so `ambiguousAlias` fires. You will need a subquery. Confirm the plan is left untouched.
+
+5. **Extend (optional).** Change `ASSOCIATIVITY[LEFT][LEFT]` from `MIDDLE_MUST_BE_NULL_REJECTED` to `ALWAYS` and run `npm run test:e2e`. Which test catches you, and how many rows does it report?
+
+### Hints and expected observations
+
+Larger candidates reuse subplans under the modeled conditions. The memo's key must include any physical property that affects future cost; otherwise a locally dearer ordered plan could be discarded too early.
 
 ## Recap
 

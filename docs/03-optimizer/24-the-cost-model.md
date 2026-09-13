@@ -1,6 +1,6 @@
 # 24. The cost model
 
-> After this chapter you will be able to explain why the same query picks a different join algorithm as its tables grow, and compute the crossover point yourself.
+> After this chapter you will be able to compare the modeled costs of candidate operators and distinguish an estimated crossover from a measured one.
 
 ## The question
 
@@ -45,9 +45,9 @@ Every method is built from thirteen constants read from [`Config`](../../src/con
 | `costModelSpillThreshold` | memory limit / row width | rows that fit in memory |
 | `perfectHashAggregateCostFactor` | 0.5 | discount for the dense-key aggregate |
 
-Read the two hash constants together, because they explain the shape of every join plan in this book. **Inserting into a hash table is modeled as five times more expensive than probing it** — 37.76 against 7.5. That is a claim about the implementation: an insert may resize, rehash, and chain, while a probe is a lookup. It is the reason the build side should always be the smaller input, and the reason [`chooseJoinBuildSide`](../../src/planner/join-build-side.ts) exists.
+Read the two hash constants together, because they explain the shape of every join plan in this book. **Inserting into a hash table is modeled as five times more expensive than probing it** — 37.76 against 7.5. That is a claim about the implementation: an insert may resize, rehash, and chain, while a probe is a lookup. This favors building the smaller input when the operator permits either orientation. [`chooseJoinBuildSide`](../../src/planner/join-build-side.ts) also has join-type constraints; chapter 34 explains their implementation.
 
-The oddly specific values — 0.24, 5.77, 37.76, 17.4 — are calibration constants, not round guesses. Every one is overridable by an environment variable, which is what makes recalibration on a different machine a configuration change rather than a code change.
+The oddly specific values — 0.24, 5.77, 37.76, 17.4 — are the current model coefficients. Their decimal precision alone is not evidence of accuracy on your workload. Every one is overridable by an environment variable, which is what makes recalibration on a different machine a configuration change rather than a code change.
 
 ## The join formulas
 
@@ -94,7 +94,7 @@ n= 5000  hash=    266350  nestedloop=   6097750  winner=hash
 
 **141 rows.** Below that, avoiding 37.76 per build row is worth more than avoiding 0.24 per pair. That is the whole of the opening question: 30 × 100 is below the crossover, 200 × 1000 is above it.
 
-**Merge join** ([`mergeJoinCost`](../../src/planner/cost-model.ts)) walks both inputs once and pays for re-scanning duplicate keys, computed by [`rescannedTuples`](../../src/planner/cost-model.ts) as the output rows beyond the larger input. It is only ever cheap when the inputs arrive sorted, which is why [`mergeJoinCostWithSorts`](../../src/planner/cost-model.ts) takes two booleans and adds a full `sortCost` for each side that is not.
+**Merge join** ([`mergeJoinCost`](../../src/planner/cost-model.ts)) walks both inputs once and pays for re-scanning duplicate keys, computed by [`rescannedTuples`](../../src/planner/cost-model.ts) as the output rows beyond the larger input. Pre-sorted inputs avoid setup work, but merge join can win even after paying for sorts, which is why [`mergeJoinCostWithSorts`](../../src/planner/cost-model.ts) takes two booleans and adds a full `sortCost` for each side that is not.
 
 ## Spilling is a term, not a mode
 
@@ -111,7 +111,7 @@ spillPenalty(residentCard: number, streamedCard: number): number {
 
 Zero below the threshold, then rising smoothly: the fraction of data that does not fit, times the rows streaming past, times the I/O constant. Making it continuous rather than a step is deliberate — a step function at the threshold would make plan choice flip on a one-row difference in an estimate that is already approximate.
 
-`costModelSpillThreshold` defaults to the memory limit divided by the default row width, which on this machine is 4,194,304 rows. Every plan in this book is far below it, so the term is zero throughout; chapter 39 is where it starts to matter.
+`costModelSpillThreshold` defaults to the memory limit divided by the default row width, which on this machine is 4,194,304 rows. The small examples in this chapter are below it, so their spill term is zero. Chapter 39 deliberately lowers the budget to exercise spilling.
 
 ## Sorts know their key type
 
@@ -140,7 +140,7 @@ return SortKeyClass.NUMERIC;
 
 The cost model computes numbers; [`PhysicalPlanner`](../../src/execution/physical-planner.ts) makes the decisions. Two node types are genuinely cost-based, and they are the two in the opening plans.
 
-**Joins.** [`joinCandidates`](../../src/execution/physical-planner.ts) builds a list and [`cheapest`](../../src/execution/physical-planner.ts) picks the minimum. A hash join is always a candidate — with the block-nested-loop cost substituted when there are no equi-keys, since that is what the operator actually does. A nested loop is a candidate only when `leftCard + rightCard <= Config.nestedLoopMaxRows` (50,000), which caps the damage a bad estimate can do. A merge join is a candidate when the condition has equi-keys, priced with sorts for whichever side is not already ordered.
+**Joins.** [`joinCandidates`](../../src/execution/physical-planner.ts) builds a list and [`cheapestFor`](../../src/execution/physical-planner.ts) compares each candidate's own cost plus any sort still needed to satisfy its parent's ordering. A hash join is always a candidate — with the block-nested-loop cost substituted when there are no equi-keys, since that is what the operator actually does. A nested loop is a candidate only when `leftCard + rightCard <= Config.nestedLoopMaxRows` (50,000), which caps the damage a bad estimate can do. A merge join is a candidate when the condition has equi-keys, priced with sorts for whichever side is not already ordered.
 
 **Aggregates.** [`aggregateCandidates`](../../src/execution/physical-planner.ts) always offers a hash aggregate. It adds a stream aggregate when the input already arrives sorted on a prefix of the grouping keys, priced at `card * (1 + 0.24)` — no hash table at all. And it adds a perfect-hash aggregate when [`canUsePerfectHashAggregate`](../../src/planner/aggregate-strategy.ts) says the grouping keys are dense enough to index an array directly, priced at half the hash cost. That is the `PerfectHashAggregate` in the three-row plan.
 
@@ -184,7 +184,7 @@ Nothing in `src/` uses it. Its consumer is the visualizer's cost breakdown in [`
 | Sorting | [`sortCost`](../../src/planner/cost-model.ts), [`sortKeyClassOf`](../../src/planner/cost-model.ts), [`topNSortCost`](../../src/planner/cost-model.ts) |
 | Aggregation | [`hashAggregateCost`](../../src/planner/cost-model.ts), [`streamAggregateCost`](../../src/planner/cost-model.ts), [`perfectHashAggregateCost`](../../src/planner/cost-model.ts) |
 | Candidate generation | [`joinCandidates`](../../src/execution/physical-planner.ts), [`aggregateCandidates`](../../src/execution/physical-planner.ts) |
-| Picking the winner | [`cheapest`](../../src/execution/physical-planner.ts) |
+| Picking the winner | [`cheapestFor`](../../src/execution/physical-planner.ts) |
 | Summing a tree | [`totalPhysicalCost`](../../src/execution/physical-plan.ts) |
 | Explaining a number | [`CostRecorder`](../../src/planner/cost-recorder.ts) |
 
@@ -192,7 +192,7 @@ Nothing in `src/` uses it. Its consumer is the visualizer's cost breakdown in [`
 
 **The cost model is consulted twice, in two places.** [`JoinReorder`](../../src/optimizer/passes/join-reorder.ts) uses `hashJoinCost` to choose a *logical* join order in chapter 25, assuming hash joins throughout; `PhysicalPlanner` later picks the actual algorithm per join. A join order chosen on the assumption of hash joins may be executed as nested loops.
 
-**Cost is not comparable across queries.** The units are arbitrary, so a total of 18,741 for one query and 60 for another says nothing about their relative runtimes. Only two costs for the *same* logical node are meaningfully comparable.
+**Cost is not elapsed time.** Dimensionless units are useful for comparing alternative plans under the same model. Costs for different queries may also suggest different amounts of modeled work, but their ratio is not a predicted runtime ratio: estimates, memory behavior, and unmodeled work can differ.
 
 **A bad cardinality estimate is a bad cost.** Every formula takes cardinalities. [Chapter 23](23-cardinality-estimation.md)'s `sqrt` estimate for `DISTINCT` propagates straight into a join cost, and nothing downstream can detect it.
 
@@ -202,22 +202,32 @@ Nothing in `src/` uses it. Its consumer is the visualizer's cost breakdown in [`
 
 ## Exercises
 
-1. Reproduce the crossover table. Instantiate `DefaultCostModel` directly and compare `hashJoinCost(n, n, n)` with `blockNestedLoopJoinCost(n, n, n)` for increasing `n`. Then find the crossover for asymmetric inputs — build 10, probe growing — and explain the difference.
+### Understand
 
-2. Reproduce the three physical plans from the opening by varying only the table sizes. Then set `QE_COST_HASH_INSERT=1` and find the new crossover.
+Candidate A has local cost 10 and requires a parent sort costing 20. B costs 18 and already supplies the order. Which wins under those assumptions?
 
-3. Wire `CostRecorder` into a script: build a physical plan, then re-cost one join through the recorder and print the term tree with values as percentages of the total. Which term dominates for the running query?
+### Practice
 
-4. `sortKeyClassOf` only allows a radix sort for a *single* `INT32` or `DATE` key. Read [`sortCost`](../../src/planner/cost-model.ts) and decide what the cost of a two-integer radix sort would be, then find a query whose plan changes if you allow it.
+1. **Observe.** Reproduce the crossover table. Instantiate `DefaultCostModel` directly and compare `hashJoinCost(n, n, n)` with `blockNestedLoopJoinCost(n, n, n)` for increasing `n`. Then find the crossover for asymmetric inputs — build 10, probe growing — and explain the difference.
 
-5. `totalPhysicalCost` multiplies a nested loop's inner subtree cost by the outer cardinality, but `blockNestedLoopJoinCost` already contains a `buildCard * probeCard` term. Work out whether that is double counting, and construct a plan where the answer matters.
+2. **Observe.** Reproduce the three physical plans from the opening by varying only the table sizes. Then set `QE_COST_HASH_INSERT=1` and find the new crossover.
+
+3. **Observe.** Wire `CostRecorder` into a script: build a physical plan, then re-cost one join through the recorder and print the term tree with values as percentages of the total. Which term dominates for the running query?
+
+4. **Extend (optional).** `sortKeyClassOf` only allows a radix sort for a *single* `INT32` or `DATE` key. Read [`sortCost`](../../src/planner/cost-model.ts) and decide what the cost of a two-integer radix sort would be, then find a query whose plan changes if you allow it.
+
+5. **Extend (optional).** `totalPhysicalCost` multiplies a `DependentJoin`'s inner subtree cost by the outer cardinality, but `blockNestedLoopJoinCost` already contains a `buildCard * probeCard` term. Work out whether that is double counting, and construct a plan where the answer matters.
+
+### Hints and expected observations
+
+B costs 18 versus A's 30. Compare the work needed by the parent, not just the local operator label, and remember that these are model units.
 
 ## Recap
 
-- Cost is a **unitless scalar** built from thirteen calibrated constants, all overridable by environment variable. Only costs for the same logical node are comparable.
-- A hash table **insert costs five times a probe** (37.76 versus 7.5), which is why the build side is always the smaller input.
+- Cost is a **unitless scalar** built from configurable model coefficients. Compare candidate plans under the same assumptions; do not read the numbers as milliseconds.
+- A hash table insert is **modeled at about five times a probe** (37.76 versus 7.5), favoring the smaller build when the operator permits either side.
 - Hash join is **linear** in both inputs; nested loop is **quadratic** with a small coefficient. For equal inputs they cross at **141 rows**, which is why the running query changes algorithm as its tables grow.
-- [`spillPenalty`](../../src/planner/cost-model.ts) is a **continuous term**, not a mode switch, so plan choice does not flip on a one-row change in an estimate.
+- [`spillPenalty`](../../src/planner/cost-model.ts) rises continuously above its threshold. The winning plan can still change where two candidates' costs cross.
 - Sort cost depends on the **key class**: linear for a single `INT32` or `DATE` key, `n log n` for numeric, doubled again for text.
 - Only **joins and aggregates** are chosen by cost. Everything else has one physical operator and a fixed cost rule.
 - [`CostRecorder`](../../src/planner/cost-recorder.ts) proxies the model to record every term as a tree. Nothing in `src/` uses it; the visualizer does, and it is the tool for arguing with a cost.

@@ -34,6 +34,10 @@ if (physical.type === PhysicalNodeType.STREAM_AGGREGATE) {
 
 That is worth stating plainly before anything else, because a book that let you infer otherwise from the plan text would have taught you something false.
 
+## An aggregate state you can calculate
+
+For input `(Alice,100)`, `(Carol,300)`, `(Alice,250)`, a grouped SUM can keep a map from name to running total. After each row its state is `{Alice:100}`, then `{Alice:100, Carol:300}`, then `{Alice:350, Carol:300}`. Finalization emits one row per group. AVG needs more state: Alice's sum is 350 and non-null count is 2, so her average is 175. This hand-worked map describes the idea before the hash table, accumulator interfaces, and spill files.
+
 ## The one operator that is different
 
 [`StreamAggregateOperator`](../../src/execution/operators/stream-aggregate.ts) is a genuinely different algorithm, and it is the one that gets chosen least often. It assumes the input arrives in group-key order and keeps exactly one group's accumulators alive:
@@ -233,21 +237,31 @@ There is a fifth aggregate implementation, and it does not run in the single-nod
 
 **Spilling clears the group table but not the spilled set.** After `spillResidentGroups`, `spilledPartitions` remembers which handles have data, and `finalize` routes to `finalizeSpilled` if that set is non-empty — even if the last batch of groups would have fit. Once an aggregate has spilled, its whole result comes back through the partition loop.
 
-**`_tryWasmUngrouped` is checked before every ungrouped chunk.** `consume` calls it whenever there is no `GROUP BY` and `globalDispatch.kernels` is non-empty, which in library use it never is. When kernels *are* registered it bails out on the first column with nulls, a mismatched type, or a missing kernel — after having already resolved kernels for the earlier aggregates.
+**`_tryWasmUngrouped` is checked before every ungrouped chunk.** `consume` calls it whenever there is no `GROUP BY` and `globalDispatch.kernels` is non-empty, which remains empty until kernels are registered, for example by `await engine.enableWasm()`. Loading kernels and satisfying this operator's dispatch conditions are separate steps, as chapter 54 shows. When kernels *are* registered it bails out on the first column with nulls, a mismatched type, or a missing kernel — after having already resolved kernels for the earlier aggregates.
 
 **`aggSpillPartitions` must be a power of two.** The partition index is `hash & (partitionCount - 1)`. Setting `QE_AGG_SPILL_PARTITIONS=10` silently uses a mask of 9 and files groups into a subset of handles.
 
 ## Exercises
 
-1. Reproduce the four-strategy survey. Then change the `GROUP BY K` column to have five distinct values instead of four and rerun. Explain the new plan using `hasCompactDomain`.
+### Understand
 
-2. Reproduce the alias experiment that flips `HashAggregate` to `StreamAggregate`. Then make it flip back by renaming only the subquery alias, and find the line in [`sort-properties.ts`](../../src/planner/sort-properties.ts) responsible.
+One partial AVG sees [10,20] and another sees [100]. Why is averaging their two averages wrong?
 
-3. Run `SELECT O_CUSTKEY, AVG(O_TOTALPRICE) FROM ORDERS GROUP BY O_CUSTKEY` with `QE_MEMORY_LIMIT_BYTES=65536` and without. Confirm the multiset of rows is identical, and explain why `AvgAccumulator.exportState` returns an object rather than a number.
+### Practice
 
-4. Trigger `PartialAggregate`/`FinalAggregate` by joining a 200,000-row table to a small one and grouping by a key from the large side. Then change the aggregate to `AVG` and explain the plan you get.
+1. **Observe.** Reproduce the four-strategy survey. Then change the `GROUP BY K` column to have five distinct values instead of four and rerun. Explain the new plan using `hasCompactDomain`.
 
-5. `DISTINCT_SENSITIVE_AGGREGATES` contains three names. Add `MIN` to it, run `SELECT MIN(DISTINCT x)`, and confirm the answer does not change. Then say what it cost.
+2. **Observe.** Reproduce the alias experiment that flips `HashAggregate` to `StreamAggregate`. Then make it flip back by renaming only the subquery alias, and find the line in [`sort-properties.ts`](../../src/planner/sort-properties.ts) responsible.
+
+3. **Observe.** Run `SELECT O_CUSTKEY, AVG(O_TOTALPRICE) FROM ORDERS GROUP BY O_CUSTKEY` with `QE_MEMORY_LIMIT_BYTES=65536` and without. Confirm the multiset of rows is identical, and explain why `AvgAccumulator.exportState` returns an object rather than a number.
+
+4. **Extend (optional).** Trigger `PartialAggregate`/`FinalAggregate` by joining a 200,000-row table to a small one and grouping by a key from the large side. Then change the aggregate to `AVG` and explain the plan you get.
+
+5. **Extend (optional).** `DISTINCT_SENSITIVE_AGGREGATES` contains three names. Add `MIN` to it, run `SELECT MIN(DISTINCT x)`, and confirm the answer does not change. Then say what it cost.
+
+### Hints and expected observations
+
+The average of 15 and 100 is 57.5, but the correct result is 130/3. Merge sum/count states (30,2) and (100,1), then divide once.
 
 ## Recap
 

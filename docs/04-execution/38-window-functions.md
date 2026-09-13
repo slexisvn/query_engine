@@ -1,6 +1,6 @@
 # 38. Window functions and frames
 
-> After this chapter you will be able to say why `RANK` and `ROW_NUMBER` disagree, why a running `SUM` can jump by more than one row's worth, and how a window function survives running out of memory when its whole premise is that it needs every row at once.
+> After this chapter you will be able to distinguish positions, peer groups, and value ranges in a window frame, then follow their evaluation and spill path.
 
 ## The question
 
@@ -36,12 +36,12 @@ export const DEFAULT_FRAME: BoundWindowFrame = {
 
 An `OVER (ORDER BY ...)` with no explicit frame gets `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`, and in `RANGE` mode **"current row" means "the last row with the same `ORDER BY` value as the current row"**. Rows sharing an ordering value are *peers*, and a `RANGE` frame can only start or end at a peer-group boundary.
 
-[`boundIndex`](../../src/execution/operators/window-frame.ts) is where the two modes diverge, and the difference is three lines:
+[`boundIndex`](../../src/execution/operators/window-frame.ts) distinguishes row positions from peer boundaries:
 
 ```typescript
 case 'CURRENT_ROW':
-  if (mode === 'ROWS') return index;
-  return isStart ? peers.first[index] : peers.last[index];
+  if (scope.mode === 'ROWS') return index;
+  return isStart ? scope.peers.first[index] : scope.peers.last[index];
 ```
 
 In `ROWS` mode, current row is this row. In `RANGE` mode, it is the first or last of this row's peer group. [`peerGroupsOf`](../../src/execution/operators/window-frame.ts) computes both arrays in one pass by walking until the peer test fails:
@@ -92,12 +92,13 @@ case RANK: {
 
 ## Frames as two index arrays
 
-[`frameRangesOf`](../../src/execution/operators/window-frame.ts) turns a frame specification and a partition length into two `Int32Array`s — the start and end index of every row's frame — clamped to the partition:
+[`frameRangesOf`](../../src/execution/operators/window-frame.ts) turns a frame specification and a `FrameInput` into two `Int32Array`s — the start and end index of every row's frame — clamped to the partition:
 
 ```typescript
+const scope = frameScopeOf(frame, input);
 for (let i = 0; i < length; i++) {
-  starts[i] = Math.max(0, boundIndex(frame.start, i, length, frame.mode, peers, true));
-  ends[i] = Math.min(length - 1, boundIndex(frame.end, i, length, frame.mode, peers, false));
+  starts[i] = Math.max(0, boundIndex(scope, frame.start, i, length, true));
+  ends[i] = Math.min(length - 1, boundIndex(scope, frame.end, i, length, false));
 }
 ```
 
@@ -136,19 +137,27 @@ for (let i = 0; i < length; i++) {
 }
 ```
 
-Each index is pushed once and popped once, so the whole column is O(n) regardless of frame width. The catch is in `filled` and `head`: both advance monotonically, so **this only works for frames whose starts and ends are non-decreasing**. Every frame the parser accepts has that property, and the deque would silently return wrong answers for one that did not.
+Each index is pushed once and popped once, so the whole column is O(n) regardless of frame width. The catch is in `filled` and `head`: both advance monotonically, so **this only works for frames whose starts and ends are non-decreasing**. The frame planner and its callers must preserve that property. A parser accepting a frame is not by itself a proof that an arbitrary pair of supplied index arrays is safe for this algorithm.
 
-Two frame forms are rejected rather than approximated:
+### ROWS, RANGE, and GROUPS offsets
 
-```
-### RANGE offset -> RANGE frames with PRECEDING offsets are not supported
-```
+The current implementation supports offsets in all three modes. `offsetBound` dispatches by mode: `ROWS` adds or subtracts a row position; `GROUPS` uses `groupBound` to move across peer groups; `RANGE` uses `rangeBound` to search ordering values. A value-offset `RANGE` requires exactly one ordering column. The binder checks this requirement, and `FrameInput` carries the ordering values and direction into frame evaluation.
 
-`boundIndex` throws for `PRECEDING` or `FOLLOWING` outside `ROWS` mode, because a `RANGE` offset means "values within N of this row's value", which is a different search entirely from an index arithmetic. That is a real gap, stated in the error message.
+Work through ordered values `[10, 10, 14, 20]`. For the row whose value is 14:
+
+| Frame ending at CURRENT ROW | Included values | SUM |
+|---|---|---:|
+| `ROWS 1 PRECEDING` | the previous 10 and this 14 | 24 |
+| `GROUPS 1 PRECEDING` | both rows in the preceding peer group, then 14 | 34 |
+| `RANGE 3 PRECEDING` | values from 11 through 14 | 14 |
+
+For descending order, the value boundary moves in the opposite numeric direction; `rangeBound` uses `ascending` to choose the appropriate search. Null ordering and peers also affect the bounds. This is why replacing every offset with `index - offset` would be incorrect.
+
+Run `node docs/examples/window-frames.mjs` after building. The script checks the complete four-row result in all three modes, including a unique tie-breaker for the `ROWS` example.
 
 ## Partitioning, ordering, and sharing
 
-[`WindowOperator`](../../src/execution/operators/window.ts) may have to evaluate several window expressions at once. [`buildGroups`](../../src/execution/operators/window.ts) groups them by [`partitionSignature`](../../src/execution/operators/window.ts) — a canonical string built from each `PARTITION BY` expression's `exprKey` — so window functions over the same partitioning share one partitioning pass. Within a group, [`columnFor`](../../src/execution/operators/window.ts) deduplicates the compiled expressions themselves, so `SUM(AMT) OVER w` and `MAX(AMT) OVER w` evaluate `AMT` once.
+[`WindowOperator`](../../src/execution/operators/window.ts) may have to evaluate several window expressions at once. [`buildGroups`](../../src/execution/operators/window.ts) groups them by [`partitionSignature`](../../src/execution/operators/window.ts) — a canonical string built from each `PARTITION BY` expression's `exprKey` — so window functions over the same partitioning share one partitioning pass. Within a group, [`columnFor`](../../src/execution/operators/window.ts) deduplicates the compiled expressions themselves, so two window calls using `SUM(AMT)` and `MAX(AMT)` with the same inline `OVER (...)` definition evaluate `AMT` once.
 
 Evaluation is three phases. [`materializeEvals`](../../src/execution/operators/window.ts) walks the buffered chunks and produces one plain array per distinct input expression. [`partitionsOf`](../../src/execution/operators/window.ts) builds the partitions using the same [`createKeyedHashTable`](../../src/execution/hash-table.ts) the joins and aggregates use — collecting row indices, not rows:
 
@@ -169,7 +178,7 @@ That per-plan sort is why two window functions with the same partitioning but di
 
 ## Running out of memory
 
-A window function needs every row of a partition before it can produce any of that partition's output. So it buffers, and buffering is bounded:
+This `WindowOperator` buffers input before computing window results. Some window functions and frames admit streaming implementations, but that is not the general path used here. Its resident-input budget triggers spilling:
 
 ```typescript
 this.resident.push(flat);
@@ -177,7 +186,7 @@ this.memoryBudget.admit(flat.size);
 if (this.memoryBudget.exceeded) await this.overflow();
 ```
 
-[`overflow`](../../src/execution/operators/window.ts) is a one-way switch. Once it fires, `overflowed` stays true and every chunk — including the ones already buffered — goes to [`dispatch`](../../src/execution/operators/window.ts), which writes each chunk **twice**:
+[`overflow`](../../src/execution/operators/window.ts) is a one-way switch. Once it fires, `overflowed` stays true and every chunk — including the ones already buffered — goes to [`dispatch`](../../src/execution/operators/window.ts), which writes each chunk once for reconstruction and once **per partitioning group**:
 
 ```typescript
 await store.appendChunk(ROWS_RUN, chunk);
@@ -199,7 +208,7 @@ Once into `ROWS_RUN`, in arrival order, to reconstruct the output. And once per 
 
 [`taggedChunk`](../../src/execution/operators/window.ts) appends one extra column to each spilled chunk: the row's global ordinal. That is the thread that lets the results find their way home. [`spillGroupResults`](../../src/execution/operators/window.ts) reads one partition handle, computes the window functions over it, and writes the *results* back out — ordinal first, then one column per window plan. [`mergeByOrdinal`](../../src/execution/operators/window.ts) then merges the sixteen result handles with a [`PriorityQueue`](../../src/utils/priority-queue.ts) keyed on that ordinal, yielding one row of values at a time in original order, while `streamSpilled` walks `ROWS_RUN` and pairs each input row with the next merged result.
 
-So the spilled path is: partition to disk, compute per partition, sort-merge the answers back into input order. Both paths call the same `computeGroup`, which is why an operator that spills produces the same values as one that does not.
+So the spilled path is: partition to disk, compute per partition, sort-merge the answers back into input order. Both paths call `computeGroup`, reducing duplicated semantic logic. Routing, serialization, and ordinal reconstruction still need differential tests. One very large partition can remain large after hash partitioning; the spill trigger is not a hard process-memory cap.
 
 ## In the code
 
@@ -222,7 +231,7 @@ So the spilled path is: partition to disk, compute per partition, sort-merge the
 
 ## Traps
 
-**`RANGE` is the default, not `ROWS`.** A running total written `SUM(x) OVER (ORDER BY d)` includes every row that ties on `d`. If your ordering key has duplicates and you wanted a strict running total, you have to write `ROWS` explicitly. This is standard SQL and catches everyone once.
+**`RANGE` is the default, not `ROWS`.** A running total written `SUM(x) OVER (ORDER BY d)` includes every row that ties on `d`. If your ordering key has duplicates and you wanted a strict running total, you have to write `ROWS` explicitly. With tied keys, add a unique tie-breaker as well if each intermediate running total must be reproducible.
 
 **`LAG` and `LEAD` ignore the frame entirely.** They are handled in `computePlan`'s switch, not by a frame aggregator, and index directly into the sorted partition. `LAG(x, 1) OVER (ORDER BY d ROWS BETWEEN 5 PRECEDING AND CURRENT ROW)` gives the previous row regardless of the frame clause.
 
@@ -236,15 +245,25 @@ So the spilled path is: partition to disk, compute per partition, sort-merge the
 
 ## Exercises
 
-1. Reproduce the running-total table, then change `OVER (ORDER BY AMT)` to `OVER (ORDER BY AMT ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)` and explain both outputs in terms of `peerGroupsOf`.
+### Understand
 
-2. Write a query where `RANK` and `DENSE_RANK` differ by more than one, and predict both columns before you run it.
+Amounts ordered as [50,100,100] use SUM(amount) OVER (ORDER BY amount). What are the default running totals?
 
-3. Run a window query with `QE_MEMORY_LIMIT_BYTES=65536` over enough rows to force `overflow`, and confirm the results are identical to the unspilled run — including row order, which the ordinal merge is supposed to preserve.
+### Practice
 
-4. `slidingExtreme` assumes frame starts and ends never move backwards. Construct — on paper — a frame specification that would violate it, and say why the parser cannot produce one.
+1. **Observe.** Reproduce the running-total table, then change `OVER (ORDER BY AMT)` to `OVER (ORDER BY AMT ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)` and explain both outputs in terms of `peerGroupsOf`.
 
-5. Add `RANGE` support for numeric `PRECEDING` offsets: instead of `index - offset`, binary-search the sorted partition for the first row whose value is at least `value - offset`. Where in `window-frame.ts` does that information have to arrive, and what does that tell you about the current signature of `boundIndex`?
+2. **Observe.** Write a query where `RANK` and `DENSE_RANK` differ by more than one, and predict both columns before you run it.
+
+3. **Extend (optional).** Run a window query with `QE_MEMORY_LIMIT_BYTES=65536` over enough rows to force `overflow`, and confirm the results are identical to the unspilled run — including row order, which the ordinal merge is supposed to preserve.
+
+4. **Observe.** `slidingExtreme` assumes frame starts and ends never move backwards. Construct — on paper — a frame specification that would violate it, and say why the parser cannot produce one.
+
+5. **Observe.** Run the checked-in frame example, then change the `RANGE` ordering to descending and predict its value boundaries. Follow `FrameInput`, `offsetBound`, and `rangeBound` to explain why the search direction changes. Compare the result with `tests/e2e/window-frame-semantics.test.ts`.
+
+### Hints and expected observations
+
+With the default peer-aware RANGE frame, totals are [50,250,250]. An explicit ROWS frame gives [50,150,250] in a chosen peer order; a unique ordering key makes that order reproducible.
 
 ## Recap
 
@@ -253,6 +272,7 @@ So the spilled path is: partition to disk, compute per partition, sort-merge the
 - `SUM`, `AVG`, and `COUNT` are computed by **prefix sums** — constant time per row, and `COUNT(*)` by index arithmetic — while `MIN` and `MAX` use a **monotonic deque**, linear over the whole partition.
 - `ROW_NUMBER`, `RANK`, and `DENSE_RANK` differ only in how they respond to peers; `LAG` and `LEAD` ignore the frame and index the sorted partition directly.
 - Window expressions sharing a `PARTITION BY` are grouped so the partitioning pass and the input expressions are computed once.
-- On overflow, every chunk is written twice — once in arrival order, once **hash-partitioned by partition key** — each spilled row carries a global **ordinal**, and results are merged back into input order with a priority queue.
+- `ROWS`, `GROUPS`, and `RANGE` offsets count positions, peer groups, and ordering-value distance respectively. The current implementation supports all three.
+- On overflow, chunks are written once in arrival order and once **per partitioning group**. A global **ordinal** lets the priority queue merge results back into input order.
 
 Next: [chapter 39](39-memory-and-spilling.md) collects the memory budget that all of these operators share, and asks what "the same answer" means once spilling starts.

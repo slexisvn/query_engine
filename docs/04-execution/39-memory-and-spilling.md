@@ -1,6 +1,6 @@
 # 39. Memory budgets and spilling
 
-> After this chapter you will be able to make any operator in this engine spill on demand, verify that it still gives the right answer, and say precisely what "the right answer" does and does not include.
+> After this chapter you will be able to trigger supported spill paths, compare their results, and explain the limits of an operator's local memory estimate.
 
 ## The question
 
@@ -112,7 +112,7 @@ async appendChunk(partitionId: string, chunk: DataChunk | null): Promise<void> {
 }
 ```
 
-That split is the whole design. `SpillManager` knows about chunks and framing; `SpillStorage` knows about bytes. [`FsStorage`](../../src/storage/spill-manager/fs-storage.ts) appends to a file per partition, caching a write handle and closing it before opening a reader; [`MemoryStorage`](../../src/storage/spill-manager/memory-storage.ts) keeps a list of `Uint8Array`s per partition.
+That split separates the two layers' responsibilities. `SpillManager` knows about chunks and framing; `SpillStorage` knows about bytes. [`FsStorage`](../../src/storage/spill-manager/fs-storage.ts) appends to a file per partition, caching a write handle and closing it before opening a reader; [`MemoryStorage`](../../src/storage/spill-manager/memory-storage.ts) keeps a list of `Uint8Array`s per partition.
 
 Which one you get depends on the entry point, and this is worth being precise about. [`ExecutionResources`](../../src/execution/execution-resources.ts) defaults to `new MemoryStorageBackend()`. `src/index.ts` installs [`NodeStorageBackend`](../../src/storage/backend/node-storage-backend.ts) as the default factory, and `src/browser.ts` installs the memory one. So **spilling in the browser build, and in any embedding that does not supply a backend, serializes chunks into memory buffers** — the row arrays and hash tables really are released, and the encoded bytes really are more compact, but nothing reaches a disk. Chapter 44 covers that injection.
 
@@ -217,15 +217,25 @@ The relevant settings, all in [`config.ts`](../../src/config.ts):
 
 ## Exercises
 
-1. The central experiment of this part. Pick a query with a total `ORDER BY`, run it with the default budget and with `QE_MEMORY_LIMIT_BYTES=65536`, and assert the two row arrays are identical. Then remove the tie-breaking column from the `ORDER BY` and watch the assertion fail while a sorted comparison still passes.
+### Understand
 
-2. Instrument `RowMemoryBudget.exceeded` to log the operator that asked. Run the running query at 30,000 customers with the small limit and report which operators spilled and in what order.
+If three operators each have a 64 KiB local budget, does that cap the whole query at 64 KiB?
 
-3. Compute by hand the `rowCapacity` for a five-column row of `INT32, FLOAT64, VARCHAR, VARCHAR, DATE` at a 1 MB limit, then check it with `rowByteWidth`.
+### Practice
 
-4. Set `QE_DEDUP_SPILL_PARTITIONS=10` and run a spilling `SELECT DISTINCT`. Confirm the answer is still correct, then explain — from the masking expression — why it is correct and what was wasted.
+1. **Observe.** The central experiment of this part. Pick a query with a total `ORDER BY`, run it with the default budget and with `QE_MEMORY_LIMIT_BYTES=65536`, and assert the two row arrays are identical. Then remove the tie-breaking column and see whether peer order changes. A difference is permitted, not guaranteed. Without `LIMIT`, compare bags and verify sortedness; if a limit cuts a peer group, use a tie-aware check or restore a unique tie-breaker.
 
-5. Give `RowMemoryBudget` a shared parent so that all operators in one query draw from a single pool. Run the running query with a small limit before and after. Report what changed, and whether any answer did.
+2. **Extend (optional).** Instrument `RowMemoryBudget.exceeded` to log the operator that asked. Run the running query at 30,000 customers with the small limit and report which operators spilled and in what order.
+
+3. **Observe.** Compute by hand the `rowCapacity` for a five-column row of `INT32, FLOAT64, VARCHAR, VARCHAR, DATE` at a 1 MB limit, then check it with `rowByteWidth`.
+
+4. **Extend (optional).** Set `QE_DEDUP_SPILL_PARTITIONS=10` and run a spilling `SELECT DISTINCT`. Confirm the answer is still correct, then explain — from the masking expression — why it is correct and what was wasted.
+
+5. **Extend (optional).** Give `RowMemoryBudget` a shared parent so that all operators in one query draw from a single pool. Run the running query with a small limit before and after. Report what changed, and whether any answer did.
+
+### Hints and expected observations
+
+No. Their local budgets can sum to 192 KiB, with additional allocations outside those estimates. A spill to an in-memory backend also retains serialized bytes in the process.
 
 ## Recap
 

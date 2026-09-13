@@ -1,6 +1,6 @@
 # 32. Scans and zone maps
 
-> After this chapter you will be able to predict how many chunks a filtered scan reads, and explain why moving one `WHERE` clause can change that number from all of them to one.
+> After this chapter you will be able to use chunk min/max ranges to determine which chunks a scan can safely skip.
 
 ## The question
 
@@ -206,7 +206,7 @@ Four regimes are visible. `O_ORDERKEY` is perfectly correlated with position, so
 
 ## Traps
 
-**Zone maps prune chunks, not rows.** A chunk that contains one matching row is read in full and filtered normally. The win is proportional to how many chunks can be excluded, which is a property of the data's physical order, not of the predicate's selectivity. A highly selective predicate on an uncorrelated column prunes nothing.
+**Zone maps prune chunks, not rows.** A chunk that contains one matching row is read in full and filtered normally. The win is proportional to how many chunks can be excluded, which is a property of the data's physical order, not of the predicate's selectivity. A highly selective predicate on a physically scattered column may still overlap almost every chunk's range.
 
 **Statistics collection scans the table without a pruner.** The first query against a fresh table triggers `_ensureStatistics`, which reads every chunk. If you are counting chunks, warm the statistics with a throwaway query first or the count will be 49 too high.
 
@@ -218,15 +218,25 @@ Four regimes are visible. `O_ORDERKEY` is perfectly correlated with position, so
 
 ## Exercises
 
-1. Reproduce the chunk counts. Remember to warm statistics first. Then run the same six predicates with `QE_ZONE_MAP_PRUNING=0` and confirm the row counts are identical.
+### Understand
 
-2. Shuffle `ORDERS` before loading it so `O_ORDERKEY` is uncorrelated with position, and rerun. Explain the new numbers in one sentence.
+Three chunks have ranges [1,10], [11,20], and [21,30]. Which must be inspected for WHERE k BETWEEN 8 AND 12?
 
-3. `O_CUSTKEY = 3` reads 20 chunks. Predict — before running it — how many chunks `O_CUSTKEY BETWEEN 3 AND 400` reads, then check.
+### Practice
 
-4. Add a rule to `RANGE_RULES` or a compiler to `EXPR_COMPILERS` for an expression form that currently falls through to `anyTruth`. `LIKE '%suffix'` is not one of them; explain why not.
+1. **Observe.** Reproduce the chunk counts. Remember to warm statistics first. Then run the same six predicates with `QE_ZONE_MAP_PRUNING=0` and confirm the row counts are identical.
 
-5. Break the pruner deliberately: change `=`'s `possiblyTrue` to `(lo, hi) => lo < 0 && hi > 0`. Find a query that now returns the wrong answer, and say which property of `canSkip` you violated.
+2. **Observe.** Shuffle `ORDERS` before loading it so `O_ORDERKEY` is uncorrelated with position, and rerun. Explain the new numbers in one sentence.
+
+3. **Observe.** `O_CUSTKEY = 3` reads 20 chunks. Predict — before running it — how many chunks `O_CUSTKEY BETWEEN 3 AND 400` reads, then check.
+
+4. **Extend (optional).** Add a rule to `RANGE_RULES` or a compiler to `EXPR_COMPILERS` for an expression form that currently falls through to `anyTruth`. `LIKE '%suffix'` is not one of them; explain why not.
+
+5. **Extend (optional).** Break the pruner deliberately: change `=`'s `possiblyTrue` to `(lo, hi) => lo < 0 && hi > 0`. Find a query that now returns the wrong answer, and say which property of `canSkip` you violated.
+
+### Hints and expected observations
+
+The first two overlap the predicate range. Skip the third, then test individual rows in the surviving chunks. A zone map is not a row-level index.
 
 ## Recap
 

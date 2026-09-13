@@ -1,6 +1,6 @@
 # 43. Serialization and spill files
 
-> After this chapter you will be able to read the byte layout of a page or a spill record, explain why filtering a chunk before writing it can triple its size, and say exactly what a spilling operator leaves on your disk.
+> After this chapter you will be able to follow a chunk through serialization and explain how its visible rows, encoding, and backend affect the bytes written.
 
 ## The question
 
@@ -202,27 +202,37 @@ Read the `TOTAL` column before trusting that too far. All three rows hold the sa
 
 **A zero-row chunk writes nothing, and the partition then does not exist.** `appendChunk` returns early on `!chunk || chunk.size === 0`, so `hasSpilled` stays false and `readChunks` yields nothing rather than yielding an empty chunk. An operator that treats "no partition" as "not spilled" is right; one that treats it as "zero rows written" is also right, and the two only differ if something else already decided the partition existed.
 
-**Spilling under the memory backend does not free memory.** `MemoryStorage` holds the serialized bytes in a `Map`. Spilling still helps — the bytes are typically much smaller than the live columns, and the operator's working set shrinks to one partition — but the process footprint does not drop the way it does with `FsStorage`. In a browser there is nowhere else for it to go.
+**Spilling under the memory backend does not free memory.** `MemoryStorage` holds the serialized bytes in a `Map`. Spilling still helps — the bytes are typically much smaller than the live columns, and the operator's working set shrinks to one partition — but the process footprint does not drop the way it does with `FsStorage`. The browser backend supplied here keeps these bytes in memory; a browser storage backend using persistent APIs would be a separate design.
 
 **`removeAll` only deletes `.spill` files.** It filters `readdir` output by suffix, so anything else in a spill directory survives. Directory removal is the temp manager's job, not the storage's.
 
 **The serialized size is not the retained size.** `columnRecordBytes` prices what will be written; `columnRetainedBytes` prices what is held in memory, including over-allocated capacity. A flat `VARCHAR` column whose byte buffer doubled to 32 KB for 25 KB of text retains more than it serializes, and chapter 41's dictionary comparison flips sign depending on which you measure.
 
-**Little-endian is assumed, not recorded.** No byte-order mark is written. Files are portable between machines of the same endianness, which in practice is all of them, but nothing in the format would catch it if that stopped being true.
+**Little-endian is assumed, not recorded.** No byte-order mark is written. The format assumes compatible byte order at both ends. Common deployment targets are little-endian, but the format does not detect an incompatible target.
 
 **A tied `ORDER BY` key makes the top rows a property of the plan.** `ORDER BY TOTAL DESC LIMIT 3` over a result where several groups share a total returns three of them, not a defined three. Spilling changes the plan, so it can change which three while every sum stays identical. A comparison like the one above tests the tiebreak as much as the spill unless the sort key is made unique or the `LIMIT` is dropped.
 
 ## Exercises
 
-1. Reproduce the three opening numbers. Then serialize the filtered chunk *after* calling `flatten()` yourself and confirm the size is unchanged — the serializer was going to do it anyway.
+### Understand
 
-2. Serialize an encoded chunk, deserialize it, and print `columnFormOf` for each column. Now do it with `QE_COLUMN_ENCODING=0` set only for the write. Which side of the round trip does the flag affect?
+A chunk stores four rows but selects only rows 1 and 3. What must a serialization round trip preserve?
 
-3. Write two chunks to a partition with `SpillManager`, then read them back while a third append is in flight. Explain what `closeWriteHandle` in `openReader` guarantees, and construct the failure that would occur without it.
+### Practice
 
-4. Add a form codec: a fourth `ColumnFormCodec` that stores a constant column as a single value plus a length. Give `columnFormOf` a case for it, choose an unused id, and confirm a chunk containing one round-trips.
+1. **Observe.** Reproduce the three opening numbers. Then serialize the filtered chunk *after* calling `flatten()` yourself and confirm the size is unchanged — the serializer was going to do it anyway.
 
-5. Run a spilling query and list the temp root from a `setInterval` while it runs. Which directories acquire files, in what order, and how large do they get relative to the memory limit?
+2. **Observe.** Serialize an encoded chunk, deserialize it, and print `columnFormOf` for each column. Now do it with `QE_COLUMN_ENCODING=0` set only for the write. Which side of the round trip does the flag affect?
+
+3. **Extend (optional).** Write two chunks to a partition with `SpillManager`, then read them back while a third append is in flight. Explain what `closeWriteHandle` in `openReader` guarantees, and construct the failure that would occur without it.
+
+4. **Extend (optional).** Add a form codec: a fourth `ColumnFormCodec` that stores a constant column as a single value plus a length. Give `columnFormOf` a case for it, choose an unused id, and confirm a chunk containing one round-trips.
+
+5. **Extend (optional).** Run a spilling query and list the temp root from a `setInterval` while it runs. Which directories acquire files, in what order, and how large do they get relative to the memory limit?
+
+### Hints and expected observations
+
+It must preserve the two visible rows, their values, types, and nulls. It need not preserve unused slots, spare capacity, or the original selection-vector representation.
 
 ## Recap
 

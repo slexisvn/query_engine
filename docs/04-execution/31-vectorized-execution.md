@@ -1,10 +1,10 @@
 # 31. Vectorized execution: why 2,048
 
-> After this chapter you will know what the 2,048 in `DEFAULT_CHUNK_SIZE` buys, measured rather than asserted, and which of this engine's operators are genuinely vectorized.
+> After this chapter you will know what the 2,048 in `DEFAULT_CHUNK_SIZE` buys, measured rather than asserted, and which execution paths process whole batches.
 
 ## The question
 
-Chapter 4 said a chunk is 2,048 rows and gave the standard argument: small chunks pay per-chunk overhead too often, large chunks fall out of cache. It is a good argument. Measure it and you get this — 4,194,304 rows of `FLOAT64` pushed through a projection and a filter, chunked every way:
+Chapter 4 introduced the default of 2,048 rows per chunk. Small chunks pay setup costs more often; larger ones change the working set and scheduling granularity. The original manuscript reported this sweep over 4,194,304 `FLOAT64` rows through a projection and filter. Its environment was not recorded, so treat the timings as an illustration and repeat the sweep on your workload:
 
 ```
 chunk size | project ms | filter ms   (4,194,304 rows total)
@@ -25,7 +25,7 @@ That is worth taking seriously rather than explaining away, and it tells you som
 
 ## What the overhead actually is
 
-The left half of the table is the part that is not up for debate. Look at what happens per chunk in [`ProjectionOperator`](../../src/execution/operators/projection.ts):
+The smaller chunk sizes illustrate the per-chunk overhead in this experiment. Look at what happens per chunk in [`ProjectionOperator`](../../src/execution/operators/projection.ts):
 
 ```typescript
 async process(chunk: DataChunk): Promise<DataChunk> {
@@ -54,11 +54,11 @@ At one row per chunk the fixed part is paid four million times and dominates com
 
 ## Why the cliff did not appear
 
-The cache argument is not wrong; the benchmark is a single sequential pass over one 8-byte column. A modern prefetcher handles that perfectly at any size, so a 32 MB column streams as fast as a 16 KB one, and the larger chunk wins by paying the fixed cost fewer times.
+The cache argument is not wrong; the benchmark is a single sequential pass over one 8-byte column. Sequential access can benefit from hardware prefetching, while larger chunks pay fixed costs fewer times. That is a plausible explanation for these measurements; the timing table alone does not isolate cache misses or prefetch behavior.
 
-The cliff appears when an operator makes **more than one pass** over the same chunk, or touches several columns at once. Then the working set has to survive from one pass to the next, and a chunk that does not fit in cache is re-fetched from memory each time. [`_executeAnd`](../../src/execution/operators/filter.ts) is a two-pass operator of exactly that kind: it evaluates the left predicate over the whole chunk, then the right one, then intersects the two selection vectors. [`materializeEvals`](../../src/execution/operators/window.ts) builds one array per window input and then [`partitionsOf`](../../src/execution/operators/window.ts) and `sortedPartition` walk those arrays again. And the hash join's build partitions rows into sixteen buckets, so the write stream is sixteen cursors instead of one.
+Cache pressure can become more visible when an operator makes **more than one pass** over a chunk or touches several columns at once. Then the working set has to survive from one pass to the next, and a chunk that does not fit in cache is re-fetched from memory each time. [`_executeAnd`](../../src/execution/operators/filter.ts) is a two-pass operator of exactly that kind: it evaluates the left predicate over the whole chunk, then the right one, then intersects the two selection vectors. [`materializeEvals`](../../src/execution/operators/window.ts) builds one array per window input and then [`partitionsOf`](../../src/execution/operators/window.ts) and `sortedPartition` walk those arrays again. And the hash join's build partitions rows into sixteen buckets, so the write stream is sixteen cursors instead of one.
 
-So the honest version of the claim is: **2,048 is where the per-chunk overhead has gone away, and it is small enough that a multi-pass operator's working set still fits in cache.** The first half of that is measurable in a microbenchmark. The second half is insurance against operators the microbenchmark does not exercise, and buying it costs about 30 percent on the operators that would not have needed it.
+The supported conclusion is narrower: **2,048 amortizes much of the fixed overhead in this experiment and limits batch size.** Whether a working set fits in cache depends on the operator, live columns, data representation, and hardware. This benchmark does not establish a universally best chunk size.
 
 There is one more consideration that no benchmark shows. A chunk is the unit of latency: a streaming query cannot emit its first row until the first chunk is complete, and [`ResultSink`](../../src/execution/result-sink.ts) queues at most `sinkQueueCapacity` — eight — chunks of backpressure. Bigger chunks mean coarser scheduling and later first rows.
 
@@ -145,9 +145,9 @@ async function tryWasmProject(expr, chunk, columnMapping): Promise<Column | null
 
 The first gate is only a shape test. [`isVectorizableExpr`](../../src/execution/wasm-expr-eval.ts) accepts a numeric column reference, a numeric literal, `+ - * /` over two such operands, or unary minus, and knows nothing about whether a kernel exists to run them.
 
-The second gate is the one that stops everything. `wasmMinChunkSize` is 4,096 — twice the chunk size — and a chunk arriving from storage is at most 2,048 rows, so an ordinary query never reaches the kernel lookup at all.
+For default-size storage chunks, the second gate prevents lookup: `wasmMinChunkSize` is 4,096, while those chunks hold at most 2,048 rows. Derived chunks or changed settings can have different sizes. Chapter 54 measures this gate for one concrete projection.
 
-The kernel check is a third gate, one level further down. [`evalVectorized`](../../src/execution/wasm-expr-eval.ts) opens with `if (dispatch.kernels.size === 0) return null;`, and that table stays empty until `enableWasm()` registers the compiled module — which only the CLI calls. So even a chunk large enough to pass the size gate returns nothing in library use. Chapter 54 returns to this.
+The kernel check is a third gate, one level further down. [`evalVectorized`](../../src/execution/wasm-expr-eval.ts) opens with `if (dispatch.kernels.size === 0) return null;`, and that table stays empty until kernels are registered. The CLI calls `enableWasm()` during startup; library users can call it explicitly. A sufficiently large chunk still needs a registered kernel for the operation and type.
 
 ## In the code
 
@@ -166,7 +166,7 @@ The kernel check is a third gate, one level further down. [`evalVectorized`](../
 
 ## Traps
 
-**Vectorized here means "a loop over a column", not SIMD.** There is no explicit vector instruction anywhere in the TypeScript. The win is removing per-row dispatch and allocation, not doing four lanes at once. The AssemblyScript kernels under [`src/wasm/assembly/`](../../src/wasm/assembly/aggregate.ts) are the only place with a different execution model, and chapter 54 explains why they are idle.
+**Vectorized here means "a loop over a column", not SIMD.** There is no explicit vector instruction anywhere in the TypeScript. The win is removing per-row dispatch and allocation, not doing four lanes at once. The AssemblyScript kernels under [`src/wasm/assembly/`](../../src/wasm/assembly/aggregate.ts) are the only place with a different execution model, and chapter 54 distinguishes loading those kernels from actually invoking them.
 
 **The columnar path gathers when there is a selection vector.** [`denseColumn`](../../src/execution/columnar-projection.ts) copies selected rows into a fresh `FLOAT64` column before the arithmetic loop, so a filtered chunk pays a materialization the unfiltered one does not. For a very selective filter that gather is cheap; for one that keeps most rows it costs a full copy.
 
@@ -176,15 +176,25 @@ The kernel check is a third gate, one level further down. [`evalVectorized`](../
 
 ## Exercises
 
-1. Reproduce the chunk-size sweep. Then change the benchmark expression from one column to four columns summed together, rerun, and see whether the cliff appears.
+### Understand
 
-2. Time `A * 2` and `ABS(A)` through `ProjectionOperator` and confirm the ratio. Then add `'ABS'` handling to `compileColumnarProjection` and measure again.
+A table has 5,000 rows and batches contain at most 2,048. How many batches are needed, and what fixed costs does batching amortize?
 
-3. `ProjectionOperator` gates the columnar path on `dataType === DataType.FLOAT64`. Find an integer-typed projection that `compileColumnarProjection` compiles but the operator never uses, and describe what would have to change for it to be used safely.
+### Practice
 
-4. Change `DEFAULT_CHUNK_SIZE` to 512 and to 16,384, rebuild with `npm run build:ts`, and run the running query at 30,000 customers with `EXPLAIN ANALYZE`. Report the three execution times, and say which operator you think moved.
+1. **Observe.** Reproduce the chunk-size sweep. Then change the benchmark expression from one column to four columns summed together, rerun, and see whether the cliff appears.
 
-5. Delete `src/execution/vector-ops.ts` and its test, then run `npm run build:ts` and the suite. Explain what the result tells you about the file, and decide whether deleting it is an improvement.
+2. **Extend (optional).** Time `A * 2` and `ABS(A)` through `ProjectionOperator` and confirm the ratio. Then add `'ABS'` handling to `compileColumnarProjection` and measure again.
+
+3. **Observe.** `ProjectionOperator` gates the columnar path on `dataType === DataType.FLOAT64`. Find an integer-typed projection that `compileColumnarProjection` compiles but the operator never uses, and describe what would have to change for it to be used safely.
+
+4. **Extend (optional).** Change `DEFAULT_CHUNK_SIZE` to 512 and to 16,384, rebuild with `npm run build:ts`, and run the running query at 30,000 customers with `EXPLAIN ANALYZE`. Report the three execution times, and say which operator you think moved.
+
+5. **Extend (optional).** Delete `src/execution/vector-ops.ts` and its test, then run `npm run build:ts` and the suite. Explain what the result tells you about the file, and decide whether deleting it is an improvement.
+
+### Hints and expected observations
+
+Three batches: 2,048, 2,048, and 904. Calls, promises, and per-batch setup are paid three times rather than 5,000; this does not imply SIMD or guaranteed cache fit.
 
 ## Recap
 
@@ -193,6 +203,6 @@ The kernel check is a third gate, one level further down. [`evalVectorized`](../
 - `DEFAULT_CHUNK_SIZE` is the one setting in [`config.ts`](../../src/config.ts) with **no environment variable**. `flushBatchSize` merely defaults to it.
 - Expression evaluation has two implementations: a **typed-array loop** for numeric `+ - * /` over fixed-width columns, and a row-at-a-time closure tree for everything else. The gap between them is about 5x.
 - The typed-array loop drops null checking entirely for **total** operations over columns with no nulls; anything else takes the checked path.
-- `src/execution/vector-ops.ts` is **dormant** — nothing in `src/` imports it — and the WASM projection path is gated out by a minimum chunk size larger than a chunk.
+- `src/execution/vector-ops.ts` is **dormant** — nothing in `src/` imports it — and the demonstrated WASM projection path is gated out for default-size storage chunks by a larger minimum chunk size.
 
 Next: [chapter 32](32-scans-and-zone-maps.md) starts at the bottom of the plan, where chunks come from — and shows how the engine skips reading most of them.

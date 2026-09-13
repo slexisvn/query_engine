@@ -51,7 +51,7 @@ if (children && children.length === 1 && children[0].type === PlanNodeType.EMPTY
 }
 ```
 
-An aggregate with no grouping keys is one group whether or not any rows arrive, so `COUNT(*)` over nothing is `0` and `SUM(x)` over nothing is `NULL` — a row either way. An aggregate *with* grouping keys produces one row per distinct key value, and zero rows have zero distinct values. That is the entire difference, and it is those four lines.
+An aggregate with no grouping keys is one group whether or not any rows arrive, so `COUNT(*)` over nothing is `0` and `SUM(x)` over nothing is `NULL` — a row either way. An aggregate *with* grouping keys produces one row per distinct key value, and zero rows have zero distinct values. Those cases explain why empty-input handling must distinguish grouped from ungrouped aggregation.
 
 The join rules follow the same reasoning about which side is allowed to vanish:
 
@@ -238,15 +238,25 @@ This is worth knowing before you debug a pass. **The formatter is a lossy view**
 
 ## Exercises
 
-1. Reproduce the two `Empty` plans. Then predict what happens to `SELECT SUM(C_CUSTKEY) FROM CUSTOMER WHERE 1 = 0` and what value the row contains, and check both.
+### Understand
 
-2. Write a helper that walks a plan and prints each scan's alias and column names. Use it to reproduce the pruning table for the running query, then find a query where projection pushdown prunes nothing and explain why.
+What should COUNT(*) and SUM(x) return on an empty input with no GROUP BY? What changes with GROUP BY k?
 
-3. Fix the `COUNT(*)` case. `pruneScan` needs to distinguish "no constraint" from "no columns needed". Note that its existing guard, `neededCols.length > 0 && neededCols.length < node.columns.length`, already refuses to produce a zero-column scan — decide what the scan should keep instead, and run the tests.
+### Practice
 
-4. Delete `PredicateDedup` from the pipeline, then optimize the divergent query from chapter 15 and count conjuncts. Then set `QE_OPTIMIZER_FIXPOINT_ITERATIONS=32` and count again.
+1. **Observe.** Reproduce the two `Empty` plans. Then predict what happens to `SELECT SUM(C_CUSTKEY) FROM CUSTOMER WHERE 1 = 0` and what value the row contains, and check both.
 
-5. Extend `NodeMerge` to collapse a `Project` whose expressions are a strict subset of its child's, in the same order. Write down the case where that is unsound before you write the code.
+2. **Observe.** Write a helper that walks a plan and prints each scan's alias and column names. Use it to reproduce the pruning table for the running query, then find a query where projection pushdown prunes nothing and explain why.
+
+3. **Extend (optional).** Fix the `COUNT(*)` case. `pruneScan` needs to distinguish "no constraint" from "no columns needed". Note that its existing guard, `neededCols.length > 0 && neededCols.length < node.columns.length`, already refuses to produce a zero-column scan — decide what the scan should keep instead, and run the tests.
+
+4. **Extend (optional).** Delete `PredicateDedup` from the pipeline, then optimize the divergent query from chapter 15 and count conjuncts. Then set `QE_OPTIMIZER_FIXPOINT_ITERATIONS=32` and count again.
+
+5. **Extend (optional).** Extend `NodeMerge` to collapse a `Project` whose expressions are a strict subset of its child's, in the same order. Write down the case where that is unsound before you write the code.
+
+### Hints and expected observations
+
+The ungrouped result has one row: count 0 and sum NULL. With grouping keys there are no groups and therefore no output rows.
 
 ## Recap
 

@@ -1,6 +1,6 @@
 # 29. From logical to physical
 
-> After this chapter you will be able to look at any `EXPLAIN` output and say which operators were chosen by a lookup table, which were chosen by arithmetic, and what numbers that arithmetic used.
+> After this chapter you will be able to distinguish fixed physical mappings from costed alternatives and find the estimates behind a choice.
 
 ## The question
 
@@ -41,11 +41,12 @@ The optimizer's output is a **logical plan**: a tree of relational operations th
 Most of the translation is a lookup. [`planNode`](../../src/execution/physical-planner.ts) is the whole dispatcher:
 
 ```typescript
-planNode(node: LogicalPlanNode): PhysicalPlanNode {
-  const children = (node.children ?? []).map((child) => this.planNode(child));
+planNode(node: LogicalPlanNode, required: RequiredOrder = null): PhysicalPlanNode {
+  const childRequired = requiredOrderFor(node, required);
+  const children = (node.children ?? []).map((child) => this.planNode(child, childRequired));
   const physicalType = descriptorOf(node.type).physicalType;
 
-  if (physicalType === null) return this.planCostBased(node, children);
+  if (physicalType === null) return this.planCostBased(node, children, required);
 
   const satisfied = this.planSatisfiedOrder(node, children);
   if (satisfied) return satisfied;
@@ -66,7 +67,7 @@ Costing needs row counts, and the logical plan does not carry them by default. [
 
 ```typescript
 plan(node: LogicalPlanNode): PhysicalPlanNode {
-  return this.planNode(this.planProperties.annotate(node));
+  return this.planNode(this.planProperties.annotate(node), null);
 }
 ```
 
@@ -93,7 +94,7 @@ That ratio has a name. The **q-error** of an estimate is how many times wrong it
 
 ## Choosing a join
 
-[`joinCandidates`](../../src/execution/physical-planner.ts) builds a list and [`cheapest`](../../src/execution/physical-planner.ts) picks the minimum. There are three candidates, and two of them are conditional.
+[`joinCandidates`](../../src/execution/physical-planner.ts) builds a list and [`cheapestFor`](../../src/execution/physical-planner.ts) compares each candidate's own cost plus the cost of any remaining required sort. There are three candidates, and two of them are conditional.
 
 **Hash join is always a candidate.** If the condition has equi-join keys it is priced with `hashJoinCost`; if it does not, it is priced as a hash build plus a block nested loop, because that is what the operator degenerates into when every row hashes to the same key.
 
@@ -162,7 +163,7 @@ Every join candidate also carries decorations that the operator will read later,
 
 That last predicate is what changed in the opening plans. It requires every group key to be a plain column reference with known statistics, a product of distinct-value counts no greater than 256, and — through [`hasCompactDomain`](../../src/planner/aggregate-strategy.ts) — either an integer range no wider than 4,096 or at most four distinct values. Three customers grouped by name have three distinct values, so the tiny plan qualifies. Thirty thousand do not.
 
-When it does qualify it wins by construction, because `perfectHashAggregateCost` is `hashAggregateCost` multiplied by `perfectHashAggregateCostFactor`, which is 0.5:
+When it qualifies its node cost is discounted relative to hash aggregation, because `perfectHashAggregateCost` is `hashAggregateCost` multiplied by `perfectHashAggregateCostFactor`, which is 0.5:
 
 ```
 hashAggregateCost          = 43.53
@@ -205,7 +206,7 @@ The inner `Top-N` sorts; the outer one takes ten rows off the front. The logical
 | Cardinality and sort-order annotation | [`PlanPropertyAnnotator`](../../src/planner/plan-properties.ts) |
 | Join candidate list | [`joinCandidates`](../../src/execution/physical-planner.ts) |
 | Aggregate candidate list | [`aggregateCandidates`](../../src/execution/physical-planner.ts) |
-| Picking the minimum | [`cheapest`](../../src/execution/physical-planner.ts) |
+| Picking the minimum | [`cheapestFor`](../../src/execution/physical-planner.ts) |
 | Cost arithmetic | [`DefaultCostModel`](../../src/planner/cost-model.ts) |
 | Cost provenance | [`CostRecorder`](../../src/planner/cost-recorder.ts) |
 | Whole-tree cost | [`totalPhysicalCost`](../../src/execution/physical-plan.ts) |
@@ -214,7 +215,7 @@ The inner `Top-N` sorts; the outer one takes ten rows off the front. The logical
 
 ## Traps
 
-**`cheapest` compares node costs, not subtree costs.** Each candidate for one node has the same children, so the comparison is fair. But [`totalPhysicalCost`](../../src/execution/physical-plan.ts) exists separately for callers that need the whole tree, and it has two special cases: an `Empty` node ignores its child, because that subtree exists only to supply a schema and never runs, and a `DependentJoin` multiplies its inner subtree's cost by the outer cardinality, because that subtree runs once per outer row.
+**`cheapestFor` includes an ordering requirement.** Candidates for a node have the same children, so it compares their node costs plus `residualSortCost`. A more expensive join can win if its output avoids a sort above it. But [`totalPhysicalCost`](../../src/execution/physical-plan.ts) exists separately for callers that need the whole tree, and it has two special cases: an `Empty` node ignores its child, because that subtree exists only to supply a schema and never runs, and a `DependentJoin` multiplies its inner subtree's cost by the outer cardinality, because that subtree runs once per outer row.
 
 **The physical planner runs inside the optimizer for some queries.** [`AggregatePushdown`](../../src/optimizer/passes/aggregate-pushdown.ts) constructs its own `PhysicalPlanner` to price a candidate rewrite against the current plan. An optimizer pass that calls the physical planner is unusual, and it is why that pass can be described as cost-based while the rest are rules.
 
@@ -224,22 +225,32 @@ The inner `Top-N` sorts; the outer one takes ten rows off the front. The logical
 
 ## Exercises
 
-1. Reproduce the join sweep above. Then set `QE_NESTED_LOOP_MAX_ROWS=4` and rerun the three-row case. Explain the operator you get instead, using the three cost numbers printed in this chapter.
+### Understand
 
-2. Use `CostRecorder` to print the term-by-term breakdown of `mergeJoinCostWithSorts(6000, 120000, false, false, 201658)`. Which single term would have to disappear for the merge join to beat the hash join, and what would have to be true of the plan for it to disappear?
+Why does a logical Join not tell you whether execution will use hashing or nested loops?
 
-3. Run `EXPLAIN ANALYZE` on the running query at 30,000 customers and find the operator with the worst q-error. Then add a second predicate on `ORDERS` and see whether the error gets better or worse.
+### Practice
 
-4. Add a `PhysicalNodeType` of your own and point some logical node type's descriptor at it. The change fails at execution rather than at planning — find where, and say what that tells you about how the two halves are connected.
+1. **Observe.** Reproduce the join sweep above. Then set `QE_NESTED_LOOP_MAX_ROWS=4` and rerun the three-row case. Explain the operator you get instead, using the three cost numbers printed in this chapter.
 
-5. `canUsePerfectHashAggregate` caps groups at 256 and integer domains at 4,096. Construct a table where a `GROUP BY` on an integer column with 200 distinct values spread over a range of 100,000 is rejected, and say which of the two limits rejected it.
+2. **Observe.** Use `CostRecorder` to print the term-by-term breakdown of `mergeJoinCostWithSorts(6000, 120000, false, false, 201658)`. Which single term would have to disappear for the merge join to beat the hash join, and what would have to be true of the plan for it to disappear?
+
+3. **Extend (optional).** Run `EXPLAIN ANALYZE` on the running query at 30,000 customers and find the operator with the worst q-error. Then add a second predicate on `ORDERS` and see whether the error gets better or worse.
+
+4. **Extend (optional).** Add a `PhysicalNodeType` of your own and point some logical node type's descriptor at it. The change fails at execution rather than at planning — find where, and say what that tells you about how the two halves are connected.
+
+5. **Extend (optional).** `canUsePerfectHashAggregate` caps groups at 256 and integer domains at 4,096. Construct a table where a `GROUP BY` on an integer column with 200 distinct values spread over a range of 100,000 is rejected, and say which of the two limits rejected it.
+
+### Hints and expected observations
+
+The logical node expresses matching and row preservation. The physical planner selects an applicable algorithm using estimates, costs, and required properties.
 
 ## Recap
 
 - The **physical plan** is a second tree, carrying an operator type, an estimated cardinality, and a cost for every node.
 - Most logical nodes map to one operator through a **descriptor table**; only `JOIN` and `AGGREGATE` have `physicalType: null` and are decided by cost.
 - Costs are computed from **estimated** cardinalities annotated onto the logical tree before planning, so a bad estimate produces a slow plan rather than a wrong one. `EXPLAIN ANALYZE` shows the two side by side.
-- A join has up to three candidates — hash always, nested loop below `nestedLoopMaxRows`, merge whenever there are equi-keys — and `cheapest` takes the minimum.
+- A join has up to three candidates: hash, a size-gated nested loop, and an equi-key merge join. `cheapestFor` includes the cost of any ordering still required above the candidate.
 - A grouped aggregate has up to three candidates, with **`PerfectHashAggregate` gated on a small dense key domain** and `StreamAggregate` gated on the child already being sorted.
 - `planSatisfiedOrder` deletes a `Sort` and downgrades a `Top-N` to a `Limit` when the child's order already satisfies them.
 

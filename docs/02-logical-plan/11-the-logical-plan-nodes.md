@@ -1,6 +1,6 @@
 # 11. The logical plan nodes
 
-> After this chapter you will be able to name every node type this engine can put in a plan, say which stage of the pipeline produces it, and read the union type that ties them together.
+> After this chapter you will be able to recognize the main plan node families and use their union type to find the fields a tree walk may access.
 
 ## The question
 
@@ -55,7 +55,7 @@ interface PlanNodeBase {
 }
 ```
 
-Only `children` is structure. The three underscore-prefixed fields are **annotations**: information computed *about* a node rather than part of what it means. `_cardinality` is an estimated row count, `_sortedBy` records an ordering the node's output is known to have, and `_cteMap` carries the bodies of common table expressions. All three are optional, all three can be absent, and no operator's meaning depends on them. Chapter 23 fills in `_cardinality` properly; chapter 28 covers `_sortedBy`.
+Only `children` is structure. The three underscore-prefixed fields are **annotations**: information computed *about* a node rather than part of what it means. `_cardinality` is an estimated row count, `_sortedBy` records an ordering the node's output is known to have, and `_cteMap` carries the bodies of common table expressions. These fields are optional in the type, but their contracts differ. `_cardinality` is a fallible estimate; `_sortedBy` must be a sound ordering guarantee when used to remove work; `_cteMap` supplies plan bodies that a CTE scan needs. Losing or falsifying the latter two can break execution. Chapter 23 covers estimates, and chapter 28 separates estimates from correctness-sensitive metadata.
 
 `children` being optional is not cosmetic. Leaves — `LogicalScanNode`, `LogicalIndexScanNode` — genuinely do not have the field, so every traversal goes through [`getChildren`](../../src/planner/logical-plan.ts), which normalizes the absence to an empty array, and [`setChildren`](../../src/planner/logical-plan.ts), which returns a **copy** with new children rather than mutating:
 
@@ -277,20 +277,30 @@ Both styles produce the same object, so nothing is broken; but if you add a fiel
 
 ## Exercises
 
-1. Print `Object.keys(PlanNodeType).length` and confirm the count. Then write a query for each of the thirteen planner-emitted types and record the plan. Which two are hardest to trigger?
+### Understand
 
-2. Take the running query's plan and walk it with [`getChildren`](../../src/planner/logical-plan.ts), printing `node.type` at each level. Now do the same for a query with a CTE and explain the discrepancy between what you printed and what the query reads.
+A plan node says _cardinality=100 and _sortedBy=[K ASC]. Which fact may be an approximation, and which must be sound if a sort is removed?
 
-3. `EXISTS` gives you a `SEMI` join. Find SQL that yields `ANTI`, and SQL that yields `MARK`. Print both plans before and after optimization.
+### Practice
 
-4. Add a `pruningFilter` to a `LogicalScanNode` by hand and re-print the plan. Does any formatter show it? Find who reads the field, and decide whether the plan printers should.
+1. **Observe.** Print `Object.keys(PlanNodeType).length` and confirm the count. Then write a query for each of the thirteen planner-emitted types and record the plan. Which two are hardest to trigger?
 
-5. Change [`LogicalTopN`](../../src/planner/logical-plan.ts) to default `offset` to `1` instead of `0` and run the test suite. Predict first which tests can possibly notice, using the `TopNFusion` excerpt above and a search for callers of the constructor — then check whether you were right, and make the change that a query would actually have seen.
+2. **Observe.** Take the running query's plan and walk it with [`getChildren`](../../src/planner/logical-plan.ts), printing `node.type` at each level. Now do the same for a query with a CTE and explain the discrepancy between what you printed and what the query reads.
+
+3. **Observe.** `EXISTS` gives you a `SEMI` join. Find SQL that yields `ANTI`, and SQL that yields `MARK`. Print both plans before and after optimization.
+
+4. **Extend (optional).** Add a `pruningFilter` to a `LogicalScanNode` by hand and re-print the plan. Does any formatter show it? Find who reads the field, and decide whether the plan printers should.
+
+5. **Extend (optional).** Change [`LogicalTopN`](../../src/planner/logical-plan.ts) to default `offset` to `1` instead of `0` and run the test suite. Predict first which tests can possibly notice, using the `TopNFusion` excerpt above and a search for callers of the constructor — then check whether you were right, and make the change that a query would actually have seen.
+
+### Hints and expected observations
+
+The cardinality may be an estimate. The ordering must hold for every emitted row under the required comparator. CTE bodies are required plan data, not a performance estimate.
 
 ## Recap
 
 - One file holds the entire IR: twenty-three interfaces, a **discriminated union** over `PlanNodeType`, and twenty-three constructor functions. Nodes are plain objects; the union plus `switch` narrowing is what keeps tree walks type-safe.
-- `PlanNodeBase` supplies `children` plus three **annotation** fields — `_cardinality`, `_sortedBy`, `_cteMap` — that carry derived information and never change what a node means.
+- `PlanNodeBase` supplies `children` plus **metadata**: a row estimate, an ordering guarantee, and CTE bodies. Their contracts differ; metadata used to remove a sort or resolve a CTE is correctness-sensitive.
 - **Thirteen** node types come from the planner, one per SQL construct. **Ten** arrive later, each from a named pass or from the distributed planner, so the presence of one tells you which stage has run.
 - `JoinType` has **nine** members and only five are writable in SQL; `SEMI`, `ANTI`, `MARK`, and `SINGLE` are what subqueries become.
 - `CTEAnchor` is fully specified and **never constructed** outside tests. CTE bodies travel out of band in `_cteMap`, and a `CTEScan` is a childless leaf.

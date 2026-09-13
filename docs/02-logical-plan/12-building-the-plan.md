@@ -1,6 +1,6 @@
 # 12. Building the plan
 
-> After this chapter you will be able to predict the exact tree the planner emits for any `SELECT`, and explain why that tree is deliberately a bad one.
+> After this chapter you will be able to trace how SELECT clauses become plan nodes and distinguish initial translation from later optimization.
 
 ## The question
 
@@ -247,7 +247,7 @@ Run the opening query through the optimizer and every one of those omissions is 
 
 The `WHERE` filter has moved onto the `ORDERS` scan, the join's inputs have swapped, and `Sort` plus `Limit` have fused into `Top-N`. The `HAVING` filter stayed put, correctly, because it mentions an aggregate.
 
-The reason to split the work this way is that **the planner has exactly one correctness obligation, and it is easy to check**: does the tree mean what the SQL means? A planner that also reordered joins would tangle two obligations together, and a wrong answer would leave you unsure which half caused it. Chapter 53's first diagnostic question is always "is the unoptimized plan right?" — worth being able to answer.
+The reason to split the work this way is that **the planner has a focused correctness obligation**: does the tree mean what the SQL means? A planner that also reordered joins would tangle two obligations together, and a wrong answer would leave you unsure which half caused it. Chapter 53's first diagnostic question is always "is the unoptimized plan right?" — worth being able to answer.
 
 ## How everything after this walks the tree
 
@@ -330,15 +330,25 @@ The second plan still references `_scalar_0` and no longer computes it. Bind aga
 
 ## Exercises
 
-1. Reproduce the opening plan, then delete one clause at a time and record which node disappears. Confirm the remaining nodes keep their relative order.
+### Understand
 
-2. `SELECT C_NAME FROM CUSTOMER ORDER BY C_MKTSEGMENT` plans successfully; adding `DISTINCT` raises an error. Print both plans (or the error), then explain in one sentence why the `DISTINCT` version cannot work, using the node order from the fork above.
+Why is the scan near the bottom of a printed plan and LIMIT near the top?
 
-3. Write a subclass of [`PlanRewriter`](../../src/planner/plan-rewriter.ts) that overrides only `rewriteJoin` to swap `children`. Run it on the opening plan and confirm the printed tree changes and the answers do not. Then try it on a `LEFT JOIN` and explain the result.
+### Practice
 
-4. Run `LIMIT 1 + 1` and confirm zero rows. Fix [`applyLimit`](../../src/planner/logical-planner.ts) so that a non-literal limit either evaluates or raises. Which choice does the rest of the engine make easier?
+1. **Observe.** Reproduce the opening plan, then delete one clause at a time and record which node disappears. Confirm the remaining nodes keep their relative order.
 
-5. Make the planner smarter: in `planFrom`, reorder a two-table `JoinRef` so the smaller table is on the left, using `engine.catalog` for row counts. Run `npm run test:e2e`. Then argue, from what breaks or does not break, whether this belongs in the planner at all.
+2. **Observe.** `SELECT C_NAME FROM CUSTOMER ORDER BY C_MKTSEGMENT` plans successfully; adding `DISTINCT` raises an error. Print both plans (or the error), then explain in one sentence why the `DISTINCT` version cannot work, using the node order from the fork above.
+
+3. **Extend (optional).** Write a subclass of [`PlanRewriter`](../../src/planner/plan-rewriter.ts) that overrides only `rewriteJoin` to swap `children`. Run it on the opening plan and confirm the printed tree changes and the answers do not. Then try it on a `LEFT JOIN` and explain the result.
+
+4. **Extend (optional).** Run `LIMIT 1 + 1` and confirm zero rows. Fix [`applyLimit`](../../src/planner/logical-planner.ts) so that a non-literal limit either evaluates or raises. Which choice does the rest of the engine make easier?
+
+5. **Extend (optional).** Make the planner smarter: in `planFrom`, reorder a two-table `JoinRef` so the smaller table is on the left, using `engine.catalog` for row counts. Run `npm run test:e2e`. Then argue, from what breaks or does not break, whether this belongs in the planner at all.
+
+### Hints and expected observations
+
+Each later logical operation wraps its input. Rows flow from the leaves toward the root, though streaming operators can overlap rather than finishing one whole relation at a time.
 
 ## Recap
 

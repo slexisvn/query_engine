@@ -27,6 +27,10 @@ maxIterations=32: copies of (C.C_NATIONKEY = 3) = 32
 
 Exactly one copy per iteration, forever. A loop named "run to fixpoint" that has no fixpoint, on a five-line query. By the end of this chapter you will know which two passes are feeding each other, why the loop terminates anyway, and which later pass quietly cleans up after it.
 
+## A fixpoint on a small expression
+
+Before the multi-pass experiment, imagine a simplifier rewriting `((2 + 3) * x) + 0`. One sweep could fold `2 + 3` to 5, producing `(5 * x) + 0`; another could remove `+ 0`, producing `5 * x`. A further sweep makes no change. That last sweep establishes a fixpoint for this rule set. This is a hand-worked illustration, not the exact sweep count of the engine's expression simplifier.
+
 ## A pass is one method
 
 [`OptimizationPass`](../../src/optimizer/pass.ts) is nine lines:
@@ -261,15 +265,25 @@ For the book's running query that is **27 events** — 24 registrations plus the
 
 ## Exercises
 
-1. Reproduce the divergence table. Build an `Optimizer` with only the three-pass fixpoint stage, pass an explicit `maxIterations` as the third argument to `registerFixpoint`, and count occurrences of the predicate for each of 1, 2, 4, 8, 16.
+### Understand
 
-2. Instrument `runToFixpoint` to print the iteration at which each stage stops. Run the whole test suite and find the query that comes closest to the cap without a divergent cycle.
+A pass maps plans A to B, B to C, and C to C. How many applications establish convergence?
 
-3. Fix the divergence. `collectFiltersAbove` only looks at a join's immediate child; make it search the whole subtree for filters, then re-run the table from exercise 1 and confirm it converges at 2. Then run `npm test` and report what else moved.
+### Practice
 
-4. Remove the `_` check from `stableValue` and re-optimize the running query. Which stage now runs eight times, and what does that do to optimization time?
+1. **Observe.** Reproduce the divergence table. Build an `Optimizer` with only the three-pass fixpoint stage, pass an explicit `maxIterations` as the third argument to `registerFixpoint`, and count occurrences of the predicate for each of 1, 2, 4, 8, 16.
 
-5. Use `insertPassAfter` to add a pass of your own that prints its input and returns it unchanged, placed after `JoinReorder`. Confirm from the observer that your pass runs exactly once, and explain why it does not make the fixpoint run again.
+2. **Extend (optional).** Instrument `runToFixpoint` to print the iteration at which each stage stops. Run the whole test suite and find the query that comes closest to the cap without a divergent cycle.
+
+3. **Extend (optional).** Investigate the divergence by following `collectFiltersAbove`, inference, and deduplication. Design a change that recognizes an already-implied predicate without treating filters below an outer join or another semantic boundary as globally true. Re-run the iteration table and the relevant result tests; convergence alone does not prove the rewrite sound.
+
+4. **Extend (optional).** Remove the `_` check from `stableValue` and re-optimize the running query. Which stage now runs eight times, and what does that do to optimization time?
+
+5. **Extend (optional).** Use `insertPassAfter` to add a pass of your own that prints its input and returns it unchanged, placed after `JoinReorder`. Confirm from the observer that your pass runs exactly once, and explain why it does not make the fixpoint run again.
+
+### Hints and expected observations
+
+Three: the final C-to-C application confirms a fixpoint. An iteration cap bounds work even when a pass cycle never converges; the cap does not prove semantic correctness.
 
 ## Recap
 

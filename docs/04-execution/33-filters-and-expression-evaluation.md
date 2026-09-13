@@ -1,6 +1,6 @@
 # 33. Filters and expression evaluation
 
-> After this chapter you will be able to say exactly what a `WHERE` clause becomes at runtime, why removing rows costs no copying, and why `NOT IN` with a `NULL` in the list returns nothing.
+> After this chapter you will be able to trace a filter's selection vector and evaluate its null cases without confusing logical positions with stored row indices.
 
 ## The question
 
@@ -204,7 +204,7 @@ More than half of [`filter.ts`](../../src/execution/operators/filter.ts) impleme
 | Reusing a column computed below | [`materializedColumnOf`](../../src/execution/expression-eval.ts) |
 | Scalar operator semantics | [`binaryValueOp`](../../src/execution/value-ops.ts) |
 | `LIKE` to `RegExp` | [`likeToRegex`](../../src/execution/expression-eval.ts) |
-| Casts | [`castValue`](../../src/execution/expression-eval.ts) |
+| Casts | [`castToType`](../../src/storage/data-type.ts) |
 | Column reference to index | [`resolveColumnIndex`](../../src/execution/column-resolve.ts) |
 | Diagnostic on failure | [`UnresolvedReferenceError`](../../src/execution/column-resolve.ts) |
 | Where the filter sink is built | [`buildFilter`](../../src/execution/builders/pipeline-builders.ts) |
@@ -223,15 +223,25 @@ More than half of [`filter.ts`](../../src/execution/operators/filter.ts) impleme
 
 ## Exercises
 
-1. Reproduce the selection-vector trace. Then apply a third filter that keeps everything, and confirm the third output is the same object as the second.
+### Understand
 
-2. Run all six null queries from the opening. Then add `WHERE X NOT IN (1, 2)` — no null in the list — and explain why the answer changes.
+Starting with stored values [5,10,15,20], a filter selects indices [1,3]. A second filter keeps values greater than 15. Which physical index remains?
 
-3. Find the point where `subarray` beats `slice`. Time `_executeFallback` on 2,048-row chunks at several selectivities, with the threshold set to 0 and to 2048, and say whether 64 is a good choice.
+### Practice
 
-4. Add a function to `compileFunction` — `CEIL`, say. Then write the query that would have silently returned zero rows before your change, and confirm it does.
+1. **Observe.** Reproduce the selection-vector trace. Then apply a third filter that keeps everything, and confirm the third output is the same object as the second.
 
-5. Instrument `FilterOperator.process` to count how often each of its three exits is taken during the running query at 30,000 customers. Which exit dominates, and what does that tell you about where filter time actually goes?
+2. **Observe.** Run all six null queries from the opening. Then add `WHERE X NOT IN (1, 2)` — no null in the list — and explain why the answer changes.
+
+3. **Observe.** Find the point where `subarray` beats `slice`. Time `_executeFallback` on 2,048-row chunks at several selectivities, with the threshold set to 0 and to 2048, and say whether 64 is a good choice.
+
+4. **Extend (optional).** Add a function to `compileFunction` — `CEIL`, say. Then write the query that would have silently returned zero rows before your change, and confirm it does.
+
+5. **Extend (optional).** Instrument `FilterOperator.process` to count how often each of its three exits is taken during the running query at 30,000 customers. Which exit dominates, and what does that tell you about where filter time actually goes?
+
+### Hints and expected observations
+
+Index 3 remains. The second filter's logical position 1 refers to physical index 3 through the existing selection vector.
 
 ## Recap
 

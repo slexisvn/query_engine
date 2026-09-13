@@ -269,15 +269,25 @@ The estimator scores them 0.005 and 0.86. Conjunct evaluation short-circuits on 
 
 ## Exercises
 
-1. Register a primary key and a `BTreeIndex` on `CUSTOMER`, then reproduce the point scan, the range scan with a residual filter, and the eliminated sort. Run each twice, once with `new IndexSelection(catalog, null)` and once with a real statistics map, and find every query whose plan differs between the two.
+### Understand
 
-2. Print `_sortedBy` for every node of the opening plan after `PlanProperties` runs. Then insert a `Distinct` between the scan and the sort and explain why the sort comes back.
+A chunk's min/max is [10, 20]. For WHERE k = 15, can the scan skip the chunk or accept all its rows?
 
-3. Add `Distinct` to `inferSortOrder`'s pass-through list and decide, by reading the operator in `src/execution/operators/distinct.ts`, whether that is sound.
+### Practice
 
-4. Call `engine.buildIndexes()` after registering a table with a primary key and confirm that the point-lookup plan appears without a manual `registerIndex`. Then find out where in the engine's lifecycle that call would have to go to happen automatically, and what it would cost.
+1. **Observe.** Register a primary key and a `BTreeIndex` on `CUSTOMER`, then reproduce the point scan, the range scan with a residual filter, and the eliminated sort. Run each twice, once with `new IndexSelection(catalog, null)` and once with a real statistics map, and find every query whose plan differs between the two.
 
-5. Make `IndexSelection` compare candidate indexes by estimated selectivity instead of taking the first one. Construct a query with indexes on two columns where the change matters, and show both plans.
+2. **Observe.** Print `_sortedBy` for every node of the opening plan after `PlanProperties` runs. Then insert a `Distinct` between the scan and the sort and explain why the sort comes back.
+
+3. **Extend (optional).** Add `Distinct` to `inferSortOrder`'s pass-through list and decide, by reading the operator in `src/execution/operators/distinct.ts`, whether that is sound.
+
+4. **Extend (optional).** Call `engine.buildIndexes()` after registering a table with a primary key and confirm that the point-lookup plan appears without a manual `registerIndex`. Then find out where in the engine's lifecycle that call would have to go to happen automatically, and what it would cost.
+
+5. **Extend (optional).** Make `IndexSelection` compare candidate indexes by estimated selectivity instead of taking the first one. Construct a query with indexes on two columns where the change matters, and show both plans.
+
+### Hints and expected observations
+
+Neither follows from the range alone. Fifteen may occur, so retain the chunk and evaluate rows. For k = 30, the range proves the chunk can be skipped.
 
 ## Recap
 

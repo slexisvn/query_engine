@@ -1,6 +1,6 @@
 # 7. The AST and why it isn't enough
 
-> After this chapter you will be able to state exactly what information a syntax tree is missing, and why a separate stage — not a bigger parser — is the right way to supply it.
+> After this chapter you will be able to explain which information an AST records and which questions need a catalog and name resolution.
 
 ## The question
 
@@ -60,7 +60,7 @@ The parser tags some literals and not others:
 {"kind":"Literal","value":true,  "dataType":"BOOLEAN"}
 ```
 
-The integer `1` has no type. Neither does `NULL`. And no expression node has a type at all — `a + b` is a `BinaryExprNode` with an `op` string, and whether that addition yields an integer, a float, or a date depends entirely on what `a` and `b` turn out to be. Chapter 9 works through the rules; the point here is that they cannot run until names are resolved.
+The AST leaves the integer `1` and `NULL` untyped, while the other literals above carry syntax-derived type information. A compound expression such as `a + b` has an operator but no resolved result type: its arithmetic depends on what `a` and `b` resolve to. Chapter 9 works through the rules; the point here is that they cannot run until names are resolved.
 
 ### How wide is `*`?
 
@@ -141,15 +141,25 @@ Note what is *not* different: the shape. `BoundExpr` is still a discriminated un
 
 ## Exercises
 
-1. Parse `SELECT NOPE FROM NOSUCH` and print the tree. Then bind it and read the error. Which stage produced each, and what does that tell you about where to look when a user reports a problem?
+### Understand
 
-2. Parse `SELECT C_NAME AS NM FROM CUSTOMER ORDER BY NM` and `SELECT 1 FROM T ORDER BY C_NAME`. Diff the `orderBy` fragments. What would you have to add to the AST to distinguish them, and why would it not help?
+Why can SELECT missing FROM absent be syntactically valid while still being impossible to run against the current catalog?
 
-3. Count the node types in `ast.ts` that exist only to record a keyword that could have been a flag — `BetweenExprNode.negated` is one solution, a `NOT` wrapper would have been another. What does each choice cost the optimizer?
+### Practice
 
-4. `SELECT *` is one node. Write down every piece of information the binder must have to expand it, and in what order.
+1. **Observe.** Parse `SELECT NOPE FROM NOSUCH` and print the tree. Then bind it and read the error. Which stage produced each, and what does that tell you about where to look when a user reports a problem?
 
-5. Sketch what would break if `ColumnRefNode` gained a `dataType` field filled in by the parser. Name a query for which the parser could not fill it in correctly.
+2. **Observe.** Parse `SELECT C_NAME AS NM FROM CUSTOMER ORDER BY NM` and `SELECT 1 FROM T ORDER BY C_NAME`. Diff the `orderBy` fragments. What would you have to add to the AST to distinguish them, and why would it not help?
+
+3. **Observe.** Count the node types in `ast.ts` that exist only to record a keyword that could have been a flag — `BetweenExprNode.negated` is one solution, a `NOT` wrapper would have been another. What does each choice cost the optimizer?
+
+4. **Extend (optional).** `SELECT *` is one node. Write down every piece of information the binder must have to expand it, and in what order.
+
+5. **Extend (optional).** Sketch what would break if `ColumnRefNode` gained a `dataType` field filled in by the parser. Name a query for which the parser could not fill it in correctly.
+
+### Hints and expected observations
+
+Its tokens and clause structure fit the grammar. The AST records names, while the binder must establish that the relation and column exist.
 
 ## Recap
 

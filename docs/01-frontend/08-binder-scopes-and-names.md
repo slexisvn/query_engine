@@ -11,7 +11,7 @@ SELECT C_NAME AS NM FROM CUSTOMER WHERE NM = 'Alice'    -- Unknown column: NM
 SELECT C_NAME AS NM FROM CUSTOMER ORDER BY NM           -- works
 ```
 
-Every SQL user learns this as a rule. It is not a rule anyone decided; it is a consequence of the order in which one function binds clauses, and you can point at the line.
+This engine allows select-list aliases in `ORDER BY` but not in `WHERE`. That is a choice of SQL dialect implemented by the binder's lookup rules. To understand it, follow which names each clause is allowed to look up. The order of statements in the binder alone does not determine visibility.
 
 ## The scope chain
 
@@ -142,7 +142,7 @@ if (node.orderBy) orderBy = node.orderBy.map(ok => ({
   expr: this.bindPositionalKey('ORDER BY', ok.expr, fromScope, selectAliasMap, boundSelectItems), ... }));
 ```
 
-Read where `selectAliasMap` is built: **after** `WHERE` is bound, **before** `GROUP BY` and `ORDER BY`. That is the answer.
+There are two lookup paths here. `WHERE` receives `fromScope`, containing the input relations. `GROUP BY` and `ORDER BY` also receive `selectAliasMap`. The map is created after `WHERE` in this implementation, but creating it earlier would not give `WHERE` access to it.
 
 `WHERE` is bound with `bindExpression` against the scope alone, so `NM` is looked up as a column, is not found, and fails. `GROUP BY` and `ORDER BY` go through [`bindPositionalKey`](../../src/binder/binder.ts), which consults the alias map first. The behavior matches exactly:
 
@@ -281,7 +281,7 @@ SELECT a.C_NAME, b.C_NAME FROM CUSTOMER a JOIN CUSTOMER b ON ...
 
 ## Traps
 
-**Alias visibility is decided by one line's position.** Moving the `selectAliasMap` construction above the `WHERE` binding would make aliases work in `WHERE` — and silently change the dialect. Whether a change to binding order is a bug fix or a compatibility break is not a question the code can answer for you.
+**Creating an alias map does not make it visible everywhere.** Moving its construction above `WHERE` leaves behavior unchanged: `bindExpression` still searches the input scope. Supporting aliases there would require changing name resolution deliberately, including a rule for conflicts between an input column and an output alias.
 
 **`depth` is computed at lookup, not by analysis.** Nothing scans for correlation afterwards. If a future refactor resolved names differently, correlation detection would break in a way that shows up as a wrong plan, not a resolution error.
 
@@ -291,26 +291,36 @@ SELECT a.C_NAME, b.C_NAME FROM CUSTOMER a JOIN CUSTOMER b ON ...
 
 ## Exercises
 
-1. Reproduce the alias table. Bind all three queries and confirm which fail:
+### Understand
+
+CUSTOMER and ORDERS both expose a column named ID. What extra information does c.ID provide that bare ID does not?
+
+### Practice
+
+1. **Observe.** Reproduce the alias table. Bind all three queries and confirm which fail:
 
    ```javascript
    engine.bind(engine.parseSQL("SELECT C_NAME AS NM FROM CUSTOMER WHERE NM = 'Alice'"));
    ```
 
-2. Bind a correlated `EXISTS` and walk the bound `where` expression printing `tableAlias`, `columnName`, and `depth` for every `BoundColumnRef`. Then nest it two levels deep and predict the depths before running it.
+2. **Observe.** Bind a correlated `EXISTS` and walk the bound `where` expression printing `tableAlias`, `columnName`, and `depth` for every `BoundColumnRef`. Then nest it two levels deep and predict the depths before running it.
 
-3. Move the `selectAliasMap` construction above the `WHERE` binding in `bindSelect` and rebuild. Which tests fail? Are they testing the behavior deliberately, or incidentally?
+3. **Observe.** Move the `selectAliasMap` construction above the `WHERE` binding in `bindSelect` and rebuild. Predict whether `WHERE NM = 'Alice'` changes, then check. It should still fail: the map is not passed to the `WHERE` lookup. Revert the move, then trace the extra lookup that `bindPositionalKey` performs for `ORDER BY`.
 
-4. `checkGroupingCoverage` returns `false` from the walk callback to prune subtrees. Remove one of the two `return false` lines and find the query that now reports a spurious error.
+4. **Extend (optional).** `checkGroupingCoverage` returns `false` from the walk callback to prune subtrees. Remove one of the two `return false` lines and find the query that now reports a spurious error.
 
-5. Construct a query where `shadowAliasFor` fires. You need the same alias visible in two nested scopes at once. Then print the bound references and find the `:1` suffix.
+5. **Extend (optional).** Construct a query where `shadowAliasFor` fires. You need the same alias visible in two nested scopes at once. Then print the bound references and find the `:1` suffix.
+
+### Hints and expected observations
+
+The qualifier selects a relation binding. Bare ID is ambiguous when both visible inputs supply it. A SELECT alias is a separate lookup rule; moving map construction alone does not change WHERE lookup.
 
 ## Recap
 
 - A [`BinderScope`](../../src/binder/scope.ts) holds visible relations and a parent pointer; all keys are **uppercased**, which is where case-insensitivity is implemented.
 - Unqualified lookup searches every local relation and **keeps going after the first hit** to detect ambiguity; local relations shadow outer ones.
 - Crossing a scope marked `queryBoundary` increments **`depth`**, and `depth > 0` is the definition of a **correlated** reference. Chapter 27 is built on it.
-- `bindSelect` binds `FROM`, then the select list, then `WHERE`, **then** builds the alias map, then `GROUP BY` and `ORDER BY` — which is exactly why aliases work in the latter and not in `WHERE`.
+- `WHERE` resolves against the input scope. `GROUP BY` and `ORDER BY` additionally consult the select-list alias map through `bindPositionalKey`. That difference in lookup, rather than the location of the map's declaration, determines alias visibility.
 - `*` expands to one typed, positioned reference per column, in relation order, and output names come from an explicit alias, then an inferred name, then `col<index>` — and are **not unique**.
 - The binder rejects meaningless-but-well-formed queries, notably via `checkGroupingCoverage`.
 - Repeated aliases get **shadow names** like `CUSTOMER:1`, which the optimizer's string-keyed comparisons depend on.

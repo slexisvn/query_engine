@@ -1,6 +1,6 @@
 # 46. Workers and shared memory
 
-> After this chapter you will be able to say what enabling worker threads costs before a single row is read, how a columnar chunk crosses a thread boundary without being serialized, and why the shipped CLI cannot enable threads at all.
+> After this chapter you will be able to trace a chunk across a worker-thread boundary, distinguish shared views from copies, and diagnose worker startup.
 
 ## The question
 
@@ -269,15 +269,25 @@ Unlike the spill files in [chapter 43](../05-storage/43-serialization-and-spill.
 
 ## Exercises
 
-1. Run the CLI from `dist/index.cli.js` and again from the per-file build, and compare the `[parallel]` line. Then patch the `catch (_)` in a copy of the bundle to log the error, and confirm the module it cannot find.
+### Understand
 
-2. Print `loader.memory.buffer.byteLength` before and after `enableParallel()`. Set `QE_WASM_REGION_SIZE` to 1 MiB and re-measure. Does any query get slower?
+Two threads hold typed-array views over the same SharedArrayBuffer. Does creating the second view copy the data or make writes private?
 
-3. Run a grouped aggregate with `QE_SAB_COLUMNS=1` and instrument `encodeForTransport` to report the buffer count before and after the retry. Explain the 238 in terms of how `columnAllocator` allocates.
+### Practice
 
-4. Find the group count at which the combine phase moves from the main thread to the workers, by bisecting `QE_PARALLEL_COMBINE_MIN_GROUPS` against a query with a known number of groups. Time both sides of the boundary.
+1. **Extend (optional).** Run the CLI from `dist/index.cli.js` and again from the per-file build, and compare the `[parallel]` line. Then patch the `catch (_)` in a copy of the bundle to log the error, and confirm the module it cannot find.
 
-5. Force a partial-aggregate spill by setting `QE_AGG_SPILL_GROUPS` to something small, and confirm the results are unchanged. Then read `readPartialSpill` and explain why the combine phase can still run one partition per worker.
+2. **Observe.** Print `loader.memory.buffer.byteLength` before and after `enableParallel()`. Set `QE_WASM_REGION_SIZE` to 1 MiB and re-measure. Does any query get slower?
+
+3. **Extend (optional).** Run a grouped aggregate with `QE_SAB_COLUMNS=1` and instrument `encodeForTransport` to report the buffer count before and after the retry. Explain the 238 in terms of how `columnAllocator` allocates.
+
+4. **Observe.** Find the group count at which the combine phase moves from the main thread to the workers, by bisecting `QE_PARALLEL_COMBINE_MIN_GROUPS` against a query with a known number of groups. Time both sides of the boundary.
+
+5. **Extend (optional).** Force a partial-aggregate spill by setting `QE_AGG_SPILL_GROUPS` to something small, and confirm the results are unchanged. Then read `readPartialSpill` and explain why the combine phase can still run one partition per worker.
+
+### Hints and expected observations
+
+Neither. Both views refer to shared bytes. Read-only conventions and synchronization are required where writes occur; a new view is not ownership isolation.
 
 ## Recap
 

@@ -1,6 +1,6 @@
 # 35. Merge join, nested loop, and join semantics
 
-> After this chapter you will be able to say which of the engine's three join operators any query gets, and why all three produce identical answers for nine different join types without repeating the rules.
+> After this chapter you will be able to compare hash, merge, and nested loop joins, and check how each preserves the rows required by a join type.
 
 ## The question
 
@@ -17,7 +17,7 @@ Project
 
 `sort=LR` means the operator must sort *both* inputs itself. The planner looked at a hash join, looked at sorting 200,000 rows and then merging them, and picked the sorts. Meanwhile the same query as an `INNER JOIN` on the same tables gets a hash join.
 
-Both decisions are correct, and neither is made inside a join operator. The choice comes from the cost model, which this chapter returns to once the operators are on the table — and the reason the planner can swap operators this freely is that all three answer to one set of semantics, in [`join-core.ts`](../../src/execution/operators/join-core.ts).
+Both algorithms can implement the required semantics; the cheaper estimate is not proof of the faster runtime. The choice is made before operator execution. The choice comes from the cost model, which this chapter returns to once the operators are on the table — The planner may substitute algorithms only where each implements the required semantics. [`join-core.ts`](../../src/execution/operators/join-core.ts) provides a shared hash-join path; merge and nested loop also have their own emission code, so agreement needs testing.
 
 ## Three operators, one set of rules
 
@@ -218,7 +218,7 @@ Project                            Project
 
 ## Dependent join
 
-There is a fourth operator that is a join in name. [`DependentJoinOperator`](../../src/execution/operators/dependent-join.ts) evaluates a correlated subquery by running the inner plan once per outer row, and it exists for the cases the optimizer could not decorrelate.
+There is a fourth operator that is a join in name. [`DependentJoinOperator`](../../src/execution/operators/dependent-join.ts) runs the inner plan once per outer row, but the builder only admits supported **uncorrelated** forms. It is a limited fallback, not a general interpreter for correlation that the optimizer could not remove.
 
 Its constructor is a table of three emitters:
 
@@ -256,7 +256,7 @@ Project
 | Peer-group collection | [`collectGroup`](../../src/execution/operators/merge-join.ts) |
 | Sortedness assertion | [`SortedRowCursor`](../../src/execution/operators/merge-join.ts) |
 | Nested loop join | [`NestedLoopJoinOperator`](../../src/execution/operators/nested-loop-join.ts) |
-| Correlated subquery fallback | [`DependentJoinOperator`](../../src/execution/operators/dependent-join.ts) |
+| Limited uncorrelated fallback | [`DependentJoinOperator`](../../src/execution/operators/dependent-join.ts) |
 | Operator construction | [`buildJoin`](../../src/execution/builders/join-builder.ts) |
 
 ## Traps
@@ -271,15 +271,25 @@ Project
 
 ## Exercises
 
-1. Reproduce the five-join-type table on four rows a side, including the null keys. Then add `RIGHT` and `CROSS` to it, and change the null on the right side to a real value that matches nothing and see which outputs change.
+### Understand
 
-2. Take the `LEFT` join that becomes a merge join and use `CostRecorder` to print both candidates' costs at 40,000 and 160,000 rows. Then find the output cardinality at which the hash join wins.
+Sorted left keys are [1,2,2] and right keys are [2,2,3]. How many inner-join rows does the peer group for key 2 produce?
 
-3. Force the sortedness assertion to fire. Construct a `MergeJoinOperator` directly with an unsorted source and confirm the error message names the side.
+### Practice
 
-4. `NestedLoopJoinOperator` emits one chunk. Change it to emit in `flushBatchSize` batches. Measure whether that changes anything at 100 x 100, and explain the result.
+1. **Observe.** Reproduce the five-join-type table on four rows a side, including the null keys. Then add `RIGHT` and `CROSS` to it, and change the null on the right side to a real value that matches nothing and see which outputs change.
 
-5. Write a query whose `EXISTS` subquery the optimizer cannot decorrelate, so that `buildDependentJoin` runs rather than throwing. If you cannot construct one, say what that tells you about chapter 27.
+2. **Observe.** Take the `LEFT` join that becomes a merge join and use `CostRecorder` to print both candidates' costs at 40,000 and 160,000 rows. Then find the output cardinality at which the hash join wins.
+
+3. **Extend (optional).** Force the sortedness assertion to fire. Construct a `MergeJoinOperator` directly with an unsorted source and confirm the error message names the side.
+
+4. **Extend (optional).** `NestedLoopJoinOperator` emits one chunk. Change it to emit in `flushBatchSize` batches. Measure whether that changes anything at 100 x 100, and explain the result.
+
+5. **Extend (optional).** In an isolated optimizer configuration, omit `SubqueryUnnesting` and compare an uncorrelated `EXISTS` with a correlated one. Follow `buildDependentJoin`: the supported uncorrelated form can run; the correlated form must raise. See `tests/e2e/subquery-unnesting-differential.test.ts` for an existing test of this boundary.
+
+### Hints and expected observations
+
+Four: two left rows times two right rows. A merge join must collect or otherwise handle duplicate runs, not simply advance both cursors after one match.
 
 ## Recap
 

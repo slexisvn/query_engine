@@ -248,15 +248,25 @@ Why does the demotion matter? An inner join has more freedom than an outer one e
 
 ## Exercises
 
-1. Confirm the opening result three ways: inference alone (no change), pushdown then inference (both filters), and the full pipeline. Use the observer to see which stage and iteration each change happens in.
+### Understand
 
-2. Write a query where inference derives a `<` on a table you never filtered, and one where it derives nothing because the join predicate is `c.C_CUSTKEY = o.O_CUSTKEY + 1`. Explain the second from `inferNewPredicates`.
+Given a = b and a = 7 in an inner join, what predicate can be inferred for b? Why keep the original conditions?
 
-3. Make `collectFiltersAbove` search the whole subtree rather than one node. Show that the chapter-15 divergence disappears, then find a query where the change makes inference derive something new.
+### Practice
 
-4. `evaluateWithNulls` returns `'UNKNOWN'` for `BoundExprKind.CAST`. Add a case that recurses into the cast's operand instead, then find a `LEFT JOIN` query whose plan improves and argue that the change is sound.
+1. **Observe.** Confirm the opening result three ways: inference alone (no change), pushdown then inference (both filters), and the full pipeline. Use the observer to see which stage and iteration each change happens in.
 
-5. Delete the `FULL` branch of `OuterToInnerJoin` and run `npm run test:e2e`. Does anything fail? If not, write the query that should have.
+2. **Observe.** Write a query where inference derives a `<` on a table you never filtered, and one where it derives nothing because the join predicate is `c.C_CUSTKEY = o.O_CUSTKEY + 1`. Explain the second from `inferNewPredicates`.
+
+3. **Extend (optional).** Revisit the chapter-15 divergence. Identify which filters may legally contribute facts at a join, then design deduplication around those facts. Explain why searching every descendant without respecting outer joins and other boundaries is insufficient.
+
+4. **Extend (optional).** `evaluateWithNulls` returns `'UNKNOWN'` for `BoundExprKind.CAST`. Design a conservative rule for a specific null-preserving cast. Account for the cast's result type, possible errors, and the distinction between a null value and a boolean truth value before implementing it.
+
+5. **Extend (optional).** Delete the `FULL` branch of `OuterToInnerJoin` and run `npm run test:e2e`. Correct results can survive the loss of this optimization. Write a plan-shape test that detects the missed demotion and a result test covering unmatched rows.
+
+### Hints and expected observations
+
+Infer b = 7. The additional condition may reduce work early, but inference must preserve the original relationship and respect null and join semantics.
 
 ## Recap
 

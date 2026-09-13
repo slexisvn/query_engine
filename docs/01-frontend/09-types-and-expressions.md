@@ -1,6 +1,6 @@
 # 9. Types, coercion, and expressions
 
-> After this chapter you will be able to predict the type of any expression this engine accepts, explain why `5 / 2` is `2.5` here and `2` in PostgreSQL, and name the two helper functions the entire optimizer is built on.
+> After this chapter you will be able to follow the engine's main arithmetic and aggregate type rules, explain the result of numeric division, and use the expression helpers shared by optimizer passes.
 
 ## The question
 
@@ -14,7 +14,7 @@ PostgreSQL answers `2`. This engine answers `2.5`:
 SELECT 5 / 2 -> [{"R":2.5}]
 ```
 
-Neither is wrong. Integer division is a choice, and it is made in one line of a 45-line file. This chapter is about that file and the decisions in it, because every one of them is visible in query results and none of them is arbitrary.
+The two systems use different rules for integer operands. This chapter follows the engine's type-inference rules and shows how they affect results.
 
 ## The whole type system
 
@@ -89,15 +89,15 @@ Measured against a table with an `INT32`, a `FLOAT64`, a `VARCHAR`, and a `DATE`
 | `I = I AND I = I` | `BOOLEAN` | logical |
 | `S \|\| S` | `VARCHAR` | concatenation |
 
-### Division is never integer division
+### Numeric division yields a floating-point type
 
 ```typescript
 if (op === '/') return DataType.FLOAT64;
 ```
 
-Unconditional, before any operand type is examined. `INT32 / INT32` is `FLOAT64`.
+This branch comes after the temporal cases and before the remaining numeric rules. For ordinary numeric operands, `INT32 / INT32` is `FLOAT64`.
 
-The argument for this behavior is that `5 / 2 = 2` surprises far more people than it helps, and silently discards data. The argument against is that it diverges from the SQL standard and from PostgreSQL, so a query ported from elsewhere can produce different numbers without any error — the worst kind of incompatibility. Both arguments are real. What matters for you is knowing which side this engine picked, because the plan will never tell you.
+Here `5 / 2` returns `2.5`. SQL products differ in their numeric division and coercion rules, so make operand types explicit when porting a query. The rule shown here describes this engine; it is not a universal rule for SQL.
 
 ### Addition, subtraction, and multiplication widen
 
@@ -107,9 +107,9 @@ if (WIDENING_ARITHMETIC_OPS.has(op)) return DataType.INT64;
 
 `WIDENING_ARITHMETIC_OPS` is `+`, `-`, `*`. Two `INT32`s added give an `INT64`, even though the sum of two 32-bit values usually fits in 32 bits.
 
-This trades memory for the elimination of a whole failure mode. `SUM` over a million rows of `INT32` overflows easily; a product of two large `INT32`s overflows almost immediately. Widening at the type level means the overflow never happens rather than being detected after the fact — and since `INT64` is a `BigInt64Array` in storage, the wider result is genuinely exact rather than drifting into float imprecision.
+Widening gives integer results a larger storage range. It does not eliminate overflow: signed 64-bit storage still has finite bounds, and using a `BigInt64Array` does not prove that every intermediate calculation avoided JavaScript `number` arithmetic. Precision depends on the full path from input, through evaluation, to result conversion.
 
-The cost is that intermediate values are eight bytes instead of four, and that a chain of arithmetic stays wide even when it did not need to. This engine takes correctness here, and it is the same reason [`inferAggregateType`](../../src/binder/type-inference.ts) makes `SUM` of any integer type return `INT64`.
+The cost is that intermediate values are eight bytes instead of four, and that a chain of arithmetic stays wide even when it did not need to. The same widening policy is why [`inferAggregateType`](../../src/binder/type-inference.ts) makes `SUM` of any integer type return `INT64`.
 
 ### Temporal arithmetic
 
@@ -123,7 +123,7 @@ if (rightTemporal) return right!;
 
 Date minus date is a **number of days** (`INT32`), not a date — subtracting two points gives an interval. Date plus a number is still a date. And because the temporal checks come first, they beat every other rule: `DATE + FLOAT64` is a `DATE`, not a float.
 
-Recall from chapter 4 that a `DATE` is an `Int32Array` of day numbers. Date arithmetic is therefore integer arithmetic that happens to be labeled — the type system carries the meaning, and the execution layer never converts to a calendar object.
+Recall from chapter 4 that a `DATE` is an `Int32Array` of day numbers. Date arithmetic is therefore integer arithmetic that happens to be labeled — the type system carries the meaning, for simple day arithmetic. Calendar operations such as extracting a month require additional temporal logic.
 
 ## Aggregates
 
@@ -233,7 +233,7 @@ Chapter 8 noted that repeated aliases get shadow names like `CUSTOMER:1`. This i
 
 **`5 / 2` is `2.5`.** A query ported from PostgreSQL that relies on integer division produces different numbers with no error.
 
-**Integer arithmetic silently widens to `INT64`.** `INT32 + INT32` is `INT64`, which is a `BigInt64Array` in storage — so a column read through [`get`](../../src/storage/column.ts) or [`getValue`](../../src/storage/chunk.ts) hands back a `bigint`, and `1n === 1` is false. Operator code has to expect that. Query *results* do not: `engine.run` converts on the way out, so `SELECT I + I` arrives as a JavaScript `number`. The trap is that the two layers disagree, and only one of them is the one you are usually looking at.
+**Integer arithmetic silently widens to `INT64`.** `INT32 + INT32` is `INT64`, which is a `BigInt64Array` in storage — so a column read through [`get`](../../src/storage/column.ts) or [`getValue`](../../src/storage/chunk.ts) hands back a `bigint`, and `1n === 1` is false. Operator code has to expect that. Query *results* do not: `engine.run` converts on the way out, so `SELECT I + I` arrives as a JavaScript `number`. This conversion can lose precision outside JavaScript's safe integer range. When exact large integers matter, inspect the chunk interface and test values around that boundary; do not infer exact results from an `INT64` type label alone.
 
 **`NULL` has a null type.** Not a type called "null" — the field is `null`. Every consumer of `dataType` must handle its absence, and `inferArithmeticType` explicitly guards `left !== null` before its temporal checks.
 
@@ -243,22 +243,32 @@ Chapter 8 noted that repeated aliases get shadow names like `CUSTOMER:1`. This i
 
 ## Exercises
 
-1. Reproduce the type table. Bind `SELECT <expr> AS R FROM T` and read `outputColumns[0].dataType` for each expression.
+### Understand
 
-2. Change division to return `INT32` when both operands are integers. Run `npm run test:e2e`. Count the failures, and decide whether each is a test that pinned a deliberate decision or one that happened to depend on it.
+For x = NULL, evaluate x = x and then decide whether WHERE x = x keeps the row.
 
-3. `SUM(I)` returns `INT64`. Write a query where that matters — the sum of `INT32` values genuinely exceeding 2³¹ — and confirm the answer is exact.
+### Practice
 
-4. `D + I` is a `DATE`. What does the *execution* layer do with the fractional part if `I` is a float? Find the code, and decide whether the type rule or the evaluator should be the one to complain.
+1. **Observe.** Reproduce the type table. Bind `SELECT <expr> AS R FROM T` and read `outputColumns[0].dataType` for each expression.
 
-5. Compute `exprKey` for `a + b` and `b + a`. They differ. Write down what a pass would have to do to treat them as equal, and what it would break.
+2. **Observe.** Change division to return `INT32` when both operands are integers. Run `npm run test:e2e`. Count the failures, and decide whether each is a test that pinned a deliberate decision or one that happened to depend on it.
+
+3. **Observe.** `SUM(I)` returns `INT64`. Write a query where that matters — the sum of `INT32` values genuinely exceeding 2³¹ — and confirm the answer is exact.
+
+4. **Extend (optional).** `D + I` is a `DATE`. What does the *execution* layer do with the fractional part if `I` is a float? Find the code, and decide whether the type rule or the evaluator should be the one to complain.
+
+5. **Extend (optional).** Compute `exprKey` for `a + b` and `b + a`. They differ. Write down what a pass would have to do to treat them as equal, and what it would break.
+
+### Hints and expected observations
+
+The comparison is unknown, represented by NULL; WHERE keeps only TRUE. A wider integer storage type increases range but does not prove precision through every conversion.
 
 ## Recap
 
-- Expression types are the same **eight storage types**; all inference is in one 45-line file.
+- Expression typing uses the storage `DataType` values. The shared inference helpers cover arithmetic and aggregates; binding also resolves literals, casts, and function signatures.
 - `BOOLEAN` carries **three values** — `TRUE`, `FALSE`, and `NULL` for unknown — and `WHERE` keeps only `TRUE`, which is where every null surprise in this book starts. The type system does not record nullability at all.
-- **Division always yields `FLOAT64`** — `5 / 2` is `2.5`, diverging from the SQL standard by choice.
-- `+`, `-`, `*` on integers **widen to `INT64`** to eliminate overflow, and `SUM` of an integer does the same.
+- **Numeric division yields `FLOAT64`** — `5 / 2` is `2.5` here. Temporal cases are checked earlier, and other SQL products can use different numeric rules.
+- `+`, `-`, `*` on integers **widen to `INT64`** to increase storage range, and `SUM` of an integer does the same.
 - **Temporal rules are checked first**: date minus date is a day count (`INT32`), date plus a number is a date.
 - Literals are typed at bind time — date literals are **converted to integers during compilation**, not per row, and **parameters become typed literals**, which is why the plan cache keys on parameter values as well as SQL text.
 - [`splitConjuncts`](../../src/binder/conjuncts.ts) and [`exprKey`](../../src/binder/expr-key.ts) are the two small utilities the optimizer leans on hardest — one to reason about `AND`ed predicates independently, one to decide when two expressions are the same.

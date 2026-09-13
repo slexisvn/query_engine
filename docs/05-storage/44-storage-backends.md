@@ -1,6 +1,6 @@
 # 44. Storage backends: the same core in a browser
 
-> After this chapter you will be able to explain why 29 lines in `src/runtime/platform.ts` are what let this engine run in a browser, and why the same optimizer and the same operators produce the same plan and the same rows there as they do on Node.
+> After this chapter you will be able to trace the storage and platform interfaces that let the same query core run in Node and in the supplied browser environment.
 
 ## The question
 
@@ -123,9 +123,9 @@ The `handle` is the string a temp space handed out. In Node it is a directory pa
 
 Notice what a backend is *not*. It does not appear in operator code, in the optimizer, or in the physical planner. Three layers reach for it, always with a handle a temp space issued: `QueryEngine`, for the temp space itself at construction and a page store per `CREATE TABLE`; the [`ExecutionContext`](../../src/execution/execution-context.ts) and the pipeline, join, and aggregate builders, which reach it as `ctx.resources.storageBackend` for the spill manager each spilling operator gets; and the CLI's bulk loaders, for a page store of their own. Each declares a structural type of its own — [`StorageBackendLike`](../../src/engine/query-engine.ts) in `query-engine.ts` names two methods, the one in [`execution-resources.ts`](../../src/execution/execution-resources.ts) names three, and the one the join and aggregate builders declare names only `createSpillManager` — so nothing type-depends on either concrete class.
 
-## Twenty-nine lines
+## A small platform boundary
 
-[`src/runtime/platform.ts`](../../src/runtime/platform.ts) is the only file in `src/` that reads an environment variable. All of it:
+[`src/runtime/platform.ts`](../../src/runtime/platform.ts) is the only file in `src/` that reads an environment variable. The integer helper illustrates the pattern:
 
 ```typescript
 const processEnv: NodeJS.ProcessEnv | null =
@@ -141,7 +141,7 @@ plus the float, string, and boolean variants and [`getCpuCount`](../../src/runti
 
 The `typeof process !== 'undefined'` guard runs **once**, at module load, and the result is captured. Every later read is an optional index into a possibly-null object, which is defined behavior everywhere.
 
-Why that matters more than it looks: [`src/config.ts`](../../src/config.ts) is not a function. It is a plain object literal, built at module load, and every one of its 93 fields comes from these four helpers:
+Why that matters more than it looks: [`src/config.ts`](../../src/config.ts) is not a function. It is a plain object literal, built at module load, whose settings use these helpers and derived default expressions:
 
 ```typescript
 export const Config = {
@@ -153,7 +153,7 @@ export const Config = {
 };
 ```
 
-Nearly every module in the engine imports `Config` — the encoders, the page cache, the B-tree, the cost model, the join operators. If even one of those 93 lines said `process.env.QE_...` directly, importing `config.js` in a browser would throw a `ReferenceError` before a single line of the engine ran, and there would be no engine to port. Centralizing the reads means the platform check exists in exactly one place and is written once, correctly, rather than 93 times.
+Nearly every module in the engine imports `Config` — the encoders, the page cache, the B-tree, the cost model, the join operators. If an eagerly evaluated setting said `process.env.QE_...` directly, importing `config.js` in a browser would throw a `ReferenceError` before a single line of the engine ran, and there would be no engine to port. Centralizing the reads means the platform check exists in exactly one place and is written once, correctly, rather than throughout the configuration.
 
 The same file shows the other half of the trick. `getCpuCount` does not ask `os.cpus()`:
 
@@ -257,26 +257,36 @@ Three things, and the code says so plainly rather than degrading quietly.
 
 **`getEnvInt` does not validate.** `parseInt` on a non-numeric value yields `NaN`, and `NaN` propagates into whatever the setting drives. `QE_PAGE_CACHE_PAGES=lots` gives the LRU a `NaN` capacity, and since `size > NaN` is always false it never evicts — a thousand pages go in and a thousand stay. A typo turns a bounded cache into an unbounded one, silently.
 
-**`process.env` is captured once at module load.** Setting an environment variable after `platform.js` has been imported changes nothing, and neither does setting one after `config.js` has been evaluated — `Config` fields are values, not getters. Tests that need a different setting assign to `Config` directly, which is what [`tests/e2e/column-encoding-differential.test.ts`](../../tests/e2e/column-encoding-differential.test.ts) does.
+**`Config` values are computed at module load.** `platform.ts` captures a reference to the environment object, not a copy of all its values; calling a helper later can see mutations to that object. Already-initialized `Config` fields do not refresh, because they are values rather than getters. Set variables before starting the process for predictable experiments. Tests that need a different setting assign to `Config` directly, which is what [`tests/e2e/column-encoding-differential.test.ts`](../../tests/e2e/column-encoding-differential.test.ts) does.
 
 ## Exercises
 
-1. Reproduce all three opening results, each in its own `node` process. Then try importing both entry points in one process and predict which backend you get.
+### Understand
 
-2. Write a third backend — one that keeps pages in a `Map` but spills to files — and pass it to `QueryEngine` in options. How many lines is it, and how many files did you have to change outside it?
+Why can the same execution operators use files in Node and a Map in the supplied browser backend?
 
-3. Add a line to a core module that reads `process.env` directly. Run `node scripts/build.js` and inspect `dist/index.browser.js` for the reference, then load it in a browser and describe the failure.
+### Practice
 
-4. Run `npm run viz`, load the sample data, and run the book's query. Open the browser console and confirm the storage backend is `MemoryStorageBackend`. Then find the point in the UI where a page identifier from chapter 40 is visible.
+1. **Observe.** Reproduce all three opening results, each in its own `node` process. Then try importing both entry points in one process and predict which backend you get.
 
-5. `getCpuCount` returns `navigator.hardwareConcurrency`. Find every setting in `Config` that depends on it and say what each would do on a platform where it is absent.
+2. **Extend (optional).** Write a third backend — one that keeps pages in a `Map` but spills to files — and pass it to `QueryEngine` in options. How many lines is it, and how many files did you have to change outside it?
+
+3. **Extend (optional).** Add a line to a core module that reads `process.env` directly. Run `node scripts/build.js` and inspect `dist/index.browser.js` for the reference, then load it in a browser and describe the failure.
+
+4. **Observe.** Run `npm run viz`, load the sample data, and run the book's query. Trace the visualizer's engine initialization and confirm it passes a `MemoryStorageBackend`. Follow one loaded table into its storage implementation; do not assume the page identifier or engine instance is exposed in the UI.
+
+5. **Observe.** `getCpuCount` returns `navigator.hardwareConcurrency`. Find every setting in `Config` that depends on it and say what each would do on a platform where it is absent.
+
+### Hints and expected observations
+
+They call a storage interface selected by the entry point or explicit options. The backend determines where pages and spill bytes live; an operator should not assume a filesystem.
 
 ## Recap
 
 - The engine core imports **no Node API**. Seventeen files in `src/` do, and every one is in `cli/`, `parallel/`, `distributed/`, `wasm/`, or one of the three platform-specific storage files.
 - A **storage backend** is three factory methods — temp space, page store, spill manager — and the `handle` string that connects them is opaque to everyone except the temp space that issued it.
 - [`setDefaultStorageBackend`](../../src/engine/query-engine.ts) is called exactly twice: once in `src/index.ts` with a Node backend, once in `src/browser.ts` with a memory backend. The constructor **throws rather than guessing** if neither ran.
-- [`src/runtime/platform.ts`](../../src/runtime/platform.ts) is 29 lines and the **only** place the engine reads an environment variable. Because `Config` is an object literal evaluated at import time and nearly every module imports it, one direct `process.env` read anywhere would break the browser build entirely.
+- [`src/runtime/platform.ts`](../../src/runtime/platform.ts) centralizes guarded environment reads. `Config` is evaluated at import time; an unguarded Node-only global reached in a browser can fail during module initialization.
 - The visualizer at `tools/visualizer/` runs this engine in a browser tab with `MemoryStorageBackend`, and the same query produces the **same logical plan, the same physical plan, and the same rows** on both platforms — spilled or not.
 
 That completes Part 5. Storage is a set of interfaces with two implementations each, and the engine above them cannot tell which one it has. Next: Part 6 opens with [chapter 45](../06-scale/45-morsel-driven-parallelism.md), "Morsel-driven parallelism", and the first thing it needs is a subsystem the browser build stubs out.

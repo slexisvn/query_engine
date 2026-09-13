@@ -1,6 +1,6 @@
 # 10. Relational algebra in twenty minutes
 
-> After this chapter you will be able to read any plan this engine prints as an expression in four operators, and explain why an optimizer is permitted to exist at all.
+> After this chapter you will be able to read a simple plan using selection, projection, joins, and grouping, and explain the conditions for rearranging those operations.
 
 ## The question
 
@@ -60,7 +60,7 @@ The first is `SELECT C_MKTSEGMENT FROM CUSTOMER`, the second adds `DISTINCT`. In
 
 The property that makes an algebra useful is **closure**: every operator takes relations and produces a relation. Nothing else. A filter over a table gives a relation; a filter over a join gives a relation; a filter over a filter over a join gives a relation. There is no operator that yields a number, a row, or a half-built thing that some other operator has to know how to finish.
 
-Closure is what makes composition free. Any operator can sit above any other, because whatever is underneath looks the same from above: rows with a schema. That single fact is why the intermediate representation is a **tree** and not a list of steps with named temporaries.
+Closure lets operators compose when their schemas and other requirements agree. A filter still needs its referenced columns to exist, for example. A tree is a convenient representation of that composition, but closure does not require one: an engine could use a graph with shared subexpressions or instructions naming intermediate results.
 
 ## Four operators
 
@@ -120,7 +120,7 @@ Written **γ**. It partitions rows by a key and collapses each partition to one 
     -> Seq Scan on CUSTOMER as CUSTOMER
 ```
 
-γ was not in the original algebra — it was added later, by everyone, because counting things is the main reason people query databases. It is the operator that most visibly breaks row-at-a-time thinking: no output row exists until every input row has been seen.
+Grouping and aggregation extend the original relational operators. For an unordered input, a hash aggregate generally consumes all rows before emitting final groups. If the input is sorted by the grouping key, a streaming aggregate can finish one group as soon as the next key begins; chapter 36 covers both algorithms. The logical operator defines the groups, not their execution schedule.
 
 Notice that the grouping key appears twice in the plan, once in the `Aggregate` and once in the `Project` above it. That is not redundancy. γ produces a relation whose columns are *keys plus aggregates*, and π then selects and orders those columns into the output the user asked for. Each operator does one thing, and the seam between them is a relation like any other.
 
@@ -141,15 +141,15 @@ flowchart BT
 
 Two habits are worth forming immediately.
 
-**Read plans bottom-up.** Data enters at the leaves — the scans — and flows toward the root. The root is the last thing that happens, which is why `Limit` is printed first and executes last.
+**Read data flow bottom-up.** Data enters at the leaves and flows toward the root. `Limit` consumes rows produced by its child, but it can start doing so before that child finishes. A plan tree records dependencies; chapter 30 explains how streaming and blocking operators turn those dependencies into a schedule.
 
 **The tree is upside down relative to SQL.** `SELECT` is the first word you write and nearly the last operator to run; `FROM` is in the middle of the text and is the bottom of the tree. Chapter 12 shows exactly how the planner performs that inversion.
 
 A tree, rather than a general graph, also means each node has exactly one consumer. That is a real restriction — a common subexpression used twice cannot be shared — and this engine pays for it in one specific place: a CTE referenced twice becomes two `CTE Scan` nodes over one plan held off to the side, rather than one node with two parents. Chapter 11 shows where that side table lives.
 
-## Equivalence laws are the entire optimizer
+## Equivalence laws make rewrites legal
 
-Here is the payoff. Because the operators are defined mathematically rather than procedurally, pairs of expressions can be proven to denote the same relation on *every* possible input. Each such proof is a rewrite the optimizer is entitled to perform.
+Here is the payoff. The operators' semantics let us establish when different expressions denote the same result. The laws below use **inner joins**, deterministic predicates, and compatible schemas; join conditions must follow the columns they reference. They preserve bags of rows, not an unspecified presentation order. Outer joins, volatile expressions, and operators with observable errors require additional care. Cost estimates then help decide which legal alternative to choose.
 
 | Law | Informally | Where the book uses it |
 |---|---|---|
@@ -160,7 +160,7 @@ Here is the payoff. Because the operators are defined mathematically rather than
 | π<sub>a</sub>(σ<sub>p</sub>(R)) = σ<sub>p</sub>(π<sub>a</sub>(R)), when p's columns survive a | projections and filters commute | chapter 19 |
 | R ⋈<sub>p</sub> S = σ<sub>p</sub>(R × S) | a join is a filtered cross product | chapter 25 |
 
-Rows three and four are the two parenthesizations from the opening. Associativity is what makes the left-deep and the right-deep tree interchangeable, and it needs three relations before it has anything to say; chapter 25 is where the optimizer uses it. Commutativity is smaller and applies to any join at all — it is what lets the optimizer decide which input to build a hash table from. You can watch it fire, together with law 2, on a two-table query whose planner output puts `CUSTOMER` on the left of the join and whose optimized output puts `ORDERS` there:
+Associativity relates the two parenthesizations from the opening; commutativity allows the two inputs of an inner join to exchange places, with output columns kept in the requested order. These are not unrestricted laws for outer joins. `A LEFT JOIN B` preserves every row of A; `B LEFT JOIN A` preserves every row of B and can produce a different answer. Chapter 25 derives the additional conditions for reordering outer joins. You can watch inner-join commutativity and filter pushdown together in this plan:
 
 ```
 -> Project (C.C_MKTSEGMENT, SUM(O.O_TOTALPRICE))
@@ -177,7 +177,7 @@ The filter has moved below the join (law 2), the join's inputs have swapped (law
 
 The swap is the one to watch, because it is not decided by shape. Laws say the optimizer *may* exchange the inputs; whether it *does* is a cost decision, made on whatever row-count estimates it holds at that moment. Run the query once before optimizing it again and the estimates change, and so does the side `ORDERS` lands on. That is chapter 24's subject, and it is the reason a plan printed from a freshly started engine is the one to compare against.
 
-**This is the whole argument for having an intermediate representation at all.** SQL text has no such laws. You cannot prove that moving a `WHERE` clause into an `ON` clause preserves meaning by reasoning about tokens, and chapter 17 shows a case where it emphatically does not. Rewriting text is guesswork. Rewriting algebra is arithmetic.
+An intermediate representation makes these conditions easier to express and check. SQL also has semantics and equivalent formulations, but moving text without resolving names, join types, and scope can change the answer. Chapter 17 shows why relocating a condition from `WHERE` to `ON` needs that information.
 
 ## Where the analogy stops
 
@@ -218,23 +218,33 @@ That closure is the load-bearing part. The extra nineteen node types make the IR
 
 ## Exercises
 
-1. Reproduce the two three-table plans from the opening, and confirm the results match. Then change the first join in each to a `LEFT JOIN` and check whether the answers still agree. Explain what changed.
+### Understand
 
-2. `SELECT COUNT(*) FROM CUSTOMER c, ORDERS o` returns 12 and `SELECT COUNT(*) FROM CUSTOMER c JOIN ORDERS o ON c.C_CUSTKEY = o.O_CUSTKEY` returns 4. Print both plans. Which node differs, and which of the six laws relates them?
+For left keys [1, 2] and right keys [2, 3], list the key pairs from INNER JOIN and LEFT JOIN using equality.
 
-3. Write a query whose plan contains all four operators, then annotate each printed line with its algebra symbol.
+### Practice
 
-4. Law 5 requires that the predicate's columns survive the projection. Construct a query where they do not — filter on a column the projection drops — and confirm from the printed plan that the `Filter` stays above the `Project`. Then find the function in [`predicate-pushdown.ts`](../../src/optimizer/passes/predicate-pushdown.ts) that made that decision.
+1. **Observe.** Reproduce the two three-table plans from the opening, and confirm the results match. Then change the first join in each to a `LEFT JOIN` and check whether the answers still agree. Explain what changed.
 
-5. Add a node type of your own to [`PlanNodeType`](../../src/planner/logical-plan.ts) — say, a `Sample` that keeps every nth row. Write down its input schema, its output schema, and one equivalence law it obeys. You do not have to implement it; the point is that you can specify it in a paragraph, which is what closure buys you.
+2. **Observe.** `SELECT COUNT(*) FROM CUSTOMER c, ORDERS o` returns 12 and `SELECT COUNT(*) FROM CUSTOMER c JOIN ORDERS o ON c.C_CUSTKEY = o.O_CUSTKEY` returns 4. Print both plans. Which node differs, and which of the six laws relates them?
+
+3. **Observe.** Write a query whose plan contains all four operators, then annotate each printed line with its algebra symbol.
+
+4. **Extend (optional).** Law 5 requires that the predicate's columns survive the projection. Construct a query where they do not — filter on a column the projection drops — and confirm from the printed plan that the `Filter` stays above the `Project`. Then find the function in [`predicate-pushdown.ts`](../../src/optimizer/passes/predicate-pushdown.ts) that made that decision.
+
+5. **Extend (optional).** Add a node type of your own to [`PlanNodeType`](../../src/planner/logical-plan.ts) — say, a `Sample` that keeps every nth row. Write down its input schema, its output schema, and one equivalence law it obeys. You do not have to implement it; the point is that you can specify it in a paragraph, which is what closure buys you.
+
+### Hints and expected observations
+
+INNER yields (2,2). LEFT also yields (1,NULL). Swapping inputs of a LEFT join changes which unmatched rows survive, so inner-join reorder rules need explicit conditions.
 
 ## Recap
 
 - A **relation** is a bag of rows with a schema. SQL works in bags, not sets, so duplicates survive until a `Distinct` removes them.
-- **Closure** — every operator consumes relations and produces a relation — is what makes operators compose, and therefore what makes the IR a **tree**.
+- **Closure** lets relational operators compose when their input requirements agree. This engine represents that composition primarily as a **tree**.
 - Four operators carry most of SQL: **selection** (σ, `Filter`), **projection** (π, `Project`), **join** (⋈, `Join`), and **grouping** (γ, `Aggregate`). A join is a cross product plus a selection, kept separate so the cross product need never be built.
 - Plans are read **bottom-up** and are upside down relative to SQL: `FROM` is at the leaves, `SELECT` near the root.
-- **Equivalence laws** — commutativity and associativity of ⋈, pushing σ through ⋈, commuting π with σ — are what the optimizer is made of. They exist because the operators are defined mathematically; no such laws exist for SQL text.
+- **Equivalence laws** identify legal rewrites. Inner joins commute and reassociate under the stated conditions; outer joins need additional rules. The optimizer combines these laws with estimates and search.
 - The engine's algebra is larger than the textbook's, because SQL wants **order**, **position**, and **deduplication**, none of which a bag has.
 
 Next: chapter 11 takes the inventory — [all twenty-three node types](11-the-logical-plan-nodes.md), and which stage of the pipeline produces each one.

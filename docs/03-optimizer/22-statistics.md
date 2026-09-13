@@ -10,7 +10,7 @@ Build a table with a column holding exactly 1,000 distinct values, collect stati
 V: ndv=1026 min=0 max=999 nullFraction=0 histogramBuckets=64
 ```
 
-Twenty-six too many. That is fine — it is a **sketch**, meaning a summary that answers a question about a stream of values approximately, in memory that does not grow with the stream. You give up exactness and get a bounded footprint; 2.6% error is what this one promises. Now look at the column next to it, a primary key with 200,000 rows and 200,000 distinct values, and read off its list of most common values:
+Twenty-six too many. That is fine — it is a **sketch**, meaning a summary that answers a question about a stream of values approximately, in memory that does not grow with the stream. You give up exactness and get a bounded footprint. The 2.6% here is an observed error, not a promised bound on every input. Now look at the column next to it, a primary key with 200,000 rows and 200,000 distinct values, and read off its list of most common values:
 
 ```
 K: ndv=200000 mcvTop=["199999","199926","199998"] mcvFreq=[0.005,0.005,0.005]
@@ -74,7 +74,7 @@ true=100000   estimate=101716    error=1.72%
 true=1000000  estimate=986838    error=-1.32%
 ```
 
-Small counts are exact because linear counting takes over. Beyond that the error stays within a few percent and does not grow with the table. This is the good sketch.
+The first two rounded estimates happen to be exact in this sample. Linear counting improves behavior at small cardinalities, but is still an estimator. Error depends on hashing, precision, and the input; this table does not establish a worst-case bound.
 
 One clamp is applied afterwards, in [`finishColumn`](../../src/catalog/statistics.ts):
 
@@ -82,7 +82,7 @@ One clamp is applied afterwards, in [`finishColumn`](../../src/catalog/statistic
 const ndv = Math.max(0, Math.min(acc.distinct.estimate(), acc.nonNullCount));
 ```
 
-The count of distinct values can never exceed the number of values, so an over-estimate on a unique key is capped at the row count and comes out exactly right.
+The count of distinct values can never exceed the number of values, so an over-estimate on a unique key is capped at the row count and is exact in this over-estimating case. A unique key whose estimate is too low remains underestimated.
 
 ## The frequency sketch, and where it lies
 
@@ -232,15 +232,25 @@ Every `set` and `invalidate` bumps a `generation` counter, which feeds two thing
 
 ## Exercises
 
-1. Reproduce the HyperLogLog error table. Feed `hashValue(i)` for known counts and print the estimate. Then drop `QE_STATS_HLL_PRECISION` to 8 and rerun — how does the error scale with the register count?
+### Understand
 
-2. Reproduce the Space-Saving artifact on a unique column, then insert one value 40,000 times and confirm its count becomes exact. At what skew does the inherited count stop dominating?
+A statistic estimates 100 distinct values in 1,000 rows. Is that a guarantee that each value occurs ten times?
 
-3. Fix the artifact. `buildMcv` has both the recorded counts and `nonNullCount`; devise a test that rejects a heap whose counts are all equal and near `nonNullCount / capacity`, then find a query whose estimate improves.
+### Practice
 
-4. Print the histogram boundaries for a column with a heavy skew — 90% of rows at one value — and explain the bucket widths you see.
+1. **Observe.** Reproduce the HyperLogLog error table. Feed `hashValue(i)` for known counts and print the estimate. Then drop `QE_STATS_HLL_PRECISION` to 8 and rerun — how does the error scale with the register count?
 
-5. `deterministicRandom` seeds from the column index. Two columns with identical data therefore get *identical* samples. Construct that case, decide whether it can bias a correlation estimate, and argue your answer.
+2. **Observe.** Reproduce the Space-Saving artifact on a unique column, then insert one value 40,000 times and confirm its count becomes exact. At what skew does the inherited count stop dominating?
+
+3. **Observe.** Fix the artifact. `buildMcv` has both the recorded counts and `nonNullCount`; devise a test that rejects a heap whose counts are all equal and near `nonNullCount / capacity`, then find a query whose estimate improves.
+
+4. **Extend (optional).** Print the histogram boundaries for a column with a heavy skew — 90% of rows at one value — and explain the bucket widths you see.
+
+5. **Extend (optional).** `deterministicRandom` seeds from the column index. Two columns with identical data therefore get *identical* samples. Construct that case, decide whether it can bias a correlation estimate, and argue your answer.
+
+### Hints and expected observations
+
+No. NDV gives the number of distinct values, not their frequencies, and an estimated NDV can itself be inaccurate. A hot key can dominate the table.
 
 ## Recap
 

@@ -226,7 +226,7 @@ Read the `after` carefully: the scan is still there, as a child of `Empty`. Noth
 
 **Folding an integer pair can change the literal's declared type.** For `+`, `-`, and `*` the folded literal is typed `FLOAT64` whenever JavaScript's result is a `number`, which for two `INT32` operands it always is. The value is right and the engine's own arithmetic is double-based anyway ([chapter 9](../01-frontend/09-types-and-expressions.md) covers why `5 / 2` is `2.5` here), but a plan reader expecting `INT32` will be surprised.
 
-**Folding is done with JavaScript operators.** String literals compare lexicographically, which matches SQL for `VARCHAR`, and division by a literal zero yields JavaScript's `Infinity` rather than an error or a null. `SELECT 1/0 AS X` folds to a `FLOAT64` literal whose value is `Infinity`, and that is the value the row carries — it only *looks* like `null` because `JSON.stringify` renders it that way.
+**Folding is done with JavaScript operators.** String literals use JavaScript's comparison order, which is not a general implementation of SQL collations, and division by a literal zero yields JavaScript's `Infinity` rather than an error or a null. `SELECT 1/0 AS X` folds to a `FLOAT64` literal whose value is `Infinity`, and that is the value the row carries — it only *looks* like `null` because `JSON.stringify` renders it that way.
 
 **`factorCommonConjuncts` only looks at the top level of each branch.** `(a AND (b AND c)) OR (a AND d)` factors because `splitConjuncts` flattens nested `AND`s, but `(a OR b) AND c` on one side and `a` on the other share nothing at conjunct level, and nothing is factored.
 
@@ -234,15 +234,25 @@ Read the `after` carefully: the scan is still there, as a child of `Empty`. Noth
 
 ## Exercises
 
-1. Reproduce the two plans from the opening. Build one optimizer with only `PredicatePushdown` and one with `ExpressionSimplifier` followed by `PredicatePushdown`, and diff their output.
+### Understand
 
-2. Write a `WHERE` clause with three `OR` branches that share two conjuncts, and predict the factored form before running it. Then add a fourth branch that shares only one, and predict again.
+Is x OR NOT x always TRUE in a SQL predicate? Evaluate it for TRUE, FALSE, and NULL.
 
-3. Add `rewriteSort` to `SimplifierRewriter` so order keys are simplified too. Run `npm run test:unit`; then find a query where the change lets `SortElimination` fire that could not before.
+### Practice
 
-4. `simplifyExpression` has no rule for `x AND NOT x` or `x OR NOT x`. Add one and work out, on paper first, what it must return when `x` is `NULL`. (The answer is not `false` and not `true`.)
+1. **Observe.** Reproduce the two plans from the opening. Build one optimizer with only `PredicatePushdown` and one with `ExpressionSimplifier` followed by `PredicatePushdown`, and diff their output.
 
-5. Comment out the `factorCommonConjuncts` call and run `npm run test:e2e`. If nothing fails, that is a gap in the test suite — write the differential test that would have caught it.
+2. **Observe.** Write a `WHERE` clause with three `OR` branches that share two conjuncts, and predict the factored form before running it. Then add a fourth branch that shares only one, and predict again.
+
+3. **Extend (optional).** Add `rewriteSort` to `SimplifierRewriter` so order keys are simplified too. Run `npm run test:unit`; then find a query where the change lets `SortElimination` fire that could not before.
+
+4. **Extend (optional).** `simplifyExpression` has no rule for `x AND NOT x` or `x OR NOT x`. Add one and work out, on paper first, what it must return when `x` is `NULL`. (The answer is not `false` and not `true`.)
+
+5. **Extend (optional).** Comment out the `factorCommonConjuncts` call and run `npm run test:e2e`. Correct answers may remain unchanged when an optimization is absent. Add a plan-shape assertion for the factoring opportunity, and a separate result comparison for semantic preservation; explain what each test establishes.
+
+### Hints and expected observations
+
+The outputs are TRUE, TRUE, and NULL. A simplification must preserve the third case. Disabling a correct optimization can leave result tests green; plan tests check whether the optimization occurred.
 
 ## Recap
 

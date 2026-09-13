@@ -1,10 +1,10 @@
 # 3. A map of the codebase
 
-> After this chapter you will know which of the 238 source files matter for a given question, which way the dependencies point, and how to find the implementation of anything this book mentions.
+> After this chapter you will be able to find the source responsible for a query stage and follow the main dependencies without reading every file.
 
 ## The question
 
-`src/` holds 238 TypeScript files and about 39,500 lines. That is small for a database and large for an afternoon. Opening it cold, the honest reaction is: where does anything start?
+The source spans several subsystems. Opening them all at once is difficult; start by following one query and use the rest of this chapter as a lookup map.
 
 The answer is that the directory layout is not arbitrary. Five directories carry the six compilation stages from chapter 1, in order — physical planning and execution share one — and two more hold what every stage sits on. Everything else is either a runtime service they use or an alternative front door onto the same machinery.
 
@@ -22,34 +22,34 @@ src/storage/     how bytes are laid out underneath all of it
 src/catalog/     what tables exist and what the data looks like
 ```
 
-`src/engine/query-engine.ts` sits above them and is the only file that touches all seven. It is 805 lines, and its [`compileUncached`](../../src/engine/query-engine.ts) method is the five-line spine quoted in chapter 1. **If you read one file before any other, read that one** — not for the details, but because it names every stage and shows the order.
+`src/engine/query-engine.ts` sits above them and is the only file that touches all seven. Its [`compileUncached`](../../src/engine/query-engine.ts) method is the five-line spine quoted in chapter 1. **If you read one file before any other, read that one** — not for the details, but because it names every stage and shows the order.
 
 ## Where the complexity actually is
 
-File counts lie; line counts lie less. Read the table below for its **proportions** rather than its digits — it was measured on one day against one commit, and the useful claim is "execution is roughly twice the optimizer", not any particular number.
+The directories organize different kinds of work. Read this inventory when a chapter sends you to a subsystem; there is no need to memorize it.
 
-| Directory | Files | Lines | What is in there |
-|---|---:|---:|---|
-| `execution/` | 50 | 10,485 | operators, physical planning, pipelines, expression evaluation |
-| `optimizer/` | 42 | 5,427 | 23 passes, join ordering, decorrelation |
-| `distributed/` | 27 | 4,859 | fragments, exchange, coordinator, transport |
-| `storage/` | 30 | 2,842 | columns, chunks, encodings, pages, B-tree, spilling |
-| `planner/` | 14 | 2,793 | logical plan nodes, cardinality, cost model |
-| `parallel/` | 9 | 2,696 | worker threads and the scheduler that feeds them |
-| `wasm/` | 20 | 2,076 | AssemblyScript kernels and their loader |
-| `parser/` | 3 | 1,702 | lexer, parser, AST |
-| `binder/` | 6 | 1,585 | scopes, type inference, expression binding |
-| `cli/` | 10 | 1,320 | REPL and data loaders |
-| `catalog/` | 8 | 1,156 | table metadata and statistics sketches |
-| `dataframe/` | 7 | 1,102 | the lazy DataFrame API |
-| `engine/` | 1 | 805 | the orchestrator |
-| `utils/` | 5 | 376 | bitmap, bloom filter, hash, LRU, priority queue |
+| Directory | What is in there |
+|---|---|
+| `execution/` | operators, physical planning, pipelines, expression evaluation |
+| `optimizer/` | 23 passes, join ordering, decorrelation |
+| `distributed/` | fragments, exchange, coordinator, transport |
+| `storage/` | columns, chunks, encodings, pages, B-tree, spilling |
+| `planner/` | logical plan nodes, cardinality, cost model |
+| `parallel/` | worker threads and the scheduler that feeds them |
+| `wasm/` | AssemblyScript kernels and their loader |
+| `parser/` | lexer, parser, AST |
+| `binder/` | scopes, type inference, expression binding |
+| `cli/` | REPL and data loaders |
+| `catalog/` | table metadata and statistics sketches |
+| `dataframe/` | the lazy DataFrame API |
+| `engine/` | the orchestrator |
+| `utils/` | bitmap, bloom filter, hash, LRU, priority queue |
 
 Two observations worth carrying into the rest of the book.
 
-**Execution is a quarter of the engine.** This surprises people who expect the optimizer to dominate, because the optimizer is what gets written about. But an optimizer pass is a tree rewrite of a hundred lines, while a single operator has to handle nulls, spilling, every join type, vectorized and scalar paths, and parallel execution. [`hash-join.ts`](../../src/execution/operators/hash-join.ts) alone is 556 lines and chapter 34 spends a whole chapter on it.
+**Execution carries many responsibilities.** Beyond the central algorithm, an operator may need null handling, memory accounting, spilling, and several input or output paths. Chapter 34 introduces [`hash-join.ts`](../../src/execution/operators/hash-join.ts) by separating a small build/probe example from those additional responsibilities.
 
-**The parser is the smallest interesting thing here.** Three files, 1,702 lines, and it will not appear again after Part 1. Parsing SQL is a solved problem; deciding what to *do* with the parsed query is not. If you come from compilers, this is the inversion to expect — in a query engine the front end is the easy part.
+**This engine's parser is relatively small.** Its deliberately limited SQL dialect fits into a few files. That does not make parsing or name resolution unimportant: a broader dialect can require a much larger frontend. In this repository, most of the implementation work is in optimization and execution.
 
 ## Which way the arrows point
 
@@ -98,9 +98,9 @@ The remaining directories are not stages. They are alternatives and services.
 
 **`src/cli/`** — the REPL from chapter 2 and the CSV and JSON loaders.
 
-**`src/storage/backend/`** and **`src/runtime/platform.ts`** — the seam that lets the same core run in Node and in a browser. `platform.ts` is 29 lines and is the only file that reads environment variables. Chapter 44.
+**`src/storage/backend/`** and **`src/runtime/platform.ts`** — the seam that lets the same core run in Node and in a browser. `platform.ts` centralizes the guarded environment reads used by configuration. Chapter 44.
 
-**`src/utils/`** — five data structures with no dependencies on anything above them: a bitmap, a Bloom filter, a hash function, an LRU cache, and a priority queue. When an operator needs one of these it imports from here rather than growing its own, which is why `hash-join.ts` and `hash-aggregate.ts` share a hash table implementation rather than two subtly different ones.
+**`src/utils/`** — small shared data structures, with the type-only storage dependency noted above: a bitmap, a Bloom filter, a hash function, an LRU cache, and a priority queue. When an operator needs one of these it imports from here rather than growing its own, while joins and aggregates share their more specialized keyed hash table in [`src/execution/hash-table.ts`](../../src/execution/hash-table.ts).
 
 ## Finding things
 
@@ -108,7 +108,7 @@ Three conventions make navigation predictable.
 
 **`tests/` mirrors `src/` one-to-one.** `src/optimizer/passes/predicate-pushdown.ts` is tested by `tests/optimizer/passes/predicate-pushdown.test.ts`. There are 190 test files. When you want to know what a component is supposed to do, its test is usually a better answer than its implementation, because a test states intent and an implementation states mechanism.
 
-**End-to-end tests live only in `tests/e2e/`.** Those run whole queries and compare results against a reference. Everything else is a unit test of one component.
+**End-to-end tests live in `tests/e2e/` and nested `e2e/` directories.** The Vitest configuration includes both. Some assert known results; others compare optimizer or execution variants. Check which reference a test actually uses before treating it as independent evidence.
 
 **Names are literal.** An optimizer pass file is named after the pass class it exports, an operator file after the operator. There is no `misc/` and no grab-bag `common/` directory; the three catch-all files that do exist are each scoped to the directory they sit in — [`builder-utils.ts`](../../src/execution/builders/builder-utils.ts) for the operator builders, [`join-utils.ts`](../../src/execution/join-utils.ts) for the join operators, [`cli-common.ts`](../../src/cli/cli-common.ts) for the CLI entry points. So grepping for a concept usually finds the file directly.
 
@@ -144,15 +144,25 @@ Concretely, to answer "how does X work":
 
 ## Exercises
 
-1. Open [`query-engine.ts`](../../src/engine/query-engine.ts) and find `compileUncached`. Name the directory each of its five lines dispatches into.
+### Understand
 
-2. Pick any file in `src/optimizer/passes/` and find its test. Read the test first and predict what the implementation must do, then check.
+A query uses a column that does not exist. Which subsystem should reject it, and why is the lexer unable to do that?
 
-3. Run `grep -rn "execution/" src/planner src/optimizer` and confirm the only hits are the two files holding the runtime upward edges described above. Are they still there in your copy? Now read [`costOf`](../../src/optimizer/passes/aggregate-pushdown.ts) and decide whether that edge could be removed without losing the decision it makes.
+### Practice
 
-4. Count the operators: `ls src/execution/operators/`. Match each one to a node type in [`physical-plan.ts`](../../src/execution/physical-plan.ts). Are there node types with no operator file, and if so, where are they handled?
+1. **Observe.** Open [`query-engine.ts`](../../src/engine/query-engine.ts) and find `compileUncached`. Name the directory each of its five lines dispatches into.
 
-5. Find the file that reads environment variables. There is exactly one. Why does centralizing that matter for the browser build?
+2. **Observe.** Pick any file in `src/optimizer/passes/` and find its test. Read the test first and predict what the implementation must do, then check.
+
+3. **Observe.** Run `rg -n "execution/" src/planner src/optimizer` and confirm the only hits are the two files holding the runtime upward edges described above. Are they still there in your copy? Now read [`costOf`](../../src/optimizer/passes/aggregate-pushdown.ts) and decide whether that edge could be removed without losing the decision it makes.
+
+4. **Observe.** Count the operators: `ls src/execution/operators/`. Match each one to a node type in [`physical-plan.ts`](../../src/execution/physical-plan.ts). Are there node types with no operator file, and if so, where are they handled?
+
+5. **Observe.** Find the file that reads environment variables. There is exactly one. Why does centralizing that matter for the browser build?
+
+### Hints and expected observations
+
+The binder resolves the name against the catalog. The lexer only recognizes its token shape. Use the source map to follow one query before memorizing the directory inventory.
 
 ## Recap
 

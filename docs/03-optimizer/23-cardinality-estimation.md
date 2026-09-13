@@ -101,7 +101,7 @@ const blended = independent * (1 - correlation) + correlated * correlation;
 return Math.max(MIN_SELECTIVITY, Math.min(correlated, blended));
 ```
 
-Two extremes: independence multiplies, perfect correlation takes the minimum (if every row satisfying `b` also satisfies `a`, the pair is as selective as `a` alone). The blend is linear in a correlation coefficient, and the result is clamped so it never exceeds the correlated bound.
+Two extremes: independence multiplies, perfect correlation takes the minimum (if every row satisfying `b` also satisfies `a`, the conjunction is as selective as `b` alone). The blend is linear in a correlation coefficient, and the result is clamped so it never exceeds the correlated bound.
 
 [`lookupCorrelation`](../../src/planner/cardinality.ts) extracts one column from each side and asks the table's correlation map — but only when both columns come from the *same* alias. Anything else, including a missing correlation entry, returns `DEFAULT_CORRELATION` = 0.5.
 
@@ -230,15 +230,25 @@ Unaliased queries work because the planner uses the table name as the alias. Ali
 
 ## Exercises
 
-1. Reproduce the `DISTINCT` versus `GROUP BY` gap, then extend `CARDINALITY_RULES` so `DISTINCT` uses the same `estimateAggregate` path as an aggregate over its child's output columns. Which tests change?
+### Understand
 
-2. Reproduce the alias table. Then register the two tables in the opposite order and confirm the estimate changes without the query changing.
+A table has 1,000 rows and a predicate is estimated to keep 20%. What is the estimated output? What extra assumption underlies multiplying by a second selectivity of 10%?
 
-3. Fix the alias lookup. The plan node has the alias and the scan beneath it has the table name; work out where an alias-to-table map would have to be built and threaded, and how much of the estimator's interface it changes.
+### Practice
 
-4. Set `QE_STATS_CORRELATION_THRESHOLD` to 0 so every correlation is stored, then re-estimate a two-predicate filter over genuinely independent columns. Did the estimate improve? Explain from `lookupCorrelation`.
+1. **Observe.** Reproduce the `DISTINCT` versus `GROUP BY` gap, then extend `CARDINALITY_RULES` so `DISTINCT` uses the same `estimateAggregate` path as an aggregate over its child's output columns. Which tests change?
 
-5. Build two tables whose join keys have similar `ndv` but barely overlapping ranges. Compare `estimateEquiJoinSelectivity` with and without histograms by constructing statistics objects with the histogram removed.
+2. **Observe.** Reproduce the alias table. Then register the two tables in the opposite order and confirm the estimate changes without the query changing.
+
+3. **Observe.** Fix the alias lookup. The plan node has the alias and the scan beneath it has the table name; work out where an alias-to-table map would have to be built and threaded, and how much of the estimator's interface it changes.
+
+4. **Extend (optional).** Set `QE_STATS_CORRELATION_THRESHOLD` to 0 so every correlation is stored, then re-estimate a two-predicate filter over genuinely independent columns. Did the estimate improve? Explain from `lookupCorrelation`.
+
+5. **Extend (optional).** Build two tables whose join keys have similar `ndv` but barely overlapping ranges. Compare `estimateEquiJoinSelectivity` with and without histograms by constructing statistics objects with the histogram removed.
+
+### Hints and expected observations
+
+The first estimate is 200 rows. Twenty rows after both predicates assumes the selectivities can be multiplied, commonly an independence approximation that correlation can invalidate.
 
 ## Recap
 

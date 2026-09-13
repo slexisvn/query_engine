@@ -1,6 +1,6 @@
 # 42. Pages, caching, and the B-tree
 
-> After this chapter you will know what a page is in this engine, why the page cache has a cliff at exactly its own capacity, why the scan path steps around that cliff by never using the cache at all, and how a B-tree turns a `WHERE` clause into six row addresses.
+> After this chapter you will be able to trace page reuse and eviction, then follow a B-tree lookup from a key to row addresses.
 
 ## The question
 
@@ -221,15 +221,25 @@ Both rows come back for both lookups. A point lookup that returns extra rows is 
 
 ## Exercises
 
-1. Reproduce the cliff. Build tables of 49, 50, and 51 pages, call `scanAll` three times on each, and count reads that reach the store. Then set `QE_PAGE_CACHE_PAGES=51` and confirm the cliff moves.
+### Understand
 
-2. `fetchPage` checks the cache even when bypassing. Construct a sequence of calls in which that lookup returns a hit during a `scan`, and say which code path put the page there.
+An LRU cache holds two pages. Starting empty, access A, B, A, C. Which page is evicted, and why?
 
-3. Insert 40,000 keys into a `BTreeIndex` at `QE_BTREE_ORDER` of 4, 16, 128, and 1,024, and print the depth and node count. At which order does a point lookup do the fewest total comparisons, and why is that not the same as the fastest?
+### Practice
 
-4. Make the sequential scan populate the cache: change the `true` in `Table.scan` to `false`. Measure a repeated scan of a 40-page table and a 60-page table with `FilePageStore`. Explain both results.
+1. **Observe.** Reproduce the cliff. Build tables of 49, 50, and 51 pages, call `scanAll` three times on each, and count reads that reach the store. Then set `QE_PAGE_CACHE_PAGES=51` and confirm the cliff moves.
 
-5. Add most-recently-used eviction as an option to `LRUCache` and use it for scans. Does it fix the 51-page case? What does it break for the index scan?
+2. **Observe.** `fetchPage` checks the cache even when bypassing. Construct a sequence of calls in which that lookup returns a hit during a `scan`, and say which code path put the page there.
+
+3. **Observe.** Insert 40,000 keys into a `BTreeIndex` at `QE_BTREE_ORDER` of 4, 16, 128, and 1,024, and print the depth and node count. At which order does a point lookup do the fewest total comparisons, and why is that not the same as the fastest?
+
+4. **Extend (optional).** Make the sequential scan populate the cache: change the `true` in `Table.scan` to `false`. Measure a repeated scan of a 40-page table and a 60-page table with `FilePageStore`. Explain both results.
+
+5. **Extend (optional).** Add most-recently-used eviction as an option to `LRUCache` and use it for scans. Does it fix the 51-page case? What does it break for the index scan?
+
+### Hints and expected observations
+
+B is least recently used when C arrives. The second access to A refreshed A's position. Sequential scans and index lookups create different reuse patterns.
 
 ## Recap
 

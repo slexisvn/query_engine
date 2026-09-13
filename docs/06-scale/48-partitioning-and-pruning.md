@@ -1,6 +1,6 @@
 # 48. Partitioning and partition pruning
 
-> After this chapter you will be able to say which node holds which rows, predict which of the three distributed join strategies a query gets, and explain why one of them cannot execute at all.
+> After this chapter you will be able to compare partition placement, pruning, and distributed join strategies, including the current startup-path limitations.
 
 ## The question
 
@@ -62,7 +62,7 @@ if (usePartitionFilter && (currentRow % partitionCount) !== partitionIndex) {
 }
 ```
 
-So partition *p* is the rows whose ordinal position in the CSV is congruent to *p*, and it lives on exactly one worker. Round-robin gives near-perfect balance and destroys every other useful property: rows with the same customer key are scattered, so nothing is co-located, and no predicate on any column says anything about which partition a row is in.
+So partition *p* is the rows whose ordinal position in the CSV is congruent to *p*, and it lives on exactly one worker. Round-robin balances row counts closely, but provides no key-location guarantee: equal customer keys can be scattered across workers, so key equality alone proves neither co-location nor a prunable partition.
 
 ## Pruning, and the field nobody sets
 
@@ -269,7 +269,7 @@ Both are correct: `ORDER BY O_TOTALPRICE DESC` says nothing about ties, and the 
 
 ## Traps
 
-**Round-robin is a placement, not a partitioning.** It balances rows perfectly and tells you nothing; every decision in this chapter needs a *value-based* strategy with a partition key.
+**Round-robin partitions by position rather than key value.** It can balance row counts without proving where a particular key lives. Key-based pruning and co-location need a value-based strategy and a partition key.
 
 **Nothing sets `_partitionKey` outside the tests.** The pruner and `_areColocated` both short-circuit on it, so from the CLI, pruning prunes nothing and no join is co-located.
 
@@ -281,15 +281,25 @@ Both are correct: `ORDER BY O_TOTALPRICE DESC` says nothing about ties, and the 
 
 ## Exercises
 
-1. Reproduce the pruning table: build a `PartitionMap` with a `HashPartitionStrategy`, set `_partitionKey` by hand, and prune `=`, `IN`, and `>`. Why did `IN` with three values return two partitions?
+### Understand
 
-2. Register `CUSTOMER` as replicated with `registerReplicatedTable` and re-plan the running example. Which strategy does the join get, and how many fragments now?
+Two rows share a join key but were assigned to workers by round-robin position. Can a worker safely assume all matching rows are local?
 
-3. Start a two-worker cluster and run the failing join. Then make the coordinator's `onRegister` handler tell every worker about every other worker. Does the shuffle join complete, and does it agree with the single-node answer?
+### Practice
 
-4. Change `_estimateNodeCount` to return the live worker count. Re-run the four cost measurements above and say which flip.
+1. **Observe.** Reproduce the pruning table: build a `PartitionMap` with a `HashPartitionStrategy`, set `_partitionKey` by hand, and prune `=`, `IN`, and `>`. Why did `IN` with three values return two partitions?
 
-5. Construct a query and a two-partition split where pushing `OFFSET` down into `DistributedLimitPass`'s local node gives the wrong rows.
+2. **Observe.** Register `CUSTOMER` as replicated with `registerReplicatedTable` and re-plan the running example. Which strategy does the join get, and how many fragments now?
+
+3. **Extend (optional).** Start a two-worker cluster and run the failing join. Then make the coordinator's `onRegister` handler tell every worker about every other worker. Does the shuffle join complete, and does it agree with the single-node answer?
+
+4. **Extend (optional).** Change `_estimateNodeCount` to return the live worker count. Re-run the four cost measurements above and say which flip.
+
+5. **Extend (optional).** Construct a query and a two-partition split where pushing `OFFSET` down into `DistributedLimitPass`'s local node gives the wrong rows.
+
+### Hints and expected observations
+
+No. Key equality gives no location guarantee under round-robin assignment. A co-located join needs compatible key-based partitioning and complete placement metadata.
 
 ## Recap
 

@@ -16,7 +16,7 @@ WHERE c.C_CUSTKEY = o.O_CUSTKEY
 
 It returns five rows. Run the plan the logical planner produces and it takes **14,841.9 ms**. Run the plan the optimizer produces and it takes **1.4 ms**. Same engine, same data, same five rows, and a factor of about ten thousand between them.
 
-Nothing about the query is pathological. It is three tables and three equality predicates, the shape of a hundred reports in any warehouse. The gap is not the cost of a clever trick — it is the cost of *not* doing something obvious, ten thousand times over.
+Nothing about the query is pathological. It is three tables and three equality predicates, the shape of a hundred reports in any warehouse. The gap comes from repeatedly doing work that the predicate makes unnecessary.
 
 ## What the planner hands over
 
@@ -131,15 +131,25 @@ It also means the gap on a two-table query with no filter is roughly nothing, wh
 
 ## Exercises
 
-1. Reproduce the two timings. Build with `npm run build:ts`, register the three tables, and run the raw plan and the optimized plan through `_collectRows` in *separate processes*. Then run them in the same process, slow one first, and explain the difference in the second number.
+### Understand
 
-2. Add a fourth table to the `FROM` list with no join condition at all and predict the unoptimized runtime before measuring it. How close were you?
+If a filter keeps 10 of 1,000 left rows before a nested loop against 100 right rows, how many candidate pairs are avoided?
 
-3. Print the plan after every pass with the observer from [chapter 2](../00-orientation/02-running-it-yourself.md) and count how many of the 24 registrations change the plan for this query. Then do it for `SELECT * FROM CUSTOMER`.
+### Practice
 
-4. Find a query where the optimized and unoptimized plans have the same runtime to within noise. Explain what it is about the query that leaves the optimizer nothing to do.
+1. **Observe.** Reproduce the two timings. Build with `npm run build:ts`, register the three tables, and run the raw plan and the optimized plan through `_collectRows` in *separate processes*. Then run them in the same process, slow one first, and explain the difference in the second number.
 
-5. Remove `JoinReorder` from the pipeline with `engine.optimizer.removePass('JoinReorder')`, re-optimize this chapter's query, and time it. Note that this only works before any statistics have been collected — chapter 28 explains why, and it is not obvious.
+2. **Extend (optional).** Add a fourth table to the `FROM` list with no join condition at all and predict the unoptimized runtime before measuring it. How close were you?
+
+3. **Observe.** Print the plan after every pass with the observer from [chapter 2](../00-orientation/02-running-it-yourself.md) and count how many of the 24 registrations change the plan for this query. Then do it for `SELECT * FROM CUSTOMER`.
+
+4. **Observe.** Find a query where the optimized and unoptimized plans have the same runtime to within noise. Explain what it is about the query that leaves the optimizer nothing to do.
+
+5. **Extend (optional).** Remove `JoinReorder` from the pipeline with `engine.optimizer.removePass('JoinReorder')`, re-optimize this chapter's query, and time it. Warm statistics first, then remove the pass: statistics collection can rebuild the optimizer and discard an earlier removal. Bypass or clear the plan cache when comparing plans, as chapter 28 explains.
+
+### Hints and expected observations
+
+The counts fall from 100,000 to 1,000, avoiding 99,000 candidates. This is a work count for the stated loop, not a portable runtime prediction.
 
 ## Recap
 

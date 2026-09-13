@@ -1,6 +1,6 @@
 # 26. Subquery unnesting
 
-> After this chapter you will be able to name the join type any subquery becomes, and derive SQL's `NOT IN` surprise from the one field that distinguishes it from `NOT EXISTS`.
+> After this chapter you will be able to follow the supported subquery rewrites and derive the null behavior that distinguishes NOT IN from NOT EXISTS.
 
 ## The question
 
@@ -37,14 +37,14 @@ SELECT c.C_NAME FROM CUSTOMER c WHERE EXISTS (SELECT 1 FROM ORDERS o WHERE o.O_C
 
 Read that filter carefully. `C.C_CUSTKEY` appears inside the subquery's plan, referring to a column the subquery's own `FROM` clause does not provide. [Chapter 8](../01-frontend/08-binder-scopes-and-names.md) showed how the binder marks such a reference — `depth > 0` and `isCorrelated` — and the whole of this chapter and the next exists to remove it.
 
-The node is not executable. Run the plan directly and you get:
+This correlated form cannot execute directly. If it reaches the execution builder without decorrelation, the builder reports:
 
 ```
 Correlated EXISTS subquery reached execution without being decorrelated;
 SubqueryUnnesting is required for correctness
 ```
 
-`SubqueryUnnesting` is the only pass in the pipeline whose absence makes queries fail rather than run slowly.
+For correlated subqueries, this rewrite is required lowering, so disabling it can make execution fail. There is also a limited dependent-join runtime for uncorrelated `EXISTS`, `NOT_EXISTS`, and `SCALAR` nodes. That fallback does not support every subquery shape; see [chapter 35](../04-execution/35-other-joins.md).
 
 ## Five shapes
 
@@ -131,7 +131,7 @@ function scalarJoinType(subquery: LogicalPlanNode): JoinType {
 }
 ```
 
-A subquery containing an aggregate produces at most one row per group by construction, so a `LEFT` join is safe and enables everything in chapters 17 through 25. A subquery without one has no such guarantee, so it gets a `SINGLE` join instead: [`probeJoinInto`](../../src/execution/operators/join-core.ts) emits every probe row exactly once, taking the **first** match it finds and `break`ing out of the build-side loop, and padding with nulls when there is none. Where SQL specifies an error for a scalar subquery returning several rows, this engine takes one of them.
+The implementation uses the presence of an aggregate to choose `LEFT`. The intended case is one result per correlated key, as in the `MAX` example below. An aggregate anywhere in a subtree is not, by itself, a general SQL proof of scalar cardinality: an additional grouping key can still produce several rows for one outer row. Read this branch as an implementation heuristic, and test such cases explicitly. A subquery without one has no such guarantee, so it gets a `SINGLE` join instead: [`probeJoinInto`](../../src/execution/operators/join-core.ts) emits every probe row exactly once, taking the **first** match it finds and `break`ing out of the build-side loop, and padding with nulls when there is none. Where SQL specifies an error for a scalar subquery returning several rows, this engine takes one of them.
 
 ```
 (SELECT MAX(o.O_ORDERKEY) FROM ORDERS o WHERE o.O_CUSTKEY = c.C_CUSTKEY)
@@ -171,7 +171,7 @@ BEFORE                                          AFTER
 
 A **mark join** emits every left row exactly once with an extra boolean column — `__mark_0` — that is `true` when a match was found, `false` when none was, and **`NULL` when the answer is unknown**: no match was found, but the comparison against some right row evaluated to `NULL`.
 
-That third value is the whole story. `x NOT IN (1, NULL)` in SQL is:
+That third value explains the opening result. For a non-null `x` different from `1`, `x NOT IN (1, NULL)` in SQL is:
 
 - `x = 1` is `false`, `x = NULL` is `NULL`
 - so `x IN (...)` is `false OR NULL` = `NULL`
@@ -182,7 +182,7 @@ An anti join cannot express that, because it has only two outcomes: matched or n
 
 `distinguishesUnknown` is the flag that carries this into the decorrelation machinery. It is `true` only for `MARK`, and chapter 27 shows what it changes: predicates lifted out of the subquery are wrapped in [`definitelyTrue`](../../src/optimizer/dependent-join/domain.ts), and the domain join-back is made null-safe unconditionally. Both exist so that "unknown" cannot be silently converted into "false" somewhere in the rewrite.
 
-The practical advice — write `NOT EXISTS`, or add `WHERE x IS NOT NULL` to the subquery — falls out. `NOT EXISTS` compiles to an anti join with two outcomes and no null hazard.
+Choose the predicate that expresses the question. `NOT EXISTS` asks whether any comparison is true; `NOT IN` also preserves unknown comparisons. Filtering nulls from the inner input makes the opening examples agree because the outer customer keys are non-null. With a nullable outer key, the two forms can still differ.
 
 ## Running to a fixpoint
 
@@ -232,11 +232,11 @@ Chapter 27 lists the rest, all raised from the pushdown machinery.
 
 ## Traps
 
-**`NOT IN` and `NOT EXISTS` are not the same query.** They compile to different join types because they mean different things when nulls are present. No optimizer pass will convert one into the other.
+**`NOT IN` and `NOT EXISTS` are not the same query.** They compile to different join types because they mean different things when nulls are present. A rewrite between them needs a proof that the relevant null behavior is equivalent.
 
 **A `SINGLE` join takes the first match rather than raising.** A scalar subquery without an aggregate that matches two rows returns one of them, chosen by build-side order. The standard calls for an error; the operator `break`s.
 
-**`SubqueryUnnesting` is exempted from the ablation invariant.** [Chapter 28](28-plan-properties-and-ablation.md) shows the differential test skipping it by name: removing it does not make queries slower, it makes them fail.
+**`SubqueryUnnesting` is exempted from the ablation invariant.** [Chapter 28](28-plan-properties-and-ablation.md) shows the differential test skipping it by name: removing it makes supported correlated queries fail at execution; some uncorrelated forms can use the limited fallback.
 
 **The correlated filter moves into the join condition, so it is no longer subject to predicate pushdown as a filter.** It becomes part of a join and is then handled by [chapter 17](17-predicate-pushdown.md)'s `pushJoinConditionPredicates` on the second pushdown run.
 
@@ -244,19 +244,29 @@ Chapter 27 lists the rest, all raised from the pushdown machinery.
 
 ## Exercises
 
-1. Reproduce the opening result. Register `ORDERS` with an explicit schema so `O_CUSTKEY` is nullable, put a `NULL` in it, and run both queries. Then add `WHERE o.O_CUSTKEY IS NOT NULL` to the `NOT IN` subquery and confirm the answers converge.
+### Understand
 
-2. Print the plan for each of the five subquery types with only `SubqueryUnnesting` registered. For each, say which of the four shape flags was responsible for the difference from the plain `EXISTS` case.
+For non-null x = 2, evaluate x NOT IN (1, NULL). Compare it with NOT EXISTS over rows where key = x.
 
-3. Write a scalar subquery that matches two rows for one outer row and confirm which one comes back. Then add `MAX(...)` around the projection and watch the join type change from `SINGLE` to `LEFT`.
+### Practice
 
-4. Nest a correlated `EXISTS` inside another correlated `EXISTS` and instrument `SubqueryUnnesting.apply` to count sweeps. How many does it take, and how does that scale with nesting depth?
+1. **Observe.** Reproduce the opening result. Register `ORDERS` with an explicit schema so `O_CUSTKEY` is nullable, put a `NULL` in it, and run both queries. Then add `WHERE o.O_CUSTKEY IS NOT NULL` to the `NOT IN` subquery and confirm the answers converge.
 
-5. Remove the `distinguishesUnknown` flag from the `MARK` entry and run `tests/e2e/subquery-unnesting-differential.test.ts`. Which query in the corpus catches you?
+2. **Observe.** Print the plan for each of the five subquery types with only `SubqueryUnnesting` registered. For each, say which of the four shape flags was responsible for the difference from the plain `EXISTS` case.
+
+3. **Observe.** Write a scalar subquery that matches two rows for one outer row and confirm which one comes back. Then add `MAX(...)` around the projection and watch the join type change from `SINGLE` to `LEFT`.
+
+4. **Extend (optional).** Nest a correlated `EXISTS` inside another correlated `EXISTS` and instrument `SubqueryUnnesting.apply` to count sweeps. How many does it take, and how does that scale with nesting depth?
+
+5. **Extend (optional).** Remove the `distinguishesUnknown` flag from the `MARK` entry and run `tests/e2e/subquery-unnesting-differential.test.ts`. Which query in the corpus catches you?
+
+### Hints and expected observations
+
+NOT IN is unknown and WHERE discards it. NOT EXISTS is true because neither comparison is true. For x = 1, both predicates are false.
 
 ## Recap
 
-- The planner emits a **`Dependent Join`** for every subquery; it is not executable, and the operator says so by name when reached.
+- Subqueries initially use **`Dependent Join`** nodes. Correlated forms must be decorrelated before execution; a limited runtime handles some uncorrelated forms.
 - [`SUBQUERY_JOINS`](../../src/optimizer/passes/subquery-unnesting.ts) maps five subquery types to join types: `EXISTS` → **semi**, `NOT EXISTS` → **anti**, `IN` → **semi with a manufactured comparison**, `NOT IN` and `ALL` → **mark**, scalar → **left** with an aggregate and **single** without. A `SINGLE` join keeps the first match rather than erroring on several.
 - Four flags handle the rest: comparing the outer expression, projecting a scalar output, carrying the mark column, and preserving unknown.
 - `NOT IN` needs a **three-valued mark** because `NOT (x IN (…, NULL))` is `NULL`, not `true`. An anti join has only two outcomes, so it cannot be used, and that is why `NOT IN` returns nothing when the subquery contains a null.
