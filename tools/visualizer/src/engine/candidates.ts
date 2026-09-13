@@ -1,4 +1,3 @@
-import { cheapest } from '@engine/execution/physical-planner.js';
 import { aggregateLogical, describePhysicalNode, isPhysicalAggregate, isPhysicalJoin } from '@engine/execution/physical-plan.js';
 import type { PhysicalPlanner } from '@engine/execution/physical-planner.js';
 import type { PhysicalNodeType, PhysicalPlanNode } from '@engine/execution/physical-plan.js';
@@ -24,6 +23,10 @@ function candidatePlans(planner: PhysicalPlanner, node: PhysicalPlanNode): Physi
     return [];
   }
   return [];
+}
+
+function cheapest(plans: readonly PhysicalPlanNode[]): PhysicalPlanNode {
+  return plans.reduce((best, candidate) => (candidate.cost < best.cost ? candidate : best));
 }
 
 export function operatorChoice(planner: PhysicalPlanner, node: PhysicalPlanNode): OperatorChoice | null {

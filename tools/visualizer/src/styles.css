@@ -559,7 +559,6 @@ input[type="number"], select {
 .app.compact .sidebar-toggle,
 .app.compact .top-bar-teaches,
 .app.compact .catalog-summary,
-.app.compact .share-menu,
 .app.compact .run-hint { display: none; }
 .app.compact .top-bar h1 {
   position: absolute;
@@ -732,36 +731,6 @@ input[type="number"], select {
 .provenance td { color: var(--text-dim); }
 .provenance tr.unknown td, .provenance .no-stats { color: var(--modified); }
 .provenance .has-index { color: var(--added); }
-
-.share-menu { position: relative; display: flex; align-items: center; gap: 5px; }
-.share-menu button { padding: 3px 9px; font-size: 11px; color: var(--text-dim); white-space: nowrap; }
-.share-menu button:hover { color: var(--accent); }
-.share-note { color: var(--added); font-size: 11px; white-space: nowrap; }
-.share-fallback {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 5;
-  width: min(560px, 70vw);
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel-raised);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-}
-.share-fallback header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; color: var(--text-dim); font-size: 11px; }
-.share-fallback header button { padding: 0 7px; color: var(--text-dim); }
-.share-fallback textarea {
-  width: 100%;
-  height: 180px;
-  resize: vertical;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 7px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
 
 .transport-pin { font-size: 11px; color: var(--text-dim); }
 .transport-pinned { color: var(--moved); font-family: var(--font-mono); font-size: 11px; white-space: nowrap; }

@@ -23,7 +23,6 @@ import { ResultsView } from './ui/ResultsView.js';
 import { SchemaPanel } from './ui/SchemaPanel.js';
 import { SqlEditor } from './ui/SqlEditor.js';
 import { STAGES, StageRail } from './ui/StageRail.js';
-import { ShareMenu } from './ui/ShareMenu.js';
 import { TopBar } from './ui/TopBar.js';
 import { Transport } from './ui/Transport.js';
 import { useMediaQuery } from './ui/useMediaQuery.js';
@@ -31,8 +30,7 @@ import { useReducedMotion, useTween } from './ui/useTween.js';
 import { formatCount } from './ui/format.js';
 import { flattenProfile, qErrorOf } from '@engine/execution/execution-profile.js';
 import { toneOf } from './engine/profile-view.js';
-import { readSession, readSharedState, shareLinkFor, writeSession } from './session-state.js';
-import { buildRepro, serializeRepro } from './engine/repro.js';
+import { readSession, writeSession } from './session-state.js';
 import type { LogicalPlanNode } from '@engine/planner/logical-plan.js';
 import type { OptimizeTrace, PassStep } from './engine/trace.js';
 import type { PaneKind } from './ui/PaneRail.js';
@@ -81,15 +79,14 @@ function lastChangedBefore(steps: readonly PassStep[], start: number): number | 
 
 function bootstrap(): { workspace: Workspace; sql: string; disabled: ReadonlySet<string> } {
   const workspace = new Workspace();
-  const shared = readSharedState();
-  const saved = shared ?? readSession();
+  const saved = readSession();
   if (saved) {
     for (const [table, rowCount] of Object.entries(saved.rowCounts)) workspace.setRowCount(table, rowCount);
   }
   return {
     workspace,
     sql: saved?.sql ?? DEFAULT_EXAMPLE.sql,
-    disabled: new Set(shared?.disabled ?? []),
+    disabled: new Set(),
   };
 }
 
@@ -342,12 +339,6 @@ export function App() {
   const ran = result !== null && result.ok && !stale;
   const profile = ran && measuresMainQuery ? result.profile : null;
   const unmeasured: UnmeasuredReason | null = profile !== null ? null : ran ? 'other-subject' : 'not-run';
-  const reproProfile = ran ? result.profile : null;
-
-  const reproState = useMemo(
-    () => ({ sql, rowCounts, disabled: [...disabledPasses] }),
-    [disabledPasses, rowCounts, sql],
-  );
 
   const togglePin = useCallback(() => {
     setPinned(current => {
@@ -364,19 +355,6 @@ export function App() {
     setPinned({ plan: snapshots[snapshots.length - 1].display, label: 'the full pipeline' });
   }, [baseline, subjectIndex]);
 
-  const copyLink = useCallback(() => shareLinkFor(reproState), [reproState]);
-
-  const copyRepro = useCallback(
-    () => serializeRepro(buildRepro({
-      sql,
-      rowCounts,
-      disabled: disabledPasses,
-      tables,
-      statistics,
-      profile: reproProfile,
-    })),
-    [disabledPasses, reproProfile, rowCounts, sql, statistics, tables],
-  );
   const baselineCost = ablated === null || !baseline.ok
     ? null
     : baseline.trace.subjects[Math.min(subjectIndex, baseline.trace.subjects.length - 1)]?.optimize.snapshots.at(-1)?.cost ?? null;
@@ -411,9 +389,7 @@ export function App() {
         onSql={setSql}
         onToggleSidebar={() => setSidebarOpen(open => !open)}
         onRun={() => void runQuery()}
-      >
-        <ShareMenu onLink={copyLink} onRepro={copyRepro} />
-      </TopBar>
+      />
 
       <div className="app-body">
         {compact || sidebarOpen ? (
