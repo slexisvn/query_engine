@@ -15,6 +15,50 @@ function newExecutor() {
 const scanPlan = (table) => ({ type: PlanNodeType.SCAN, table, columns: null, children: [] });
 
 describe('ExecutionContext', () => {
+  it('clears every spill store registered by a failed run', async () => {
+    const cleared = [];
+    const backend = {
+      createSpillManager: (handle) => ({
+        appendChunk: async () => {},
+        async *readChunks() {},
+        clearPartition: async () => {},
+        clearAll: async () => { cleared.push(handle); },
+      }),
+    };
+    const executor = new QueryExecutor(new Catalog(), mockTempManager(), backend);
+    const ctx = executor.newContext();
+
+    ctx.createSpillStore('first');
+    ctx.createSpillStore('second');
+    await ctx.clearSpillStoresAfterFailure();
+    await ctx.clearSpillStoresAfterFailure();
+
+    expect(cleared.sort()).toEqual(['spill/first', 'spill/second']);
+  });
+
+  it('retries a transient spill cleanup failure once', async () => {
+    let attempts = 0;
+    const backend = {
+      createSpillManager: () => ({
+        appendChunk: async () => {},
+        async *readChunks() {},
+        clearPartition: async () => {},
+        clearAll: async () => {
+          attempts++;
+          if (attempts === 1) throw new Error('temporary cleanup failure');
+        },
+      }),
+    };
+    const executor = new QueryExecutor(new Catalog(), mockTempManager(), backend);
+    const ctx = executor.newContext();
+    ctx.createSpillStore('retry');
+
+    await ctx.clearSpillStoresAfterFailure();
+
+    expect(attempts).toBe(2);
+    expect(ctx.spillStores.size).toBe(0);
+  });
+
   it('gives each run its own CTE state', () => {
     const executor = newExecutor();
     const first = executor.newContext();

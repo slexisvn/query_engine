@@ -24,11 +24,13 @@ export class QueryResult {
   _columnNames: string[];
   _sink: AsyncChunkSource;
   _rowKeys: string[];
+  _onDone: ((abandoned: boolean) => void) | null;
 
-  constructor(columnNames: string[], sink: AsyncChunkSource) {
+  constructor(columnNames: string[], sink: AsyncChunkSource, onDone: ((abandoned: boolean) => void) | null = null) {
     this._columnNames = columnNames;
     this._sink = sink;
     this._rowKeys = uniqueNames(columnNames);
+    this._onDone = onDone;
   }
 
   get columns(): string[] {
@@ -42,39 +44,63 @@ export class QueryResult {
 
   async toArray(): Promise<ResultRow[]> {
     const result: ResultRow[] = [];
-    for await (const chunk of this._sink) {
-      for (let i = 0; i < chunk.size; i++) {
-        const rowIdx = chunk.activeRowIndex(i);
-        const obj: ResultRow = {};
-        for (let j = 0; j < this._columnNames.length; j++) {
-          let val = chunk.columns[j].get(rowIdx);
-          if (typeof val === 'bigint') val = Number(val);
-          obj[this._rowKeys[j]] = val;
+    let completed = false;
+    try {
+      for await (const chunk of this._sink) {
+        for (let i = 0; i < chunk.size; i++) {
+          const rowIdx = chunk.activeRowIndex(i);
+          const obj: ResultRow = {};
+          for (let j = 0; j < this._columnNames.length; j++) {
+            let val = chunk.columns[j].get(rowIdx);
+            if (typeof val === 'bigint') val = Number(val);
+            obj[this._rowKeys[j]] = val;
+          }
+          result.push(obj);
         }
-        result.push(obj);
       }
+      completed = true;
+      return result;
+    } finally {
+      this.finish(!completed);
     }
-    return result;
   }
 
   async *[Symbol.asyncIterator](): AsyncGenerator<ResultRow> {
-    for await (const chunk of this._sink) {
-      for (let i = 0; i < chunk.size; i++) {
-        const rowIdx = chunk.activeRowIndex(i);
-        const obj: ResultRow = {};
-        for (let j = 0; j < this._columnNames.length; j++) {
-          let val = chunk.columns[j].get(rowIdx);
-          if (typeof val === 'bigint') val = Number(val);
-          obj[this._rowKeys[j]] = val;
+    let completed = false;
+    try {
+      for await (const chunk of this._sink) {
+        for (let i = 0; i < chunk.size; i++) {
+          const rowIdx = chunk.activeRowIndex(i);
+          const obj: ResultRow = {};
+          for (let j = 0; j < this._columnNames.length; j++) {
+            let val = chunk.columns[j].get(rowIdx);
+            if (typeof val === 'bigint') val = Number(val);
+            obj[this._rowKeys[j]] = val;
+          }
+          yield obj;
         }
-        yield obj;
       }
+      completed = true;
+    } finally {
+      this.finish(!completed);
     }
   }
 
   async *chunks(): AsyncGenerator<DataChunk> {
-    for await (const chunk of this._sink) {
-      yield chunk;
+    let completed = false;
+    try {
+      for await (const chunk of this._sink) {
+        yield chunk;
+      }
+      completed = true;
+    } finally {
+      this.finish(!completed);
     }
+  }
+
+  finish(abandoned: boolean = false): void {
+    const onDone = this._onDone;
+    this._onDone = null;
+    onDone?.(abandoned);
   }
 }

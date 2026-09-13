@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { TaskScheduler } from '../../src/execution/scheduler.js';
-import { PipelineGraph } from '../../src/execution/pipeline.js';
+import { CancelToken, PipelineGraph, QueryCancelledError } from '../../src/execution/pipeline.js';
 
 function delay(ms) {
   return new Promise(r => setTimeout(r, ms));
@@ -509,5 +509,77 @@ describe('TaskScheduler concurrency', () => {
     await expect(new TaskScheduler(2).schedule(graph)).rejects.toThrow('boom');
     expect(graph.isCancelled(surviving)).toBe(true);
     expect(survivingIterations).toBeLessThan(50);
+  });
+
+  it('waits for cancelled pipelines to settle before reporting a failure', async () => {
+    const graph = new PipelineGraph();
+    const sink = { async consume() {} };
+
+    const failing = graph.createPipeline(sink);
+    const bystander = graph.createPipeline(sink);
+    let bystanderSettled = false;
+    let resolveBystanderStarted;
+    const bystanderStarted = new Promise(resolve => { resolveBystanderStarted = resolve; });
+
+    graph.setSource(failing, async function* () {
+      await bystanderStarted;
+      throw new Error('boom');
+    });
+    graph.setSource(bystander, async function* () {
+      try {
+        resolveBystanderStarted();
+        await delay(20);
+        yield 1;
+      } finally {
+        bystanderSettled = true;
+      }
+    });
+
+    await expect(new TaskScheduler(2).schedule(graph)).rejects.toThrow('boom');
+
+    expect(graph.isCancelled(bystander)).toBe(true);
+    expect(bystanderSettled).toBe(true);
+  });
+
+  it('does not hide a failure behind a pipeline that cannot settle', async () => {
+    const graph = new PipelineGraph();
+    const sink = { async consume() {} };
+    let resolveBystanderStarted;
+    const bystanderStarted = new Promise(resolve => { resolveBystanderStarted = resolve; });
+
+    const failing = graph.createPipeline(sink);
+    const blocked = graph.createPipeline(sink);
+    graph.setSource(failing, async function* () {
+      await bystanderStarted;
+      throw new Error('original failure');
+    });
+    graph.setSource(blocked, async function* () {
+      resolveBystanderStarted();
+      await new Promise(() => {});
+      yield 1;
+    });
+
+    await expect(new TaskScheduler(2, 10).schedule(graph)).rejects.toThrow('original failure');
+    expect(graph.isCancelled(blocked)).toBe(true);
+  });
+
+  it('observes cancellation while every source is blocked', async () => {
+    const graph = new PipelineGraph();
+    const token = new CancelToken();
+    let resolveStarted;
+    const started = new Promise(resolve => { resolveStarted = resolve; });
+    const blocked = graph.createPipeline({ async consume() {} });
+    graph.setSource(blocked, async function* () {
+      resolveStarted();
+      await new Promise(() => {});
+      yield 1;
+    });
+
+    const scheduled = new TaskScheduler(1, 10).schedule(graph, token);
+    await started;
+    token.cancel();
+
+    await expect(scheduled).rejects.toBeInstanceOf(QueryCancelledError);
+    expect(graph.isCancelled(blocked)).toBe(true);
   });
 });

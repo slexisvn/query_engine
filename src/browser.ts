@@ -18,3 +18,4 @@ export {
 } from './dataframe/index.js';
 export { createEngine, registerTable, registerStreamingTable } from './engine-entry.js';
 export { QueryCancelledError } from './execution/pipeline.js';
+export type { RunOptions } from './engine/query-engine.js';

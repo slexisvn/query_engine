@@ -12,8 +12,9 @@ import type { OptimizationContext } from '../optimizer/pass.js';
 import { QueryExecutor } from '../execution/query-executor.js';
 import { PhysicalPlanner } from '../execution/physical-planner.js';
 import { QueryResult } from '../execution/query-result.js';
+import type { ResultSink } from '../execution/result-sink.js';
 import { ExecutionProfiler, profileToString } from '../execution/execution-profile.js';
-import { CancelToken } from '../execution/pipeline.js';
+import { CancelToken, QueryCancelledError } from '../execution/pipeline.js';
 import { BTreeIndex } from '../storage/btree.js';
 import { StatisticsCache } from '../catalog/statistics-cache.js';
 import { LRUCache } from '../utils/lru-cache.js';
@@ -426,9 +427,15 @@ ${physicalPlanToString(physical)}`;
     return { value, profile: profiler.snapshot() };
   }
 
-  async _analyzeResult(plan: LogicalPlanNode, outputColumns: OutputColumn[], cteMap: Map<string, LogicalPlanNode>): Promise<RunRowsResult> {
+  async _analyzeResult(
+    plan: LogicalPlanNode,
+    outputColumns: OutputColumn[],
+    cteMap: Map<string, LogicalPlanNode>,
+    cancelToken: CancelToken | null = null,
+  ): Promise<RunRowsResult> {
     const logicalStr = await this._formatLogicalPlan(plan);
-    const { value, profile } = await this._profiled(profiler => this._collectRows(plan, outputColumns, cteMap, profiler));
+    const { value, profile } = await this._profiled(profiler =>
+      this._collectRows(plan, outputColumns, cteMap, profiler, cancelToken));
     const analyzeStr = `${logicalStr}
 Physical Plan:
 ${profileToString(profile)}Execution Time: ${profile.totalMs.toFixed(EXPLAIN_MS_DECIMALS)} ms
@@ -460,7 +467,8 @@ Rows Returned: ${value.rows.length}`;
     }
 
     if (isAnalyze) {
-      return this._analyzeResult(plan, outputColumns, cteMap);
+      return this._cancellable(options.signal, cancelToken =>
+        this._analyzeResult(plan, outputColumns, cteMap, cancelToken));
     }
 
     return this._cancellable(options.signal, cancelToken =>
@@ -478,7 +486,8 @@ Rows Returned: ${value.rows.length}`;
 
     if (isExplain) {
       const explained = isAnalyze
-        ? await this._analyzeResult(plan, outputColumns, cteMap)
+        ? await this._cancellable(options.signal, cancelToken =>
+            this._analyzeResult(plan, outputColumns, cteMap, cancelToken))
         : await this._explainPlanResult(plan);
       return { ...explained, profile: null };
     }
@@ -632,9 +641,37 @@ Rows Returned: ${value.rows.length}`;
       return this._explainPlanResult(plan);
     }
 
-    const cancelToken = options.signal ? CancelToken.fromSignal(options.signal) : null;
-    const { sink, columnNames } = await this.executor.execute(plan, outputColumns as ExecutorColumns, { cteDefinitions: cteMap, streaming: true, cancelToken });
-    return new QueryResult(columnNames, sink);
+    if (isAnalyze) {
+      return this._cancellable(options.signal, cancelToken =>
+        this._analyzeResult(plan, outputColumns, cteMap, cancelToken));
+    }
+
+    const cancelToken = new CancelToken();
+    let resultSink: ResultSink | null = null;
+    const onAbort = (): void => {
+      cancelToken.cancel();
+      resultSink?.cancelProducer(new QueryCancelledError());
+    };
+    const detach = (): void => options.signal?.removeEventListener('abort', onAbort);
+    if (options.signal?.aborted) onAbort();
+    else options.signal?.addEventListener('abort', onAbort, { once: true });
+
+    try {
+      const { sink, columnNames } = await this.executor.execute(plan, outputColumns as ExecutorColumns, { cteDefinitions: cteMap, streaming: true, cancelToken });
+      resultSink = sink;
+      void sink.settled.then(detach);
+      if (cancelToken.isCancelled) sink.cancelProducer(new QueryCancelledError());
+      return new QueryResult(columnNames, sink, (abandoned) => {
+        if (abandoned && !sink.isDone) {
+          cancelToken.cancel();
+          sink.cancelProducer(new QueryCancelledError('Query result consumption stopped before completion'));
+        }
+        detach();
+      });
+    } catch (error) {
+      detach();
+      throw error;
+    }
   }
 
   async buildIndexes(): Promise<void> {

@@ -10,17 +10,21 @@ interface PipelineOutcome {
 
 export class TaskScheduler {
   concurrency: number;
+  settleTimeoutMs: number;
 
-  constructor(concurrency: number = Config.pipelineConcurrency) {
+  constructor(concurrency: number = Config.pipelineConcurrency, settleTimeoutMs: number = Config.cancelSettleMs) {
     this.concurrency = Math.max(1, concurrency);
+    this.settleTimeoutMs = Math.max(0, settleTimeoutMs);
   }
 
   async schedule(pipelineGraph: PipelineGraph, cancelToken: CancelToken | null = null): Promise<void> {
     const running = new Map<number, Promise<PipelineOutcome>>();
+    const cancellationOutcome = cancelToken?.whenCancelled.then((): null => null) ?? null;
 
     for (;;) {
       if (cancelToken?.isCancelled) {
         this.cancelRunning(pipelineGraph, running);
+        await this.settleRunning(running);
         throw new QueryCancelledError();
       }
 
@@ -33,12 +37,16 @@ export class TaskScheduler {
         return;
       }
 
-      const outcome = await Promise.race(running.values());
+      const outcome = await Promise.race<PipelineOutcome | null>(
+        cancellationOutcome ? [...running.values(), cancellationOutcome] : running.values(),
+      );
+      if (outcome === null) continue;
       running.delete(outcome.id);
 
       if (outcome.error) {
         pipelineGraph.markPipelineFailed(outcome.id);
         this.cancelRunning(pipelineGraph, running);
+        await this.settleRunning(running);
         throw outcome.error;
       }
 
@@ -56,6 +64,19 @@ export class TaskScheduler {
 
   cancelRunning(pipelineGraph: PipelineGraph, running: Map<number, Promise<PipelineOutcome>>): void {
     for (const id of running.keys()) pipelineGraph.cancelPipeline(id);
+  }
+
+  async settleRunning(running: Map<number, Promise<PipelineOutcome>>): Promise<void> {
+    const tasks = [...running.values()];
+    if (tasks.length === 0) return;
+
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<void>(resolve => {
+      timeoutId = setTimeout(resolve, this.settleTimeoutMs);
+    });
+    await Promise.race([Promise.allSettled(tasks), timeout]);
+    if (timeoutId !== null) clearTimeout(timeoutId);
+    running.clear();
   }
 
   countPending(pipelineGraph: PipelineGraph): number {

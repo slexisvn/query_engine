@@ -31,6 +31,16 @@ describe('QueryResult', () => {
   });
 
   describe('toArray', () => {
+    it('releases its completion hook after materialization', async () => {
+      let releases = 0;
+      const result = new QueryResult(['x'], mockSink([]), () => { releases++; });
+
+      await result.toArray();
+      await result.toArray();
+
+      expect(releases).toBe(1);
+    });
+
     it('converts chunks into array of row objects', async () => {
       const chunks = [
         makeChunk([
@@ -85,6 +95,21 @@ describe('QueryResult', () => {
   });
 
   describe('async iterator', () => {
+    it('releases its completion hook when iteration stops early', async () => {
+      let releases = 0;
+      let abandoned = false;
+      const chunks = [makeChunk([{ type: 'INT32', values: [1, 2, 3] }])];
+      const result = new QueryResult(['x'], mockSink(chunks), (stoppedEarly) => {
+        releases++;
+        abandoned = stoppedEarly;
+      });
+
+      for await (const _row of result) break;
+
+      expect(releases).toBe(1);
+      expect(abandoned).toBe(true);
+    });
+
     it('yields row objects one at a time', async () => {
       const chunks = [
         makeChunk([

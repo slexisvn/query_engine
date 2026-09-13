@@ -122,11 +122,15 @@ export class CancelToken {
   cancelled: boolean;
   readonly parent: CancelToken | null;
   _detach: (() => void) | null;
+  _resolveCancelled: () => void;
+  readonly whenCancelled: Promise<void>;
 
   constructor(parent: CancelToken | null = null) {
     this.cancelled = false;
     this.parent = parent;
     this._detach = null;
+    this._resolveCancelled = () => {};
+    this.whenCancelled = new Promise(resolve => { this._resolveCancelled = resolve; });
   }
 
   static fromSignal(signal: AbortSignal): CancelToken {
@@ -142,7 +146,9 @@ export class CancelToken {
   }
 
   cancel(): void {
+    if (this.cancelled) return;
     this.cancelled = true;
+    this._resolveCancelled();
   }
 
   detach(): void {

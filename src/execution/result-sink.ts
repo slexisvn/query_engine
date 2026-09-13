@@ -16,8 +16,11 @@ export class ResultSink implements Sink {
   _totalRows: number;
   _done: boolean;
   _error: Error | null;
+  _producerError: Error | null;
   _producerResolve: (() => void) | null;
   _consumerResolve: (() => void) | null;
+  _resolveSettled: () => void;
+  readonly settled: Promise<void>;
   _collected: DataChunk[];
   _spillStore: ChunkSpillStore | null;
   _memoryBudget: RowMemoryBudget;
@@ -34,8 +37,11 @@ export class ResultSink implements Sink {
     this._totalRows = 0;
     this._done = false;
     this._error = null;
+    this._producerError = null;
     this._producerResolve = null;
     this._consumerResolve = null;
+    this._resolveSettled = () => {};
+    this.settled = new Promise(resolve => { this._resolveSettled = resolve; });
     this._collected = [];
     this._spillStore = spillStore;
     this._memoryBudget = new RowMemoryBudget();
@@ -48,6 +54,7 @@ export class ResultSink implements Sink {
   async consume(chunk: DataChunk): Promise<void> {
     if (!chunk || chunk.size === 0) return;
     if (this._error) throw this._error;
+    if (this._producerError) throw this._producerError;
 
     this._totalRows += chunk.size;
 
@@ -63,6 +70,7 @@ export class ResultSink implements Sink {
     }
 
     if (this._error) throw this._error;
+    if (this._producerError) throw this._producerError;
 
     this._queue[this._tail] = chunk;
     this._tail = (this._tail + 1) % this._capacity;
@@ -107,7 +115,9 @@ export class ResultSink implements Sink {
   }
 
   async finalize(): Promise<void> {
+    if (this._done) return;
     this._done = true;
+    this._resolveSettled();
     if (this._consumerResolve) {
       const resolve = this._consumerResolve;
       this._consumerResolve = null;
@@ -116,8 +126,10 @@ export class ResultSink implements Sink {
   }
 
   error(err: Error): void {
+    if (this._done) return;
     this._error = err;
     this._done = true;
+    this._resolveSettled();
     if (this._consumerResolve) {
       const resolve = this._consumerResolve;
       this._consumerResolve = null;
@@ -128,6 +140,20 @@ export class ResultSink implements Sink {
       this._producerResolve = null;
       resolve();
     }
+  }
+
+  cancelProducer(err: Error): void {
+    if (this._done || this._producerError) return;
+    this._producerError = err;
+    if (this._producerResolve) {
+      const resolve = this._producerResolve;
+      this._producerResolve = null;
+      resolve();
+    }
+  }
+
+  get isDone(): boolean {
+    return this._done;
   }
 
   get totalRows(): number {
@@ -141,12 +167,15 @@ export class ResultSink implements Sink {
   materializedIterator(): AsyncIterator<DataChunk> {
     const sink = this;
     const drain = async function* (): AsyncGenerator<DataChunk> {
-      await sink._spillWrites;
-      if (sink._spillStore && sink._spilledChunks > 0) {
-        for await (const chunk of sink._spillStore.readChunks(MATERIALIZED_HANDLE)) yield chunk;
+      try {
+        await sink._spillWrites;
+        if (sink._spillStore && sink._spilledChunks > 0) {
+          for await (const chunk of sink._spillStore.readChunks(MATERIALIZED_HANDLE)) yield chunk;
+        }
+        for (const chunk of sink._collected) yield chunk;
+      } finally {
+        if (sink._spillStore && sink._spilledChunks > 0) await sink._spillStore.clearAll();
       }
-      for (const chunk of sink._collected) yield chunk;
-      if (sink._spillStore && sink._spilledChunks > 0) await sink._spillStore.clearAll();
     };
     return drain()[Symbol.asyncIterator]();
   }

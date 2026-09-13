@@ -109,6 +109,18 @@ describe('ResultSink', () => {
 
       expect(chunks.length).toBe(1);
     });
+
+    it('settles when the producer finalizes', async () => {
+      const sink = new ResultSink(true);
+      let settled = false;
+      void sink.settled.then(() => { settled = true; });
+
+      await sink.finalize();
+      await sink.settled;
+
+      expect(settled).toBe(true);
+      expect(sink.isDone).toBe(true);
+    });
   });
 
   describe('error handling', () => {
@@ -140,6 +152,28 @@ describe('ResultSink', () => {
       sink.error(new Error('broken'));
 
       await expect(sink.consume(makeChunk([1]))).rejects.toThrow('broken');
+    });
+
+    it('keeps the first terminal error', async () => {
+      const sink = new ResultSink(true);
+      sink.error(new Error('first'));
+      sink.error(new Error('second'));
+
+      await expect(sink.collect()).rejects.toThrow('first');
+      await sink.settled;
+    });
+
+    it('wakes a blocked producer without publishing an error early', async () => {
+      const sink = new ResultSink(true);
+      sink._capacity = 1;
+      sink._queue = new Array(1);
+      await sink.consume(makeChunk([1]));
+      const blocked = sink.consume(makeChunk([2]));
+
+      sink.cancelProducer(new Error('cancelled producer'));
+
+      await expect(blocked).rejects.toThrow('cancelled producer');
+      expect(sink.isDone).toBe(false);
     });
   });
 
@@ -210,6 +244,23 @@ describe('ResultSink materialized spilling', () => {
     await feed(sink, 25, 4);
 
     expect(await drain(sink)).toEqual(Array.from({ length: 100 }, (_, i) => i));
+  });
+
+  it('clears materialized spill data when iteration stops early', async () => {
+    limitResidentRows(ROW_SCHEMA, 8);
+    const spill = memSpill();
+    const clearAll = spill.clearAll.bind(spill);
+    let clears = 0;
+    spill.clearAll = async () => {
+      clears++;
+      await clearAll();
+    };
+    const sink = new ResultSink(false, spill);
+    await feed(sink, 25, 4);
+
+    for await (const _chunk of sink) break;
+
+    expect(clears).toBe(1);
   });
 
   it('returns the same rows spilled as unspilled', async () => {

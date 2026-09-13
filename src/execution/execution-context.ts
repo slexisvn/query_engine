@@ -17,6 +17,7 @@ import type { ExecutionResources } from './execution-resources.js';
 import type { MaterializedCTE } from './builders/cte-builders.js';
 import type { ChunkReceiver, DistributedExecutionContext } from './builders/exchange-builders.js';
 import type { DataChunk } from '../storage/chunk.js';
+import type { ChunkSpillStore } from '../storage/spill-manager/spill-manager.js';
 import type {
   CompiledPipeline,
   Sink,
@@ -80,6 +81,7 @@ export class ExecutionContext {
   readonly exchangeReceivers: Map<number, ChunkReceiver> | null;
   readonly cancelToken: CancelToken;
   readonly interruptible: boolean;
+  readonly spillStores: Set<ChunkSpillStore>;
 
   constructor(resources: ExecutionResources, options: ExecutionContextOptions = {}) {
     this.resources = resources;
@@ -91,27 +93,64 @@ export class ExecutionContext {
     this.exchangeReceivers = options.exchangeReceivers ?? null;
     this.cancelToken = options.cancelToken ?? new CancelToken();
     this.interruptible = options.cancelToken != null;
+    this.spillStores = new Set();
   }
 
   get schedulerToken(): CancelToken | null {
     return this.interruptible ? this.cancelToken : null;
   }
 
-  async run(logicalPlan: LogicalPlanNode, streaming: boolean = false): Promise<ResultSink> {
-    const spillHandle = this.resources.tempManager.allocate('spill', 'result');
-    const resultSink = new ResultSink(streaming, this.resources.storageBackend.createSpillManager(spillHandle));
-    await resultSink.init();
+  createSpillStore(label: string): ChunkSpillStore {
+    const handle = this.resources.tempManager.allocate('spill', label);
+    const store = this.resources.storageBackend.createSpillManager(handle);
+    this.spillStores.add(store);
+    return store;
+  }
 
-    const graph = await this.buildGraph(logicalPlan, resultSink);
-    const scheduler = new TaskScheduler();
+  async clearSpillStores(): Promise<void> {
+    const stores = [...this.spillStores];
+    const outcomes = await Promise.allSettled(stores.map(store => store.clearAll()));
+    outcomes.forEach((outcome, index) => {
+      if (outcome.status === 'fulfilled') this.spillStores.delete(stores[index]);
+    });
+    const errors = outcomes
+      .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
+      .map(outcome => outcome.reason);
+    if (errors.length > 0) throw new AggregateError(errors, 'Failed to clear query spill stores');
+  }
 
-    if (streaming) {
-      scheduler.schedule(graph, this.schedulerToken).catch((err: Error) => resultSink.error(err));
-      return resultSink;
+  async clearSpillStoresAfterFailure(): Promise<void> {
+    for (let attempt = 0; attempt < 2 && this.spillStores.size > 0; attempt++) {
+      try {
+        await this.clearSpillStores();
+      } catch {
+        // Preserve the query failure; retry transient cleanup failures once.
+      }
     }
+  }
 
-    await scheduler.schedule(graph, this.schedulerToken);
-    return resultSink;
+  async run(logicalPlan: LogicalPlanNode, streaming: boolean = false): Promise<ResultSink> {
+    const resultSink = new ResultSink(streaming, this.createSpillStore('result'));
+    try {
+      await resultSink.init();
+
+      const graph = await this.buildGraph(logicalPlan, resultSink);
+      const scheduler = new TaskScheduler();
+
+      if (streaming) {
+        scheduler.schedule(graph, this.schedulerToken).catch(async (err: Error) => {
+          await this.clearSpillStoresAfterFailure();
+          resultSink.error(err);
+        });
+        return resultSink;
+      }
+
+      await scheduler.schedule(graph, this.schedulerToken);
+      return resultSink;
+    } catch (error) {
+      await this.clearSpillStoresAfterFailure();
+      throw error;
+    }
   }
 
   async buildGraph(logicalPlan: LogicalPlanNode, sink: Sink): Promise<PipelineGraph> {

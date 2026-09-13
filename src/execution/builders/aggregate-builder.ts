@@ -64,7 +64,7 @@ interface ParallelAggregate extends BuiltFragmentSpec {
 type RegisterFn = (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => void;
 
 function aggregateSpillStore(ctx: ExecutionContext, label: string): ChunkSpillStore {
-  return ctx.resources.storageBackend.createSpillManager(ctx.resources.tempManager.allocate('spill', label));
+  return ctx.createSpillStore(label);
 }
 
 export async function buildAggregate(ctx: ExecutionContext, physical: PhysicalPlanNode): Promise<CompiledPipeline> {

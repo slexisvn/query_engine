@@ -143,8 +143,7 @@ export async function buildSort(ctx: ExecutionContext, physical: PhysicalPlanNod
     schema: child.schema,
     columnMapping: child.columnMapping,
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
-      const spillHandle = ctx.resources.tempManager.allocate('spill', 'sort');
-      const sortOp = new SortOperator(keyExtractors, node.limit ?? null, node.offset || 0, ctx.resources.storageBackend.createSpillManager(spillHandle));
+      const sortOp = new SortOperator(keyExtractors, node.limit ?? null, node.offset || 0, ctx.createSpillStore('sort'));
       const sortSink: Sink = {
         async consume(chunk: DataChunk) { await sortOp.consume(chunk); },
         async finalize() {}
@@ -175,8 +174,7 @@ export async function buildTopN(ctx: ExecutionContext, physical: PhysicalPlanNod
     schema: child.schema,
     columnMapping: child.columnMapping,
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
-      const spillHandle = ctx.resources.tempManager.allocate('spill', 'topn');
-      const sortOp = new SortOperator(keyExtractors, node.count, node.offset || 0, ctx.resources.storageBackend.createSpillManager(spillHandle));
+      const sortOp = new SortOperator(keyExtractors, node.count, node.offset || 0, ctx.createSpillStore('topn'));
       const sortSink: Sink = {
         async consume(chunk: DataChunk) { await sortOp.consume(chunk); },
         async finalize() {}
@@ -242,8 +240,7 @@ export async function buildDistinct(ctx: ExecutionContext, physical: PhysicalPla
     schema: child.schema,
     columnMapping: child.columnMapping,
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
-      const spillHandle = ctx.resources.tempManager.allocate('spill', 'distinct');
-      const distinctOp = new DistinctOperator(ctx.resources.storageBackend.createSpillManager(spillHandle));
+      const distinctOp = new DistinctOperator(ctx.createSpillStore('distinct'));
       const childSink: Sink = {
         async consume(chunk: DataChunk) {
           const result = await distinctOp.process(chunk);
@@ -279,8 +276,7 @@ export async function buildSetOp(ctx: ExecutionContext, physical: PhysicalPlanNo
 function registerUnion(ctx: ExecutionContext, node: LogicalSetOpNode, left: CompiledPipeline, right: CompiledPipeline) {
   return (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink): void => {
     if (!node.all) {
-      const spillHandle = ctx.resources.tempManager.allocate('spill', 'union');
-      const unionOp = new UnionOperator(false, ctx.resources.storageBackend.createSpillManager(spillHandle));
+      const unionOp = new UnionOperator(false, ctx.createSpillStore('union'));
       const dedupSink: Sink = {
         async consume(chunk: DataChunk) {
           const result = await unionOp.process(chunk);
@@ -380,13 +376,12 @@ export async function buildWindow(ctx: ExecutionContext, physical: PhysicalPlanN
     schema: windowSchema,
     columnMapping: windowMapping,
     register: (graph: PipelineGraph, currentPipelineId: number, currentSink: Sink) => {
-      const spillHandle = ctx.resources.tempManager.allocate('spill', 'window');
       const windowOp = new WindowOperator(
         windowExprs,
         child.schema,
         child.columnMapping,
         compileExpression,
-        ctx.resources.storageBackend.createSpillManager(spillHandle),
+        ctx.createSpillStore('window'),
       );
       const windowSink: Sink = {
         async consume(chunk: DataChunk) { await windowOp.consume(chunk); },

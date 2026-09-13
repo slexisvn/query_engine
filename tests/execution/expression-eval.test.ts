@@ -318,6 +318,29 @@ describe('compileExpression', () => {
       const fn = compileExpression(expr, m);
       expect(fn(nullChunk, 0)).toBe(null);
     });
+
+    it('remains correct after the regex cache evicts old patterns', () => {
+      const values = Array.from({ length: 300 }, (_, i) => `item_${i}`);
+      const patterns = values.map(value => value);
+      const manyPatterns = makeChunk([
+        { type: 'VARCHAR', values },
+        { type: 'VARCHAR', values: patterns },
+      ]);
+      const manyPatternMapping = new Map([
+        ['T.VALUE', 0], ['VALUE', 0],
+        ['T.PATTERN', 1], ['PATTERN', 1],
+      ]);
+      const expr = {
+        kind: BoundExprKind.LIKE,
+        expr: colRef('T', 'VALUE', 0, 'VARCHAR'),
+        pattern: colRef('T', 'PATTERN', 1, 'VARCHAR'),
+        negated: false,
+      };
+      const fn = compileExpression(expr, manyPatternMapping);
+
+      for (let i = 0; i < manyPatterns.size; i++) expect(fn(manyPatterns, i)).toBe(true);
+      for (let i = manyPatterns.size - 1; i >= 0; i--) expect(fn(manyPatterns, i)).toBe(true);
+    });
   });
 
   describe('IS_NULL', () => {

@@ -186,59 +186,65 @@ export class SortOperator {
       return a.runIndex - b.runIndex;
     });
 
-    for (let i = 0; i < this.runCount; i++) {
-      const iter = this.spillManager.readChunks(`run_${i}`);
-      const next = await iter.next();
-      if (next.done || next.value.size === 0) continue;
-      states[i] = { iter, chunk: next.value, keys: this.chunkKeys(next.value), index: 1 };
-      pq.push({ runIndex: i, rowIndex: 0 });
-    }
-
-    let pending: MergeCursor[] = [];
-    let count = 0;
-    let skipped = 0;
-
-    while (!pq.isEmpty()) {
-      if (this.topN !== null && count >= this.topN) break;
-
-      const cursor = pq.pop() as MergeCursor;
-      count++;
-
-      if (skipped < this.offset) {
-        skipped++;
-      } else {
-        pending.push(cursor);
+    try {
+      for (let i = 0; i < this.runCount; i++) {
+        const iter = this.spillManager.readChunks(`run_${i}`);
+        const next = await iter.next();
+        if (next.done || next.value.size === 0) {
+          await iter.return(undefined);
+          continue;
+        }
+        states[i] = { iter, chunk: next.value, keys: this.chunkKeys(next.value), index: 1 };
+        pq.push({ runIndex: i, rowIndex: 0 });
       }
 
-      const state = states[cursor.runIndex];
-      if (state.index < state.chunk.size) {
-        pq.push({ runIndex: cursor.runIndex, rowIndex: state.index });
-        state.index++;
-      } else {
-        const next = await state.iter.next();
-        if (!next.done && next.value.size > 0) {
-          if (pending.length > 0) {
-            yield this.cursorsToChunk(pending, states);
-            pending = [];
+      let pending: MergeCursor[] = [];
+      let count = 0;
+      let skipped = 0;
+
+      while (!pq.isEmpty()) {
+        if (this.topN !== null && count >= this.topN) break;
+
+        const cursor = pq.pop() as MergeCursor;
+        count++;
+
+        if (skipped < this.offset) {
+          skipped++;
+        } else {
+          pending.push(cursor);
+        }
+
+        const state = states[cursor.runIndex];
+        if (state.index < state.chunk.size) {
+          pq.push({ runIndex: cursor.runIndex, rowIndex: state.index });
+          state.index++;
+        } else {
+          const next = await state.iter.next();
+          if (!next.done && next.value.size > 0) {
+            if (pending.length > 0) {
+              yield this.cursorsToChunk(pending, states);
+              pending = [];
+            }
+            state.chunk = next.value;
+            state.keys = this.chunkKeys(next.value);
+            state.index = 1;
+            pq.push({ runIndex: cursor.runIndex, rowIndex: 0 });
           }
-          state.chunk = next.value;
-          state.keys = this.chunkKeys(next.value);
-          state.index = 1;
-          pq.push({ runIndex: cursor.runIndex, rowIndex: 0 });
+        }
+
+        if (pending.length >= Config.flushBatchSize) {
+          yield this.cursorsToChunk(pending, states);
+          pending = [];
         }
       }
 
-      if (pending.length >= Config.flushBatchSize) {
+      if (pending.length > 0) {
         yield this.cursorsToChunk(pending, states);
-        pending = [];
       }
+    } finally {
+      await Promise.allSettled(states.filter(Boolean).map(state => state.iter.return(undefined)));
+      await this.spillManager.clearAll();
     }
-
-    if (pending.length > 0) {
-      yield this.cursorsToChunk(pending, states);
-    }
-
-    await this.spillManager.clearAll();
   }
 
   chunkKeys(chunk: DataChunk): ColumnValue[][] {

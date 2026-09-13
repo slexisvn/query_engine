@@ -26,6 +26,7 @@ export { FragmentExecutor } from './distributed/execution/fragment-executor.js';
 export { Fragment } from './distributed/planner/fragment.js';
 export type { ColumnSchema, ColumnValue } from './storage/data-type.js';
 export type { DataChunk } from './storage/chunk.js';
+export type { RunOptions } from './engine/query-engine.js';
 export type { QueryCoordinator } from './distributed/execution/coordinator.js';
 export type { ClusterManager } from './distributed/cluster/cluster-manager.js';
 export type { PartitionMap } from './distributed/partition/partition-map.js';

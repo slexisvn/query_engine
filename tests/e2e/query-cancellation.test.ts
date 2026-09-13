@@ -3,6 +3,7 @@ import '../../src/index.js';
 import { createEngine, registerTable } from '../../src/engine-entry.js';
 import { QueryCancelledError } from '../../src/execution/pipeline.js';
 import { DataType } from '../../src/storage/data-type.js';
+import { getEventListeners } from 'node:events';
 
 const ROW_COUNT = 400000;
 const GROUP_COUNT = 500;
@@ -46,11 +47,33 @@ describe('query cancellation', () => {
     await expect(engine.run(LONG, [], { signal: controller.signal })).rejects.toBeInstanceOf(QueryCancelledError);
   });
 
+  it('honors an already-aborted signal for EXPLAIN ANALYZE', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(engine.run(`EXPLAIN ANALYZE ${LONG}`, [], { signal: controller.signal }))
+      .rejects.toBeInstanceOf(QueryCancelledError);
+  });
+
+  it('cancels EXPLAIN ANALYZE through profiled and streaming entry points', async () => {
+    await expect(engine.runProfiled(
+      `EXPLAIN ANALYZE ${LONG}`,
+      [],
+      { signal: abortAfter(1) },
+    )).rejects.toBeInstanceOf(QueryCancelledError);
+
+    await expect(engine.stream(
+      `EXPLAIN ANALYZE ${LONG}`,
+      { signal: abortAfter(1) },
+    )).rejects.toBeInstanceOf(QueryCancelledError);
+  });
+
   it('stops a running query well before it would have finished', async () => {
+    await engine.run(LONG);
     const uninterrupted = await timeOf(() => engine.run(LONG));
     expect(uninterrupted.outcome).toBe('fulfilled');
 
-    const cancelled = await timeOf(() => engine.run(LONG, [], { signal: abortAfter(Math.round(uninterrupted.ms / 10)) }));
+    const cancelled = await timeOf(() => engine.run(LONG, [], { signal: abortAfter(1) }));
 
     expect(cancelled.outcome).toBeInstanceOf(QueryCancelledError);
     expect(cancelled.ms).toBeLessThan(uninterrupted.ms);
@@ -90,5 +113,54 @@ describe('query cancellation', () => {
     const limited = await engine.run('SELECT ID FROM T LIMIT 5', [], { signal: new AbortController().signal });
 
     expect(limited.rows).toHaveLength(5);
+  });
+
+  it('detaches a streamed query from its AbortSignal after consumption', async () => {
+    const controller = new AbortController();
+    const result = await engine.stream('SELECT ID FROM T WHERE ID < 5 ORDER BY ID', { signal: controller.signal });
+
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(1);
+    await expect(result.toArray()).resolves.toEqual([
+      { ID: 0 }, { ID: 1 }, { ID: 2 }, { ID: 3 }, { ID: 4 },
+    ]);
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+  });
+
+  it('cancels and unblocks a streamed query when consumption stops early', async () => {
+    const controller = new AbortController();
+    const result = await engine.stream('SELECT ID FROM T ORDER BY ID', { signal: controller.signal });
+
+    for await (const _row of result) break;
+
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+    await result._sink.settled;
+    expect(result._sink._error).toBeInstanceOf(QueryCancelledError);
+    expect(result._sink._producerResolve).toBeNull();
+    await expect(engine.run('SELECT COUNT(*) AS C FROM T WHERE ID < 5'))
+      .resolves.toMatchObject({ rows: [{ C: 5 }] });
+  });
+
+  it('unblocks an unread streamed query when its signal is aborted', async () => {
+    const controller = new AbortController();
+    const result = await engine.stream('SELECT ID FROM T ORDER BY ID', { signal: controller.signal });
+
+    for (let i = 0; i < 100 && result._sink._producerResolve === null; i++) await new Promise(resolve => setTimeout(resolve, 1));
+    expect(result._sink._producerResolve).not.toBeNull();
+
+    controller.abort();
+
+    await expect(result.toArray()).rejects.toBeInstanceOf(QueryCancelledError);
+    expect(result._sink._producerResolve).toBeNull();
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+  });
+
+  it('detaches from its signal when the producer finishes before consumption', async () => {
+    const controller = new AbortController();
+    const result = await engine.stream('SELECT ID FROM T WHERE ID < 5', { signal: controller.signal });
+
+    await result._sink.settled;
+
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+    await expect(result.toArray()).resolves.toHaveLength(5);
   });
 });

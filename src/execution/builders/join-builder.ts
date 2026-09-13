@@ -146,12 +146,11 @@ export async function buildJoin(ctx: ExecutionContext, physical: PhysicalPlanNod
     });
   }
 
-  const joinSpillHandle = ctx.resources.tempManager.allocate('spill', 'join');
   const makeBuildSide: MakeBuildSide = () => new HashJoinBuild(
     buildKeys.map((k: BoundExpr) => compileExpression(k, buildInput.columnMapping)),
     node.joinType,
     physical.dedupeBuild && !conditionEvaluator,
-    ctx.resources.storageBackend.createSpillManager(joinSpillHandle),
+    ctx.createSpillStore('join'),
     buildPreserved,
     physical.runtimeFilterEntries,
   );
@@ -327,12 +326,12 @@ function buildMergeJoin(ctx: ExecutionContext, node: LogicalJoinNode, join: Join
       const buildRows = registerSortedChild(
         graph, currentPipelineId, mergeBuild,
         mergeJoinSortKeys(buildKeyExprs),
-        ctx.resources.storageBackend.createSpillManager(ctx.resources.tempManager.allocate('spill', 'merge-join-build')),
+        ctx.createSpillStore('merge-join-build'),
       );
       const probeRows = registerSortedChild(
         graph, currentPipelineId, mergeProbe,
         mergeJoinSortKeys(probeKeyExprs),
-        ctx.resources.storageBackend.createSpillManager(ctx.resources.tempManager.allocate('spill', 'merge-join-probe')),
+        ctx.createSpillStore('merge-join-probe'),
       );
 
       graph.setSource(currentPipelineId, async function* (): AsyncGenerator<DataChunk> {

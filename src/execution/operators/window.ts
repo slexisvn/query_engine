@@ -240,30 +240,34 @@ async function* mergeByOrdinal(
     }
   };
 
-  for (let run = 0; run < runCount; run++) {
-    iterators[run] = store.readChunks(prefix + run);
-    await advance(run);
-  }
+  try {
+    for (let run = 0; run < runCount; run++) {
+      iterators[run] = store.readChunks(prefix + run);
+      await advance(run);
+    }
 
-  const ordinalOf = (run: number): number => {
-    const chunk = current[run] as DataChunk;
-    return chunk.columns[0].get(chunk.activeRowIndex(cursor[run])) as number;
-  };
+    const ordinalOf = (run: number): number => {
+      const chunk = current[run] as DataChunk;
+      return chunk.columns[0].get(chunk.activeRowIndex(cursor[run])) as number;
+    };
 
-  const pending = new PriorityQueue<number>((a, b) => ordinalOf(a) - ordinalOf(b));
-  for (let run = 0; run < runCount; run++) if (current[run]) pending.push(run);
+    const pending = new PriorityQueue<number>((a, b) => ordinalOf(a) - ordinalOf(b));
+    for (let run = 0; run < runCount; run++) if (current[run]) pending.push(run);
 
-  const values: EvalValue[] = new Array(valueCount);
-  while (!pending.isEmpty()) {
-    const run = pending.pop() as number;
-    const chunk = current[run] as DataChunk;
-    const at = chunk.activeRowIndex(cursor[run]);
-    for (let v = 0; v < valueCount; v++) values[v] = chunk.columns[v + 1].get(at) as EvalValue;
-    yield values;
+    const values: EvalValue[] = new Array(valueCount);
+    while (!pending.isEmpty()) {
+      const run = pending.pop() as number;
+      const chunk = current[run] as DataChunk;
+      const at = chunk.activeRowIndex(cursor[run]);
+      for (let v = 0; v < valueCount; v++) values[v] = chunk.columns[v + 1].get(at) as EvalValue;
+      yield values;
 
-    cursor[run]++;
-    if (cursor[run] >= chunk.size) await advance(run);
-    if (current[run]) pending.push(run);
+      cursor[run]++;
+      if (cursor[run] >= chunk.size) await advance(run);
+      if (current[run]) pending.push(run);
+    }
+  } finally {
+    await Promise.allSettled(iterators.filter(Boolean).map(iter => iter.return(undefined)));
   }
 }
 
@@ -491,25 +495,28 @@ export class WindowOperator {
     const store = this.spillStore as ChunkSpillStore;
     const merged: AsyncGenerator<EvalValue[]>[] = new Array(this.groups.length);
 
-    for (let g = 0; g < this.groups.length; g++) {
-      await this.spillGroupResults(g);
-      merged[g] = mergeByOrdinal(store, OUTPUT_RUN_PREFIX + g + RUN_SEPARATOR, this.partitionCount, this.groups[g].plans.length);
-    }
-
-    for await (const chunk of store.readChunks(ROWS_RUN)) {
-      const resultColumns = this.resultColumnsOf(chunk.size);
-      for (let r = 0; r < chunk.size; r++) {
-        for (let g = 0; g < merged.length; g++) {
-          const next = await merged[g].next();
-          const values = next.value as EvalValue[];
-          const plans = this.groups[g].plans;
-          for (let i = 0; i < plans.length; i++) resultColumns[plans[i].slot].set(r, values[i] as ColumnValue);
-        }
+    try {
+      for (let g = 0; g < this.groups.length; g++) {
+        await this.spillGroupResults(g);
+        merged[g] = mergeByOrdinal(store, OUTPUT_RUN_PREFIX + g + RUN_SEPARATOR, this.partitionCount, this.groups[g].plans.length);
       }
-      yield this.outputChunk(chunk, resultColumns);
-    }
 
-    await store.clearAll();
+      for await (const chunk of store.readChunks(ROWS_RUN)) {
+        const resultColumns = this.resultColumnsOf(chunk.size);
+        for (let r = 0; r < chunk.size; r++) {
+          for (let g = 0; g < merged.length; g++) {
+            const next = await merged[g].next();
+            const values = next.value as EvalValue[];
+            const plans = this.groups[g].plans;
+            for (let i = 0; i < plans.length; i++) resultColumns[plans[i].slot].set(r, values[i] as ColumnValue);
+          }
+        }
+        yield this.outputChunk(chunk, resultColumns);
+      }
+    } finally {
+      await Promise.allSettled(merged.filter(Boolean).map(iter => iter.return(undefined)));
+      await store.clearAll();
+    }
   }
 
   async spillGroupResults(groupIndex: number): Promise<void> {
