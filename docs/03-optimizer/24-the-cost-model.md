@@ -200,28 +200,6 @@ Nothing in `src/` uses it. Its consumer is the visualizer's cost breakdown in [`
 
 **`spillPenalty` uses estimated cardinality, not measured memory.** A plan whose estimates are low will be costed as if it fits in memory and will spill at run time anyway.
 
-## Exercises
-
-### Understand
-
-Candidate A has local cost 10 and requires a parent sort costing 20. B costs 18 and already supplies the order. Which wins under those assumptions?
-
-### Practice
-
-1. **Observe.** Reproduce the crossover table. Instantiate `DefaultCostModel` directly and compare `hashJoinCost(n, n, n)` with `blockNestedLoopJoinCost(n, n, n)` for increasing `n`. Then find the crossover for asymmetric inputs — build 10, probe growing — and explain the difference.
-
-2. **Observe.** Reproduce the three physical plans from the opening by varying only the table sizes. Then set `QE_COST_HASH_INSERT=1` and find the new crossover.
-
-3. **Observe.** Wire `CostRecorder` into a script: build a physical plan, then re-cost one join through the recorder and print the term tree with values as percentages of the total. Which term dominates for the running query?
-
-4. **Extend (optional).** `sortKeyClassOf` only allows a radix sort for a *single* `INT32` or `DATE` key. Read [`sortCost`](../../src/planner/cost-model.ts) and decide what the cost of a two-integer radix sort would be, then find a query whose plan changes if you allow it.
-
-5. **Extend (optional).** `totalPhysicalCost` multiplies a `DependentJoin`'s inner subtree cost by the outer cardinality, but `blockNestedLoopJoinCost` already contains a `buildCard * probeCard` term. Work out whether that is double counting, and construct a plan where the answer matters.
-
-### Hints and expected observations
-
-B costs 18 versus A's 30. Compare the work needed by the parent, not just the local operator label, and remember that these are model units.
-
 ## Recap
 
 - Cost is a **unitless scalar** built from configurable model coefficients. Compare candidate plans under the same assumptions; do not read the numbers as milliseconds.

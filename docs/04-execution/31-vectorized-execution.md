@@ -174,28 +174,6 @@ The kernel check is a third gate, one level further down. [`evalVectorized`](../
 
 **Bigger chunks are not free even when they are faster.** A chunk is one allocation held live for its whole traversal, and a spill file is written a chunk at a time. Raising `DEFAULT_CHUNK_SIZE` raises the floor of every operator's resident memory, which is the quantity [`RowMemoryBudget`](../../src/execution/memory-budget.ts) is trying to bound.
 
-## Exercises
-
-### Understand
-
-A table has 5,000 rows and batches contain at most 2,048. How many batches are needed, and what fixed costs does batching amortize?
-
-### Practice
-
-1. **Observe.** Reproduce the chunk-size sweep. Then change the benchmark expression from one column to four columns summed together, rerun, and see whether the cliff appears.
-
-2. **Extend (optional).** Time `A * 2` and `ABS(A)` through `ProjectionOperator` and confirm the ratio. Then add `'ABS'` handling to `compileColumnarProjection` and measure again.
-
-3. **Observe.** `ProjectionOperator` gates the columnar path on `dataType === DataType.FLOAT64`. Find an integer-typed projection that `compileColumnarProjection` compiles but the operator never uses, and describe what would have to change for it to be used safely.
-
-4. **Extend (optional).** Change `DEFAULT_CHUNK_SIZE` to 512 and to 16,384, rebuild with `npm run build:ts`, and run the running query at 30,000 customers with `EXPLAIN ANALYZE`. Report the three execution times, and say which operator you think moved.
-
-5. **Extend (optional).** Delete `src/execution/vector-ops.ts` and its test, then run `npm run build:ts` and the suite. Explain what the result tells you about the file, and decide whether deleting it is an improvement.
-
-### Hints and expected observations
-
-Three batches: 2,048, 2,048, and 904. Calls, promises, and per-batch setup are paid three times rather than 5,000; this does not imply SIMD or guaranteed cache fit.
-
 ## Recap
 
 - Per-chunk overhead — an async call, a `Column` allocation, a `DataChunk` allocation — is what chunking amortizes, and it has stopped mattering by a few hundred rows.

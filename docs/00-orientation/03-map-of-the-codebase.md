@@ -142,28 +142,6 @@ Concretely, to answer "how does X work":
 
 **The line counts above will drift**, as the table's lead-in says. A chapter that cites one of them as a fact is citing a measurement, not an invariant.
 
-## Exercises
-
-### Understand
-
-A query uses a column that does not exist. Which subsystem should reject it, and why is the lexer unable to do that?
-
-### Practice
-
-1. **Observe.** Open [`query-engine.ts`](../../src/engine/query-engine.ts) and find `compileUncached`. Name the directory each of its five lines dispatches into.
-
-2. **Observe.** Pick any file in `src/optimizer/passes/` and find its test. Read the test first and predict what the implementation must do, then check.
-
-3. **Observe.** Run `rg -n "execution/" src/planner src/optimizer` and confirm the only hits are the two files holding the runtime upward edges described above. Are they still there in your copy? Now read [`costOf`](../../src/optimizer/passes/aggregate-pushdown.ts) and decide whether that edge could be removed without losing the decision it makes.
-
-4. **Observe.** Count the operators: `ls src/execution/operators/`. Match each one to a node type in [`physical-plan.ts`](../../src/execution/physical-plan.ts). Are there node types with no operator file, and if so, where are they handled?
-
-5. **Observe.** Find the file that reads environment variables. There is exactly one. Why does centralizing that matter for the browser build?
-
-### Hints and expected observations
-
-The binder resolves the name against the catalog. The lexer only recognizes its token shape. Use the source map to follow one query before memorizing the directory inventory.
-
 ## Recap
 
 - Seven directories are the compilation pipeline, in order: **parser, binder, planner, optimizer, execution**, over **storage** and **catalog**.

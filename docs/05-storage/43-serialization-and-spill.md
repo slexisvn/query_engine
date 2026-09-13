@@ -212,28 +212,6 @@ Read the `TOTAL` column before trusting that too far. All three rows hold the sa
 
 **A tied `ORDER BY` key makes the top rows a property of the plan.** `ORDER BY TOTAL DESC LIMIT 3` over a result where several groups share a total returns three of them, not a defined three. Spilling changes the plan, so it can change which three while every sum stays identical. A comparison like the one above tests the tiebreak as much as the spill unless the sort key is made unique or the `LIMIT` is dropped.
 
-## Exercises
-
-### Understand
-
-A chunk stores four rows but selects only rows 1 and 3. What must a serialization round trip preserve?
-
-### Practice
-
-1. **Observe.** Reproduce the three opening numbers. Then serialize the filtered chunk *after* calling `flatten()` yourself and confirm the size is unchanged — the serializer was going to do it anyway.
-
-2. **Observe.** Serialize an encoded chunk, deserialize it, and print `columnFormOf` for each column. Now do it with `QE_COLUMN_ENCODING=0` set only for the write. Which side of the round trip does the flag affect?
-
-3. **Extend (optional).** Write two chunks to a partition with `SpillManager`, then read them back while a third append is in flight. Explain what `closeWriteHandle` in `openReader` guarantees, and construct the failure that would occur without it.
-
-4. **Extend (optional).** Add a form codec: a fourth `ColumnFormCodec` that stores a constant column as a single value plus a length. Give `columnFormOf` a case for it, choose an unused id, and confirm a chunk containing one round-trips.
-
-5. **Extend (optional).** Run a spilling query and list the temp root from a `setInterval` while it runs. Which directories acquire files, in what order, and how large do they get relative to the memory limit?
-
-### Hints and expected observations
-
-It must preserve the two visible rows, their values, types, and nulls. It need not preserve unused slots, spare capacity, or the original selection-vector representation.
-
 ## Recap
 
 - A serialized chunk is a **six-byte header plus one record per column**, and the exact size is computed by the codecs before any byte is written so the buffer is allocated once.

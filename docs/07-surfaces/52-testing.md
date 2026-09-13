@@ -72,20 +72,6 @@ When adding an optimizer test, include a query where the rewrite should fire and
 
 **Removing a pass and corrupting its guard are different experiments.** The first bypasses a transformation; the second can make an otherwise useful transformation unsound.
 
-## Exercises
-
-1. **Understand.** Why does converting `[1, 1, 2]` and `[1, 2]` to sets hide a correctness bug?
-2. **Observe.** Run `node docs/examples/semantics.mjs` after building. Explain the two different outer-join results from the input CSVs.
-3. **Observe.** Read one differential test and identify its reference, result comparator, and configuration difference.
-4. **Extend (optional).** Add a known-answer case with duplicate join keys and a null key. Predict the bag of rows before running it, then verify a relevant optimization variant against that answer.
-
-<details>
-<summary>Hints and expected observations</summary>
-
-Sets discard multiplicity. In the outer-join example, `WHERE` removes null-padded rows while `ON` limits matches and preserves customers. A useful new fixture should include both multiple matches and a missing match; otherwise the null and duplicate branches may never execute.
-
-</details>
-
 ## Recap
 
 - Known answers, differential comparisons, and plan assertions provide different evidence.

@@ -263,28 +263,6 @@ For the book's running query that is **27 events** — 24 registrations plus the
 
 **Pass order in `createDefaultOptimizer` is not arbitrary and is not documented in the file.** `IndexSelection` must run after the predicates have reached the scans; `TopNFusion` must run after `LimitPushdown` has moved the `Limit` next to the `Sort`. Reordering the list compiles and passes most tests.
 
-## Exercises
-
-### Understand
-
-A pass maps plans A to B, B to C, and C to C. How many applications establish convergence?
-
-### Practice
-
-1. **Observe.** Reproduce the divergence table. Build an `Optimizer` with only the three-pass fixpoint stage, pass an explicit `maxIterations` as the third argument to `registerFixpoint`, and count occurrences of the predicate for each of 1, 2, 4, 8, 16.
-
-2. **Extend (optional).** Instrument `runToFixpoint` to print the iteration at which each stage stops. Run the whole test suite and find the query that comes closest to the cap without a divergent cycle.
-
-3. **Extend (optional).** Investigate the divergence by following `collectFiltersAbove`, inference, and deduplication. Design a change that recognizes an already-implied predicate without treating filters below an outer join or another semantic boundary as globally true. Re-run the iteration table and the relevant result tests; convergence alone does not prove the rewrite sound.
-
-4. **Extend (optional).** Remove the `_` check from `stableValue` and re-optimize the running query. Which stage now runs eight times, and what does that do to optimization time?
-
-5. **Extend (optional).** Use `insertPassAfter` to add a pass of your own that prints its input and returns it unchanged, placed after `JoinReorder`. Confirm from the observer that your pass runs exactly once, and explain why it does not make the fixpoint run again.
-
-### Hints and expected observations
-
-Three: the final C-to-C application confirms a fixpoint. An iteration cap bounds work even when a pass cycle never converges; the cap does not prove semantic correctness.
-
 ## Recap
 
 - A pass is a **name plus a plan-to-plan function**; the driver, not the pass, decides whether anything changed.

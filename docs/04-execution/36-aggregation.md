@@ -241,28 +241,6 @@ There is a fifth aggregate implementation, and it does not run in the single-nod
 
 **`aggSpillPartitions` must be a power of two.** The partition index is `hash & (partitionCount - 1)`. Setting `QE_AGG_SPILL_PARTITIONS=10` silently uses a mask of 9 and files groups into a subset of handles.
 
-## Exercises
-
-### Understand
-
-One partial AVG sees [10,20] and another sees [100]. Why is averaging their two averages wrong?
-
-### Practice
-
-1. **Observe.** Reproduce the four-strategy survey. Then change the `GROUP BY K` column to have five distinct values instead of four and rerun. Explain the new plan using `hasCompactDomain`.
-
-2. **Observe.** Reproduce the alias experiment that flips `HashAggregate` to `StreamAggregate`. Then make it flip back by renaming only the subquery alias, and find the line in [`sort-properties.ts`](../../src/planner/sort-properties.ts) responsible.
-
-3. **Observe.** Run `SELECT O_CUSTKEY, AVG(O_TOTALPRICE) FROM ORDERS GROUP BY O_CUSTKEY` with `QE_MEMORY_LIMIT_BYTES=65536` and without. Confirm the multiset of rows is identical, and explain why `AvgAccumulator.exportState` returns an object rather than a number.
-
-4. **Extend (optional).** Trigger `PartialAggregate`/`FinalAggregate` by joining a 200,000-row table to a small one and grouping by a key from the large side. Then change the aggregate to `AVG` and explain the plan you get.
-
-5. **Extend (optional).** `DISTINCT_SENSITIVE_AGGREGATES` contains three names. Add `MIN` to it, run `SELECT MIN(DISTINCT x)`, and confirm the answer does not change. Then say what it cost.
-
-### Hints and expected observations
-
-The average of 15 and 100 is 57.5, but the correct result is 130/3. Merge sum/count states (30,2) and (100,1), then divide once.
-
 ## Recap
 
 - The planner names four aggregate strategies, but [`buildAggregate`](../../src/execution/builders/aggregate-builder.ts) branches on only one: `HashAggregate`, `PerfectHashAggregate`, and `UngroupedAggregate` all construct the same [`HashAggregateOperator`](../../src/execution/operators/hash-aggregate.ts).

@@ -232,28 +232,6 @@ Read the `after` carefully: the scan is still there, as a child of `Empty`. Noth
 
 **An empty filter is not a removed filter.** `Empty (short-circuit)` keeps its child so the plan is still well-formed and printable; only `EmptyPropagation` decides what happens to the subtree underneath.
 
-## Exercises
-
-### Understand
-
-Is x OR NOT x always TRUE in a SQL predicate? Evaluate it for TRUE, FALSE, and NULL.
-
-### Practice
-
-1. **Observe.** Reproduce the two plans from the opening. Build one optimizer with only `PredicatePushdown` and one with `ExpressionSimplifier` followed by `PredicatePushdown`, and diff their output.
-
-2. **Observe.** Write a `WHERE` clause with three `OR` branches that share two conjuncts, and predict the factored form before running it. Then add a fourth branch that shares only one, and predict again.
-
-3. **Extend (optional).** Add `rewriteSort` to `SimplifierRewriter` so order keys are simplified too. Run `npm run test:unit`; then find a query where the change lets `SortElimination` fire that could not before.
-
-4. **Extend (optional).** `simplifyExpression` has no rule for `x AND NOT x` or `x OR NOT x`. Add one and work out, on paper first, what it must return when `x` is `NULL`. (The answer is not `false` and not `true`.)
-
-5. **Extend (optional).** Comment out the `factorCommonConjuncts` call and run `npm run test:e2e`. Correct answers may remain unchanged when an optimization is absent. Add a plan-shape assertion for the factoring opportunity, and a separate result comparison for semantic preservation; explain what each test establishes.
-
-### Hints and expected observations
-
-The outputs are TRUE, TRUE, and NULL. A simplification must preserve the third case. Disabling a correct optimization can leave result tests green; plan tests check whether the optimization occurred.
-
 ## Recap
 
 - `ExpressionSimplifier` runs **first** in the pipeline because its real product is more top-level **conjuncts**, which is the unit every later pass reasons about.

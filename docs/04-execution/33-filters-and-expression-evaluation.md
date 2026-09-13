@@ -221,28 +221,6 @@ More than half of [`filter.ts`](../../src/execution/operators/filter.ts) impleme
 
 **A `Filter` above a `Scan` may run twice as a predicate.** The same expression is also compiled into a zone-map pruner, as [chapter 32](32-scans-and-zone-maps.md) covers. The two compilations are independent and share no code.
 
-## Exercises
-
-### Understand
-
-Starting with stored values [5,10,15,20], a filter selects indices [1,3]. A second filter keeps values greater than 15. Which physical index remains?
-
-### Practice
-
-1. **Observe.** Reproduce the selection-vector trace. Then apply a third filter that keeps everything, and confirm the third output is the same object as the second.
-
-2. **Observe.** Run all six null queries from the opening. Then add `WHERE X NOT IN (1, 2)` — no null in the list — and explain why the answer changes.
-
-3. **Observe.** Find the point where `subarray` beats `slice`. Time `_executeFallback` on 2,048-row chunks at several selectivities, with the threshold set to 0 and to 2048, and say whether 64 is a good choice.
-
-4. **Extend (optional).** Add a function to `compileFunction` — `CEIL`, say. Then write the query that would have silently returned zero rows before your change, and confirm it does.
-
-5. **Extend (optional).** Instrument `FilterOperator.process` to count how often each of its three exits is taken during the running query at 30,000 customers. Which exit dominates, and what does that tell you about where filter time actually goes?
-
-### Hints and expected observations
-
-Index 3 remains. The second filter's logical position 1 refers to physical index 3 through the existing selection vector.
-
 ## Recap
 
 - A filter writes a **selection vector** of surviving physical row indices and shares its input's columns. Nothing is copied, and a chain of filters narrows one vector.

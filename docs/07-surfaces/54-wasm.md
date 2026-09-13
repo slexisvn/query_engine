@@ -70,20 +70,6 @@ Changing a dispatch threshold also requires correctness checks. SQL null propaga
 
 **Changing global dispatch affects later work in the same process.** The example restores the wrapped kernel in `finally`. Run independent experiments in fresh processes when comparing initialization behavior.
 
-## Exercises
-
-1. **Understand.** Explain why a table of 5,000 rows does not pass a 4,096-row per-chunk threshold with the default chunk size.
-2. **Observe.** Run the script and distinguish its query counter from its direct-kernel result.
-3. **Observe.** Read one wrapper and count the input and output buffer transfers it performs.
-4. **Extend (optional).** In a separate experiment, lower `QE_WASM_MIN_CHUNK` before starting Node. Check the counter, values, types, and null cases before making a performance comparison. Restore the setting afterwards.
-
-<details>
-<summary>Hints and expected observations</summary>
-
-The three chunks have 2,048, 2,048, and 904 rows. All are smaller than 4,096. The direct call bypasses that gate. If a lower threshold invokes the kernel, that proves reachability for the tested expression; it does not establish a speedup or correctness for other types.
-
-</details>
-
 ## Recap
 
 - Compilation, registration, and invocation are different evidence.

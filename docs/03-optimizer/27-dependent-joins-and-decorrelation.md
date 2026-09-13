@@ -256,28 +256,6 @@ A plain `=` never matches `NULL` to `NULL`. If the correlating column can be nul
 
 **The errors are the specification.** `PUSH_RULES` covers twelve node types; anything else throws `Unsupported correlated subquery: a <type> operator cannot carry a dependent join`. Reading the messages in [`pushdown.ts`](../../src/optimizer/dependent-join/pushdown.ts) is the fastest way to learn which correlated shapes this engine supports.
 
-## Exercises
-
-### Understand
-
-The outer rows contain customer keys [1, 1, 2]. Why can a domain relation use [1, 2] while the final result still needs both outer rows with key 1?
-
-### Practice
-
-1. **Observe.** Reproduce the two opening plans. Then change `>` back to `=` but move the correlation into the `SELECT` list of the subquery instead of its `WHERE`, and predict which domain is chosen before running it.
-
-2. **Observe.** Write a correlated subquery that returns the two most expensive orders per customer with `LIMIT 2` and confirm the `ROW_NUMBER` gate. Then add `OFFSET 1` and read the gate again.
-
-3. **Extend (optional).** Make the correlating column nullable and find a query where the plan uses `nullSafeEquals` and one where it does not. Explain the difference from `rejectsNullDomain`.
-
-4. **Extend (optional).** Add `SET_OP` handling that allows both sides to be correlated in `branchesAreLiftable`, then find out from `pushSetOp` why it is currently refused.
-
-5. **Extend (optional).** Instrument `chooseDomain` to log which domain it picked, then run the whole corpus in `tests/e2e/subquery-unnesting-differential.test.ts`. What fraction of correlated queries need the materialized path?
-
-### Hints and expected observations
-
-The domain avoids repeating dependent work for an identical key. Joining results back must preserve the outer input's multiplicity, not replace it with the distinct domain.
-
 ## Recap
 
 - A correlated subquery is a function of the outer row. **Decorrelation** makes it a function of a relation, so it runs once instead of once per row.

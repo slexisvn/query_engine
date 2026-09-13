@@ -252,28 +252,6 @@ The middle two are worth a second look, because their names describe backpressur
 
 **The default startup path does not start automatic health monitoring.** The phi-accrual detector is implemented and tested, but its timer is never started. What tolerates a node failure is fragment retry, and retry can only help when the fragment has an alternative node.
 
-## Exercises
-
-### Understand
-
-A coordinator stops receiving heartbeats from a worker. What does that observation prove, and what remains uncertain?
-
-### Practice
-
-1. **Observe.** Reproduce the opening measurement. Encode a chunk of `ORDERS` directly, then push the same chunk through an `ExchangeSender` in `hash_shuffle` mode with a mock transport, and compare the byte counts. Then repeat with a chunk whose `VARCHAR` column is *not* dictionary-encoded and explain the smaller gap.
-
-2. **Observe.** Give the sender two target nodes and two real key extractors. How many messages does one chunk become, and what is the total size compared to the single gather message?
-
-3. **Extend (optional).** Call `startMonitoring()` on a live coordinator's `ClusterManager`, register `onNodeFailure`, kill a worker, and time how long it takes for the callback to fire. Compare with the φ table in this chapter.
-
-4. **Extend (optional).** Fix `ArrivalWindow` so that `variance` subtracts the square of the mean, guarding the near-zero case. Re-run exercise 3. How much faster is the detection, and does anything now flap?
-
-5. **Extend (optional).** Add a bound to `ExchangeReceiver._handleChunk` that respects `_bufferCapacity`. What can the receiver do when the buffer is full, given that `_handleChunk` is called from an HTTP request handler that has already read the body?
-
-### Hints and expected observations
-
-It proves a delay in observations, not whether the process died or the network is slow. A detector estimates suspicion; recovery also needs runnable fragments, reachable nodes, and available data.
-
 ## Recap
 
 - One `Transport` interface, one HTTP implementation, six routes. Only `/exchange/:channelId` carries data; everything else is small JSON.

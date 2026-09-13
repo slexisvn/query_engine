@@ -257,28 +257,6 @@ SELECT a.C_NAME FROM CUSTOMER a LEFT JOIN CUSTOMER b ON a.C_NATIONKEY = b.C_CUST
 
 **`AggregatePushdown` costs both candidates with the full physical planner.** That is not free, and it runs on every grouped aggregate over an inner join whose push side clears 50,000 estimated rows.
 
-## Exercises
-
-### Understand
-
-A LEFT join reads no right-side columns. Why does right-side uniqueness matter before deleting it?
-
-### Practice
-
-1. **Observe.** Reproduce the eliminated join. Register `CUSTOMER` with `{ primaryKey: ['C_CUSTKEY'] }`, run `JoinElimination` alone, and then re-register without the primary key and confirm the join comes back.
-
-2. **Observe.** Give a table a two-column primary key and write a `LEFT JOIN` on only one of the two columns. Predict from `isUniqueOnKeys` whether the join is eliminated, then check.
-
-3. **Extend (optional).** Add `INNER` join support to `JoinElimination` for the case where the join is provably not filtering — that is, where a foreign key guarantees a match. The catalog already has a `foreignKeys` field. Write down the soundness argument before the code.
-
-4. **Observe.** Lower `QE_EAGER_AGG_MIN_ROWS` to 100 and re-run the aggregate-pushdown query on the small tables from earlier chapters. Does the cost check still accept the rewrite? Print both costs and explain.
-
-5. **Extend (optional).** `producesDistinctRows` returns `true` for any `Aggregate`. Is that right when the aggregate has no grouping keys and no aggregates at all? Construct such a plan by hand and decide.
-
-### Hints and expected observations
-
-Two right matches duplicate one left row even when their columns are unused. Proving at most one match prevents that duplication; an INNER join also needs a match-existence argument.
-
 ## Recap
 
 - A `LEFT JOIN` can be **deleted** when nothing above it reads the right side and the right side yields at most one row per join key. Both halves are necessary: the first preserves the columns, the second preserves the row count.

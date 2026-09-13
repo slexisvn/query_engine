@@ -79,20 +79,6 @@ String arguments have context-specific meanings. `select('C_NAME')` names a colu
 
 **A row object needs usable output names.** Alias computed expressions deliberately, especially when several expressions would otherwise share a name.
 
-## Exercises
-
-1. **Understand.** Write the schema after each of the two `select` calls and after `agg`. Which step removes the individual order prices?
-2. **Observe.** Run the script, then compare its result with `book:query`. Compare plans separately from results.
-3. **Observe.** Replace the fluent filter with the SQL-string filter shown above. Confirm the rows still match.
-4. **Extend (optional).** Add a derived expression with `withColumn`, collect the derived frame, and then query the original table. Verify that the stored schema did not change.
-
-<details>
-<summary>Hints and expected observations</summary>
-
-The join needs two columns named `customer_key`. Aggregation replaces the individual prices with `TOTAL`. Both entry points produce Alice 350 and Carol 300, but the DataFrame route has explicit rename projections. `withColumn` constructs a new projection; it does not alter table storage.
-
-</details>
-
 ## Recap
 
 - A DataFrame carries a logical plan and schema; transformations build another frame.

@@ -328,28 +328,6 @@ The second plan still references `_scalar_0` and no longer computes it. Bind aga
 
 **`rewriteDefault` is a trap in the other direction.** Overriding it to inspect nodes is convenient, but a subclass that also overrides `rewriteJoin` will not see joins there — the specific handler wins and `rewriteDefault` is never reached for that type.
 
-## Exercises
-
-### Understand
-
-Why is the scan near the bottom of a printed plan and LIMIT near the top?
-
-### Practice
-
-1. **Observe.** Reproduce the opening plan, then delete one clause at a time and record which node disappears. Confirm the remaining nodes keep their relative order.
-
-2. **Observe.** `SELECT C_NAME FROM CUSTOMER ORDER BY C_MKTSEGMENT` plans successfully; adding `DISTINCT` raises an error. Print both plans (or the error), then explain in one sentence why the `DISTINCT` version cannot work, using the node order from the fork above.
-
-3. **Extend (optional).** Write a subclass of [`PlanRewriter`](../../src/planner/plan-rewriter.ts) that overrides only `rewriteJoin` to swap `children`. Run it on the opening plan and confirm the printed tree changes and the answers do not. Then try it on a `LEFT JOIN` and explain the result.
-
-4. **Extend (optional).** Run `LIMIT 1 + 1` and confirm zero rows. Fix [`applyLimit`](../../src/planner/logical-planner.ts) so that a non-literal limit either evaluates or raises. Which choice does the rest of the engine make easier?
-
-5. **Extend (optional).** Make the planner smarter: in `planFrom`, reorder a two-table `JoinRef` so the smaller table is on the left, using `engine.catalog` for row counts. Run `npm run test:e2e`. Then argue, from what breaks or does not break, whether this belongs in the planner at all.
-
-### Hints and expected observations
-
-Each later logical operation wraps its input. Rows flow from the leaves toward the root, though streaming operators can overlap rather than finishing one whole relation at a time.
-
 ## Recap
 
 - The plan's shape is the SQL **evaluation order** — `FROM`, `WHERE`, `GROUP BY`, `HAVING`, windows, `SELECT`, `ORDER BY`, `LIMIT` — realized as one local variable reassigned once per clause, each time wrapping the previous value.

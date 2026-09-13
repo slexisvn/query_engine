@@ -80,20 +80,6 @@ Finish the fix with a test that fails for the demonstrated reason. For a missing
 
 **Reduction can remove the trigger.** Preserve the key distribution, null case, spill threshold, or worker topology responsible for the failure.
 
-## Exercises
-
-1. **Understand.** Add a fourth customer with no orders. Predict both opening queries' answers.
-2. **Observe.** Run the semantic example and inspect both optimized plans. Explain their join types without referring to performance.
-3. **Observe.** Use `EXPLAIN ANALYZE` on a query with a selective filter. Locate the first estimate/actual discrepancy, even if it is small.
-4. **Extend (optional).** Turn a surprising query into a script with fewer than ten input rows, or explain which size-dependent trigger prevents that reduction. Add an expected-result assertion.
-
-<details>
-<summary>Hints and expected observations</summary>
-
-The fourth customer is absent from the `WHERE` version and present with a null price in the `ON` version. Both placements are valid SQL with different meanings. For a slow query, inspect the filter and scan before attributing a downstream estimate error to the join.
-
-</details>
-
 ## Recap
 
 - Derive a small expected result before diagnosing the plan.

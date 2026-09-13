@@ -433,32 +433,6 @@ The first three stop about when they were asked to. The last two are the honest 
 
 **Pipeline ids say nothing about order.** They are allocated top-down during registration, so the root is 1 and the leaves have the highest numbers. Execution order is the reverse, and `getReadyPipelines` iterates insertion order, so with concurrency above 1 the interleaving is not determined by id.
 
-## Exercises
-
-### Understand
-
-A scan feeds a filter, which feeds a sort. Which stages can pass batches onward immediately, and which needs an end-of-input signal?
-
-### Practice
-
-1. **Extend (optional).** Reproduce the pipeline trace. Patch `PipelineGraph.prototype.createPipeline`, `addDependency`, and `setSource` to log, then run the running query on three rows and on 30,000. Confirm you get five pipelines and four.
-
-2. **Observe.** Count chunks in the scan for `LIMIT 1`, `LIMIT 2048`, and `LIMIT 2049`. Explain each number in terms of where the token is checked.
-
-3. **Observe.** Set `QE_PIPELINE_CONCURRENCY=1` and rerun the tiny query with the scheduler trace. Which line of output changes, and why does the answer not?
-
-4. **Extend (optional).** Break the chain deliberately: in `buildFilter`, delete the `finalize` forwarding. Predict what a `SELECT ... ORDER BY` above a filter will return before you run it, then run it.
-
-5. **Observe.** `Distinct` is registered as a streaming sink but holds a hash set of every row it has seen, and emits leftovers from `finalize`. Argue whether it is a blocking operator. Then look at [`buildDistinct`](../../src/execution/builders/pipeline-builders.ts) and see whether the engine agrees with you.
-
-6. **Extend (optional).** Time a cancellation. Reproduce the table above with your own machine's numbers, then set `QE_CANCEL_POLL_MS=1000` and rerun it. Explain the new numbers before you look at `drainSource`.
-
-7. **Extend (optional).** Reintroduce the bug. Make `newContext` in [`query-executor.ts`](../../src/execution/query-executor.ts) cache and return one context instead of building a fresh one, then run the two `byPriority` queries above concurrently and reproduce the crossed answers. Now give the two CTEs *different* names and predict the result before you run it: the failure is louder and has a different cause. Find that cause in [`ExecutionContext`](../../src/execution/execution-context.ts), then undo the change and confirm `tests/e2e/concurrent-queries.test.ts` goes green again.
-
-### Hints and expected observations
-
-The scan and filter can stream batches. A full sort needs all its input before emitting sorted rows; finalize tells it that collection is complete.
-
 ## Recap
 
 - Data is **pushed**: a source generator drives the loop and hands chunks to a [`Sink`](../../src/execution/execution-types.ts). There is no `next()` and nothing pulls.

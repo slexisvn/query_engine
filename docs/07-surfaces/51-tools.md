@@ -68,20 +68,6 @@ For a reproducible report, save the exact SQL, input-generation recipe, relevant
 
 **Timing a first run includes different work.** Statistics, compilation, module loading, and warmed code can make later runs differ. State which runs you measured.
 
-## Exercises
-
-1. **Understand.** Use the row-count table to explain why the two plans return the same groups.
-2. **Observe.** Run `book:plan`, then locate the same three transformations in the visualizer example.
-3. **Observe.** Inspect an annotation-only pass. Compare the node fields rather than relying exclusively on the formatted tree.
-4. **Extend (optional).** Make a small report for one unexpected plan: include fixture, SQL, raw plan, optimized plan, physical plan, and actual result.
-
-<details>
-<summary>Hints and expected observations</summary>
-
-Both placements feed the same three matching order rows into aggregation. The visualizer example additionally contains a constant-true condition. If a metadata pass appears unchanged, inspect fields such as `_cardinality`, `projectedColumns`, or the scan's pruning predicate; use the relevant chapter to find the field's exact name.
-
-</details>
-
 ## Recap
 
 - Choose the tool according to the stage you need to inspect.

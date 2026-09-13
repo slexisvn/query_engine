@@ -269,28 +269,6 @@ Project
 
 **`CROSS` joins are planned as hash joins.** With no condition there are no keys, so a cross join is a hash join with one bucket, and the operator has no special case for it. The cost model defines [`crossJoinCost`](../../src/planner/cost-model.ts), but nothing calls it — a cross join is priced by the same rules as any keyless join.
 
-## Exercises
-
-### Understand
-
-Sorted left keys are [1,2,2] and right keys are [2,2,3]. How many inner-join rows does the peer group for key 2 produce?
-
-### Practice
-
-1. **Observe.** Reproduce the five-join-type table on four rows a side, including the null keys. Then add `RIGHT` and `CROSS` to it, and change the null on the right side to a real value that matches nothing and see which outputs change.
-
-2. **Observe.** Take the `LEFT` join that becomes a merge join and use `CostRecorder` to print both candidates' costs at 40,000 and 160,000 rows. Then find the output cardinality at which the hash join wins.
-
-3. **Extend (optional).** Force the sortedness assertion to fire. Construct a `MergeJoinOperator` directly with an unsorted source and confirm the error message names the side.
-
-4. **Extend (optional).** `NestedLoopJoinOperator` emits one chunk. Change it to emit in `flushBatchSize` batches. Measure whether that changes anything at 100 x 100, and explain the result.
-
-5. **Extend (optional).** In an isolated optimizer configuration, omit `SubqueryUnnesting` and compare an uncorrelated `EXISTS` with a correlated one. Follow `buildDependentJoin`: the supported uncorrelated form can run; the correlated form must raise. See `tests/e2e/subquery-unnesting-differential.test.ts` for an existing test of this boundary.
-
-### Hints and expected observations
-
-Four: two left rows times two right rows. A merge join must collect or otherwise handle duplicate runs, not simply advance both cursors after one match.
-
 ## Recap
 
 - Inside [`probeJoinInto`](../../src/execution/operators/join-core.ts), all nine join types are described by one predicate — [`preservesProbe`](../../src/execution/operators/join-core.ts) — plus an output-shape rule that makes `SEMI` and `ANTI` emit probe columns only and `MARK` add a three-valued boolean. `INNER` and `CROSS` need no case of their own; they are what the code does when no rule fires. Unmatched **build** rows are settled earlier, by [`isBuildSidePreserved`](../../src/planner/join-build-side.ts), because that answer depends on which side became the build.

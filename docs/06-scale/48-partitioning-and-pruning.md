@@ -279,28 +279,6 @@ Both are correct: `ORDER BY O_TOTALPRICE DESC` says nothing about ties, and the 
 
 **`.explain` needs a coordinator that has a schema.** The `--distributed` flag on the main CLI loads the coordinator's tables with `partitionIndex: -1`, which matches no row, so the tables register with zero columns and binding fails before a plan exists. The standalone coordinator entry point loads `QE_COORD_SCHEMA_SAMPLE_ROWS` rows instead, and works.
 
-## Exercises
-
-### Understand
-
-Two rows share a join key but were assigned to workers by round-robin position. Can a worker safely assume all matching rows are local?
-
-### Practice
-
-1. **Observe.** Reproduce the pruning table: build a `PartitionMap` with a `HashPartitionStrategy`, set `_partitionKey` by hand, and prune `=`, `IN`, and `>`. Why did `IN` with three values return two partitions?
-
-2. **Observe.** Register `CUSTOMER` as replicated with `registerReplicatedTable` and re-plan the running example. Which strategy does the join get, and how many fragments now?
-
-3. **Extend (optional).** Start a two-worker cluster and run the failing join. Then make the coordinator's `onRegister` handler tell every worker about every other worker. Does the shuffle join complete, and does it agree with the single-node answer?
-
-4. **Extend (optional).** Change `_estimateNodeCount` to return the live worker count. Re-run the four cost measurements above and say which flip.
-
-5. **Extend (optional).** Construct a query and a two-partition split where pushing `OFFSET` down into `DistributedLimitPass`'s local node gives the wrong rows.
-
-### Hints and expected observations
-
-No. Key equality gives no location guarantee under round-robin assignment. A co-located join needs compatible key-based partitioning and complete placement metadata.
-
 ## Recap
 
 - A **partition map** holds, per table, a strategy, a count, a key, and a placement from partition id to node. The CLI registers **round-robin by row index**, which carries no information.

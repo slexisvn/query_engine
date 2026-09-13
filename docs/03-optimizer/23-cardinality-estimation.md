@@ -228,28 +228,6 @@ Unaliased queries work because the planner uses the table name as the alias. Ali
 
 **A node type with no rule passes its child's cardinality through unchanged.** `Window` and `Materialize` do this, which is right, and so does anything added later without a rule, which may not be.
 
-## Exercises
-
-### Understand
-
-A table has 1,000 rows and a predicate is estimated to keep 20%. What is the estimated output? What extra assumption underlies multiplying by a second selectivity of 10%?
-
-### Practice
-
-1. **Observe.** Reproduce the `DISTINCT` versus `GROUP BY` gap, then extend `CARDINALITY_RULES` so `DISTINCT` uses the same `estimateAggregate` path as an aggregate over its child's output columns. Which tests change?
-
-2. **Observe.** Reproduce the alias table. Then register the two tables in the opposite order and confirm the estimate changes without the query changing.
-
-3. **Observe.** Fix the alias lookup. The plan node has the alias and the scan beneath it has the table name; work out where an alias-to-table map would have to be built and threaded, and how much of the estimator's interface it changes.
-
-4. **Extend (optional).** Set `QE_STATS_CORRELATION_THRESHOLD` to 0 so every correlation is stored, then re-estimate a two-predicate filter over genuinely independent columns. Did the estimate improve? Explain from `lookupCorrelation`.
-
-5. **Extend (optional).** Build two tables whose join keys have similar `ndv` but barely overlapping ranges. Compare `estimateEquiJoinSelectivity` with and without histograms by constructing statistics objects with the histogram removed.
-
-### Hints and expected observations
-
-The first estimate is 200 rows. Twenty rows after both predicates assumes the selectivities can be multiplied, commonly an independence approximation that correlation can invalidate.
-
 ## Recap
 
 - Estimation has two layers: **selectivity** for predicates and **cardinality** for nodes, composed bottom-up.

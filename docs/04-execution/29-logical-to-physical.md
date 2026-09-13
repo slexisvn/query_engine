@@ -223,28 +223,6 @@ The inner `Top-N` sorts; the outer one takes ten rows off the front. The logical
 
 **`describePhysicalNode` only decorates joins.** Every other operator prints as a bare type name, so `HashAggregate` and `PerfectHashAggregate` are distinguishable in `EXPLAIN` but a `Sort` on one key and a `Sort` on four are not.
 
-## Exercises
-
-### Understand
-
-Why does a logical Join not tell you whether execution will use hashing or nested loops?
-
-### Practice
-
-1. **Observe.** Reproduce the join sweep above. Then set `QE_NESTED_LOOP_MAX_ROWS=4` and rerun the three-row case. Explain the operator you get instead, using the three cost numbers printed in this chapter.
-
-2. **Observe.** Use `CostRecorder` to print the term-by-term breakdown of `mergeJoinCostWithSorts(6000, 120000, false, false, 201658)`. Which single term would have to disappear for the merge join to beat the hash join, and what would have to be true of the plan for it to disappear?
-
-3. **Extend (optional).** Run `EXPLAIN ANALYZE` on the running query at 30,000 customers and find the operator with the worst q-error. Then add a second predicate on `ORDERS` and see whether the error gets better or worse.
-
-4. **Extend (optional).** Add a `PhysicalNodeType` of your own and point some logical node type's descriptor at it. The change fails at execution rather than at planning — find where, and say what that tells you about how the two halves are connected.
-
-5. **Extend (optional).** `canUsePerfectHashAggregate` caps groups at 256 and integer domains at 4,096. Construct a table where a `GROUP BY` on an integer column with 200 distinct values spread over a range of 100,000 is rejected, and say which of the two limits rejected it.
-
-### Hints and expected observations
-
-The logical node expresses matching and row preservation. The physical planner selects an applicable algorithm using estimates, costs, and required properties.
-
 ## Recap
 
 - The **physical plan** is a second tree, carrying an operator type, an estimated cardinality, and a cost for every node.

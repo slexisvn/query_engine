@@ -213,28 +213,6 @@ For a hand-worked counterexample, consider rows `[3, 1, 2]` and `ORDER BY x LIMI
 
 **The corpus samples the specification.** Passing the queries in the file is evidence for those cases, not a proof for every SQL query. Add cases for new shapes, and keep some expected answers independent of the default pipeline: two variants can share the same bug.
 
-## Exercises
-
-### Understand
-
-Why can disabling SortElimination preserve answers while falsely annotating an unsorted scan as sorted can change them?
-
-### Practice
-
-1. **Observe.** Reproduce the opening. Run `removePass` before any query and print `listPasses().length` before and after compiling. Then warm the statistics first and confirm the ablated plan appears.
-
-2. **Observe.** Take one pass you have modified while reading Part 3, break it deliberately in a way that changes an answer, and run `npm run test:e2e`. Does the differential test name your pass? Is the failure message enough to find the bug?
-
-3. **Extend (optional).** Add a query to `CORPUS` that the current corpus does not cover — a correlated subquery inside a `HAVING` clause, say — and confirm the test still passes. Then break `PredicateInference` and see whether your query catches it.
-
-4. **Extend (optional).** Write a differential test for a pass with no coverage today: build two engines, one with and one without `SortElimination`, run a corpus of `ORDER BY` queries, and compare rows *in order* rather than sorted.
-
-5. **Extend (optional).** Delete the `_` prefix from `_sortedBy` throughout, rebuild, and run the whole suite. Which fixpoint stage now runs to its cap, and what does that do to optimization time?
-
-### Hints and expected observations
-
-Disabling the pass keeps an unnecessary sort. A false ordering guarantee can remove a necessary sort, so ORDER BY and LIMIT may choose the wrong row.
-
 ## Recap
 
 - The **ablation invariant**: removing any single pass may change speed and nothing else. One pass is exempt — `SubqueryUnnesting`, whose removal makes correlated queries fail, tested in its own direction.

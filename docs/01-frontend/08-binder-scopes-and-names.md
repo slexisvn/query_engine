@@ -289,32 +289,6 @@ SELECT a.C_NAME, b.C_NAME FROM CUSTOMER a JOIN CUSTOMER b ON ...
 
 **Ambiguity is only checked within a single scope level.** A local match shadows an outer one without complaint — that is intended, but it means adding a column to an outer table can silently change nothing while adding one to an inner table changes meaning.
 
-## Exercises
-
-### Understand
-
-CUSTOMER and ORDERS both expose a column named ID. What extra information does c.ID provide that bare ID does not?
-
-### Practice
-
-1. **Observe.** Reproduce the alias table. Bind all three queries and confirm which fail:
-
-   ```javascript
-   engine.bind(engine.parseSQL("SELECT C_NAME AS NM FROM CUSTOMER WHERE NM = 'Alice'"));
-   ```
-
-2. **Observe.** Bind a correlated `EXISTS` and walk the bound `where` expression printing `tableAlias`, `columnName`, and `depth` for every `BoundColumnRef`. Then nest it two levels deep and predict the depths before running it.
-
-3. **Observe.** Move the `selectAliasMap` construction above the `WHERE` binding in `bindSelect` and rebuild. Predict whether `WHERE NM = 'Alice'` changes, then check. It should still fail: the map is not passed to the `WHERE` lookup. Revert the move, then trace the extra lookup that `bindPositionalKey` performs for `ORDER BY`.
-
-4. **Extend (optional).** `checkGroupingCoverage` returns `false` from the walk callback to prune subtrees. Remove one of the two `return false` lines and find the query that now reports a spurious error.
-
-5. **Extend (optional).** Construct a query where `shadowAliasFor` fires. You need the same alias visible in two nested scopes at once. Then print the bound references and find the `:1` suffix.
-
-### Hints and expected observations
-
-The qualifier selects a relation binding. Bare ID is ambiguous when both visible inputs supply it. A SELECT alias is a separate lookup rule; moving map construction alone does not change WHERE lookup.
-
 ## Recap
 
 - A [`BinderScope`](../../src/binder/scope.ts) holds visible relations and a parent pointer; all keys are **uppercased**, which is where case-insensitivity is implemented.

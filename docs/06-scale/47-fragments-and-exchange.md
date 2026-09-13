@@ -343,28 +343,6 @@ A remote fragment is fire-and-forget over HTTP: the worker acknowledges with `20
 
 **CTEs are inlined before fragmentation.** [`inlineCTEScans`](../../src/distributed/planner/cte-inline.ts) expands every `CTEScan` into a copy of its definition, so a CTE referenced twice is planned, shipped, and computed twice. Non-recursive only; a self-reference is left alone.
 
-## Exercises
-
-### Understand
-
-Worker A counts 4 rows and worker B counts 7. What operation combines the partial counts? How does AVG differ?
-
-### Practice
-
-1. **Observe.** Reproduce the fragment listing. Build a `DistributedPlanner` against a partition map with two workers, call `fragmentize` on an optimized plan, and print each fragment's `targetNodes`, `outputPartitioning`, and `exchangeInputs`.
-
-2. **Observe.** Replace `AVG` with `COUNT(DISTINCT o.O_CUSTKEY)` and confirm the plan keeps a plain `Aggregate`. Then work out how many rows must cross the network in each case.
-
-3. **Extend (optional).** Add `STDDEV` to `DECOMPOSABLE_FUNCTIONS`. What is its intermediate state, and which accumulator would you have to write? You do not have to implement it — write down the state and the merge rule.
-
-4. **Extend (optional).** Comment out the `registerPass(new PartialAggregatePass())` line in `enableDistributed` and re-run the opening query on a live cluster. Where does aggregation happen now, and how many rows cross the wire?
-
-5. **Extend (optional).** Instrument `FragmentExecutor.execute` to log each fragment id and output row count, and match it against the `[fragment] Fragment N completed: R rows` lines the worker prints.
-
-### Hints and expected observations
-
-SUM combines counts into 11. AVG needs each worker's sum and non-null count, followed by one final division, rather than an unweighted average of local averages.
-
 ## Recap
 
 - Distribution is **six more optimizer passes**, added by `enableDistributed` with `registerPass` and `insertPassAfter`, each gated on a `_distributed` flag set on the plan root.

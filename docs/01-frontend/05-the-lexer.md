@@ -195,34 +195,6 @@ A recognized keyword does not establish that a statement is supported. `VIEW` ha
 
 **A number token has no sign.** `-5` is two tokens. Any code reasoning about literal values must handle the unary minus the parser builds, not expect a negative `NUMBER`.
 
-## Exercises
-
-### Understand
-
-How do the tokens for 'select', "select", and SELECT differ when the first form is a SQL string and the second a quoted identifier?
-
-### Practice
-
-1. **Observe.** Print the token stream for the running query. Build with `npm run build:ts`, then:
-
-   ```javascript
-   const { Lexer } = await import('./dist/parser/lexer.js');
-   const { runningQuery: sql } = await import('./docs/examples/fixture.mjs');
-   for (const t of new Lexer(sql).tokens) console.log(t.position, t.type, t.value);
-   ```
-
-2. **Observe.** Tokenize `SELECT 'it''s' FROM T` and confirm the string token's value is `it's` — one token, not three.
-
-3. **Extend (optional).** Add a `WINDOW` keyword. How many files do you have to edit for the lexer to recognize it, and why is the answer one?
-
-4. **Observe.** Tokenize `SELECT /* outer /* inner */ comment */ 1`, then remove the final `*/`. Confirm that nesting succeeds and an unterminated comment reports its starting location. Trace the depth counter in `_skipBlockComment`.
-
-5. **Observe.** Compare the tokens for `SELECT`, `select`, and `"select"`. Follow the `quoted` flag into the parser and binder. Explain why recognizing a quoted name is separate from resolving that name against a table schema.
-
-### Hints and expected observations
-
-Single quotes produce STRING, double quotes produce IDENT with quoted=true, and unquoted SELECT produces the keyword token. For the block-comment exercise, nested comments must finish at depth zero.
-
 ## Recap
 
 - The lexer turns a string into a flat array of **tokens**, each carrying a type, a value, and a character **position** that error messages depend on.

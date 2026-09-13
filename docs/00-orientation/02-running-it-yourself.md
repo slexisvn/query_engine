@@ -171,20 +171,6 @@ Then use `node run-cli.mjs --parallel docs/examples/customer.csv`. This entry po
 
 **The tiny example is for understanding.** Two correct totals verify the setup; they do not demonstrate throughput or parallel speedup.
 
-## Exercises
-
-1. **Understand.** Before running anything, compute Alice's total and explain why Bob is absent.
-2. **Observe.** Run `npm run book:query` and `npm run book:plan`. Find the filter in both logical trees.
-3. **Observe.** Compare `.explain` and SQL `EXPLAIN` on the same query. Which output names the join algorithm?
-4. **Extend (optional).** Change a label in [plan-formatter.ts](../../src/planner/plan-formatter.ts), rebuild TypeScript only, and compare the library and CLI. Then run the full build. Revert the edit afterwards.
-
-<details>
-<summary>Hints and expected observations</summary>
-
-Alice's total is `100 + 250 = 350`; Bob's segment is `MACHINERY`. The optimized filter is on the customer input. SQL `EXPLAIN` adds a physical plan, which names algorithms. A TypeScript-only rebuild refreshes the per-file library output while leaving the CLI bundle unchanged.
-
-</details>
-
 ## Recap
 
 - `npm run book:query` builds and verifies a first result using checked-in data.

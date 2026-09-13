@@ -173,28 +173,6 @@ Two related methods matter for the same reason. [`project`](../../src/storage/ch
 
 **`project` shares columns.** The new chunk points at the same underlying arrays. Mutating a column reached through a projected chunk mutates the original, which is why operators build new columns for output rather than writing into their input.
 
-## Exercises
-
-### Understand
-
-A column contains [10, 20, 30, 40] and its selection vector is [1, 3]. What are the two visible values, and what remains in storage?
-
-### Practice
-
-1. **Extend (optional).** Reproduce the chunk boundaries. Build 5,000 rows, hand them to `InMemoryRelation.fromRows`, and print `chunks.map(c => c.size)`. Then change `DEFAULT_CHUNK_SIZE` and confirm the boundaries move.
-
-2. **Observe.** Print `chunk.columns.map(c => c.constructor.name)` for a table with an integer and a string column. Confirm you get `Column, DictionaryColumn`.
-
-3. **Extend (optional).** Overflow a dictionary. Append 70,000 distinct strings to a single `DictionaryColumn` and confirm the error. Find the constant that governs the limit, then explain why the message says *per chunk* — what does that imply about a table of a million distinct names?
-
-4. **Observe.** Set a selection vector by hand, read a value through `getValue`, then read the same index directly off the column with `get`. Explain the difference in one sentence.
-
-5. **Observe.** Estimate the memory for a 2,048-row chunk of TPC-H `ORDERS` — nine columns of mixed types. Then estimate the same data as an array of JavaScript objects. State assumptions about string sizes and object layout; measure allocations if you need a ratio for a particular runtime.
-
-### Hints and expected observations
-
-The visible values are 20 and 40. The four stored values remain; the selection maps logical row positions to physical indices.
-
 ## Recap
 
 - Data is stored **column by column**, so an operator touches only the columns it needs.

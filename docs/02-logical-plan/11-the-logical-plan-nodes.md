@@ -275,28 +275,6 @@ Both styles produce the same object, so nothing is broken; but if you add a fiel
 
 **Nine join types, but only five have syntax.** Seeing `SEMI`, `ANTI`, `MARK`, or `SINGLE` in a plan means a subquery was rewritten, not that someone wrote unusual SQL.
 
-## Exercises
-
-### Understand
-
-A plan node says _cardinality=100 and _sortedBy=[K ASC]. Which fact may be an approximation, and which must be sound if a sort is removed?
-
-### Practice
-
-1. **Observe.** Print `Object.keys(PlanNodeType).length` and confirm the count. Then write a query for each of the thirteen planner-emitted types and record the plan. Which two are hardest to trigger?
-
-2. **Observe.** Take the running query's plan and walk it with [`getChildren`](../../src/planner/logical-plan.ts), printing `node.type` at each level. Now do the same for a query with a CTE and explain the discrepancy between what you printed and what the query reads.
-
-3. **Observe.** `EXISTS` gives you a `SEMI` join. Find SQL that yields `ANTI`, and SQL that yields `MARK`. Print both plans before and after optimization.
-
-4. **Extend (optional).** Add a `pruningFilter` to a `LogicalScanNode` by hand and re-print the plan. Does any formatter show it? Find who reads the field, and decide whether the plan printers should.
-
-5. **Extend (optional).** Change [`LogicalTopN`](../../src/planner/logical-plan.ts) to default `offset` to `1` instead of `0` and run the test suite. Predict first which tests can possibly notice, using the `TopNFusion` excerpt above and a search for callers of the constructor — then check whether you were right, and make the change that a query would actually have seen.
-
-### Hints and expected observations
-
-The cardinality may be an estimate. The ordering must hold for every emitted row under the required comparator. CTE bodies are required plan data, not a performance estimate.
-
 ## Recap
 
 - One file holds the entire IR: twenty-three interfaces, a **discriminated union** over `PlanNodeType`, and twenty-three constructor functions. Nodes are plain objects; the union plus `switch` narrowing is what keeps tree walks type-safe.

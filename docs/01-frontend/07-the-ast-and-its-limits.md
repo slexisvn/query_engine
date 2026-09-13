@@ -139,28 +139,6 @@ Note what is *not* different: the shape. `BoundExpr` is still a discriminated un
 
 **`dataType` on a `LiteralNode` is a parser hint, not a decision.** It is `null` for integers and for `NULL`. The binder assigns the real type, and chapter 9 shows the rule it uses.
 
-## Exercises
-
-### Understand
-
-Why can SELECT missing FROM absent be syntactically valid while still being impossible to run against the current catalog?
-
-### Practice
-
-1. **Observe.** Parse `SELECT NOPE FROM NOSUCH` and print the tree. Then bind it and read the error. Which stage produced each, and what does that tell you about where to look when a user reports a problem?
-
-2. **Observe.** Parse `SELECT C_NAME AS NM FROM CUSTOMER ORDER BY NM` and `SELECT 1 FROM T ORDER BY C_NAME`. Diff the `orderBy` fragments. What would you have to add to the AST to distinguish them, and why would it not help?
-
-3. **Observe.** Count the node types in `ast.ts` that exist only to record a keyword that could have been a flag — `BetweenExprNode.negated` is one solution, a `NOT` wrapper would have been another. What does each choice cost the optimizer?
-
-4. **Extend (optional).** `SELECT *` is one node. Write down every piece of information the binder must have to expand it, and in what order.
-
-5. **Extend (optional).** Sketch what would break if `ColumnRefNode` gained a `dataType` field filled in by the parser. Name a query for which the parser could not fill it in correctly.
-
-### Hints and expected observations
-
-Its tokens and clause structure fit the grammar. The AST records names, while the binder must establish that the relation and column exist.
-
 ## Recap
 
 - The AST is **plain data mirroring syntax**, 37 node types, each tagged with a `kind` and walked by `switch`.

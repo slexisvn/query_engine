@@ -240,28 +240,6 @@ Configuration, all in [`src/config.ts`](../../src/config.ts):
 
 **Parallel is not automatically faster, and the engine knows it.** Three thresholds and a memory ceiling exist to keep small queries away from this path. The one row in the table above that is dramatically faster is the join, which is also the query that was doing the most work per byte transported.
 
-## Exercises
-
-### Understand
-
-There are ten chunks and each morsel claims three. What ranges can workers receive?
-
-### Practice
-
-1. **Extend (optional).** Reproduce the opening measurement. Wrap `FilterOperator.prototype.process` with a counter, run the filtered count with and without `enableParallel()`, and confirm the count goes to zero while the answer does not change.
-
-2. **Extend (optional).** Read the shared counter after a parallel aggregate — patch `MorselScheduler.prototype.descriptor` to keep a reference, then print `counter[0]` when the query finishes. Predict the value from the chunk count, the morsel size, and the worker count before you look.
-
-3. **Observe.** Set `QE_AGG_MORSEL_ROWS=2048` and re-run. How many morsels are there now, and how many wasted claims? Then set it to 262144 and explain why the parallelism disappears.
-
-4. **Extend (optional).** Change the hardcoded `1` in `_analyzeComparison` to the chunk's row count so the real size reaches `canParallelize`. Does anything now dispatch to `workerPool`? Explain the result using `Config.parallelThreshold` and the chunk size.
-
-5. **Observe.** Find a query whose aggregate sits directly on a scan chain and one whose aggregate sits on a join. Confirm from the table above which one reaches `runAggregate`, then read [`extractAggregateFragment`](../../src/execution/fragment-spec.ts) and say why.
-
-### Hints and expected observations
-
-Ranges [0,3), [3,6), [6,9), and [9,10). Claims are disjoint; which worker receives each range depends on scheduling. Final unsuccessful claims may advance the shared counter further.
-
 ## Recap
 
 - Parallelism here is **fragment-level**, not operator-level: a scan/filter/project chain plus its aggregate is packaged as a `FragmentSpec` and rebuilt inside each worker, so the main thread's operators never run.

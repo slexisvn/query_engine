@@ -198,28 +198,6 @@ Above the scan, [`project`](../../src/storage/chunk.ts) drops the columns the qu
 
 **`getColumnIndex` compares uppercased names.** Both implementations uppercase both sides. A schema with columns differing only in case cannot be addressed, and the binder's normalization is what keeps that from mattering.
 
-## Exercises
-
-### Understand
-
-With 2,048-row pages, insert 4,097 rows before flushing the tail. How many complete pages and tail rows are there?
-
-### Practice
-
-1. **Observe.** Reproduce the opening measurement. Build the same 2,048 rows twice, once through `InMemoryRelation.fromRows` and once through `Table.insertRows` with a `MemoryPageStore`, and print `columnRetainedBytes` for each column of the first chunk. Explain each of the three numbers.
-
-2. **Observe.** Insert 4,096 rows into a `Table` and print `pageIds.length` and `rowCount()`. Now insert one more and print them again. Predict both pairs before running.
-
-3. **Observe.** Set `QE_COLUMN_ENCODING=0` and repeat exercise 1. Which of the two storages changes, and by how much?
-
-4. **Observe.** Use `QE_COLUMN_ENCODING=0` in a fresh process to skip encoding, then measure a query over a hundred pages with and without it. Is the decode cost visible in the query time, and does the answer change with `QE_PAGE_CACHE_PAGES`?
-
-5. **Extend (optional).** `InMemoryRelation.scan()` hands out the same `DataChunk` objects on every scan while `Table.scan()` hands out fresh `scanView`s. Write a query that would break if an operator wrote a selection vector into its input chunk, then find the line in `FilterOperator` that makes it safe.
-
-### Hints and expected observations
-
-Two complete pages and one tail row; rowCount includes all 4,097 rows. A read that flushes the tail can turn it into a third page.
-
 ## Recap
 
 - Execution talks to storage through **`TableStorage`**, five methods wide, and the only one a sequential scan uses is `scan`.

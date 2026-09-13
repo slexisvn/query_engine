@@ -220,36 +220,6 @@ SELECT FROM T   -> Parse error at line 1, column 8: Unexpected token FROM (FROM)
 
 **The parser does not know whether anything exists.** `SELECT nope FROM nosuchtable` parses without complaint. Every error in this chapter is about *shape*. Chapter 7 is about why that is not enough.
 
-## Exercises
-
-### Understand
-
-Draw the expression tree for SELECT 2 + 3 * 4. What changes if the query uses (2 + 3) * 4?
-
-### Practice
-
-1. **Observe.** Print the AST for `SELECT a + b * 2 AS X FROM T WHERE a > 1`:
-
-   ```javascript
-   const { parse } = await import('./dist/parser/parser.js');
-   const sql = 'SELECT a + b * 2 AS X FROM T WHERE a > 1';
-   console.log(JSON.stringify(parse(sql), null, 1));
-   ```
-
-   Find the `+` node and confirm the `*` is its right child.
-
-2. **Observe.** Parse `SELECT 1 - 2 - 3` and `SELECT a = b = c FROM T`. Explain each result in terms of one detail of `parseAddition` and `parseComparison` respectively.
-
-3. **Extend (optional).** Add a `^` exponentiation operator that binds tighter than `*` and is **right**-associative. Two decisions: which function it lives between, and loop versus recursion.
-
-4. **Extend (optional).** Add `ILIKE` as a case-insensitive `LIKE`. You will need a token type, a keyword, a branch in `parseComparison`, and an AST node — or, more cheaply, a flag on the existing one. Which choice makes the binder's job easier?
-
-5. **Observe.** `isSubqueryStart` scans forward from the current position on every call. Construct a deeply nested query where this becomes quadratic. Does it matter in practice, and how would you find out rather than guess?
-
-### Hints and expected observations
-
-The first root is + with a * on its right, yielding 14. Parentheses make * the root with + on its left, yielding 20. SELECT 1 - 2 - 3 groups as (1 - 2) - 3.
-
 ## Recap
 
 - **Recursive descent** encodes operator precedence in the **call graph**: one function per level, each calling the tighter one.

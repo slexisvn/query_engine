@@ -209,28 +209,6 @@ The answer stays correct, because `get` consults the bitmap first, but the page 
 
 **Encoded payloads are always heap-allocated.** `encode` uses plain `new Uint32Array(...)` rather than the column's allocator, so an encoded column is on the heap even when `QE_SAB_COLUMNS` is on. Deserialization goes through the allocator; construction does not.
 
-## Exercises
-
-### Understand
-
-How would run-length encoding and frame of reference represent [1000,1000,1000,1001]?
-
-### Practice
-
-1. **Observe.** Reproduce the two opening measurements. Build a 2,048-value `Column` for each shape, call `summarizeIntegers` on `column.data`, and print each encoder's `plan` alongside `chooseEncoder`'s answer.
-
-2. **Observe.** Find the smallest change to the sequential-id column that makes run-length win, then the smallest that makes it stay flat.
-
-3. **Observe.** Set `QE_ENCODING_MIN_COMPRESSION_RATIO=1.0` and re-measure the six-column table. Which columns become encoded, and what does the total become? Now set it to `0.1`.
-
-4. **Extend (optional).** Add a fourth encoder — delta, storing the first value and the differences between neighbors — with an unused id, declining when a difference does not fit in a byte. Confirm the sequential-id column drops below 3,000 bytes and the differential test still passes.
-
-5. **Extend (optional).** Instrument the `data` getter to log a stack trace when it decodes, then run the book's query with `QE_WASM_MIN_CHUNK=1`. Which operators force columns back to flat, and what does it cost across the scan?
-
-### Hints and expected observations
-
-Run length stores runs (1000,3) and (1001,1). Frame of reference stores base 1000 and offsets [0,0,0,1]. Compare headers as well as payload size before choosing.
-
 ## Recap
 
 - Three encoders are registered: **run length** for repetition, **bit packing** for small magnitude, **frame of reference** for narrow range. There is no delta encoding, which is why a sequential column compresses badly.

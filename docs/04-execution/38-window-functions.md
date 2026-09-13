@@ -243,28 +243,6 @@ So the spilled path is: partition to disk, compute per partition, sort-merge the
 
 **Output columns are appended, not substituted.** [`buildWindow`](../../src/execution/builders/pipeline-builders.ts) names them `__window_0`, `__window_1`, and so on, and maps each window expression's `exprKey` to the new index — which is how a projection above finds the value through `materializedColumnOf`, the mechanism from [chapter 33](33-filters-and-expression-evaluation.md).
 
-## Exercises
-
-### Understand
-
-Amounts ordered as [50,100,100] use SUM(amount) OVER (ORDER BY amount). What are the default running totals?
-
-### Practice
-
-1. **Observe.** Reproduce the running-total table, then change `OVER (ORDER BY AMT)` to `OVER (ORDER BY AMT ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)` and explain both outputs in terms of `peerGroupsOf`.
-
-2. **Observe.** Write a query where `RANK` and `DENSE_RANK` differ by more than one, and predict both columns before you run it.
-
-3. **Extend (optional).** Run a window query with `QE_MEMORY_LIMIT_BYTES=65536` over enough rows to force `overflow`, and confirm the results are identical to the unspilled run — including row order, which the ordinal merge is supposed to preserve.
-
-4. **Observe.** `slidingExtreme` assumes frame starts and ends never move backwards. Construct — on paper — a frame specification that would violate it, and say why the parser cannot produce one.
-
-5. **Observe.** Run the checked-in frame example, then change the `RANGE` ordering to descending and predict its value boundaries. Follow `FrameInput`, `offsetBound`, and `rangeBound` to explain why the search direction changes. Compare the result with `tests/e2e/window-frame-semantics.test.ts`.
-
-### Hints and expected observations
-
-With the default peer-aware RANGE frame, totals are [50,250,250]. An explicit ROWS frame gives [50,150,250] in a chosen peer order; a unique ordering key makes that order reproducible.
-
 ## Recap
 
 - The default frame is **`RANGE UNBOUNDED PRECEDING TO CURRENT ROW`**, and in `RANGE` mode "current row" means the last of the row's **peer group** — which is why tied rows share a running total.

@@ -241,28 +241,6 @@ Chapter 8 noted that repeated aliases get shadow names like `CUSTOMER:1`. This i
 
 **`exprKey` equality is structural, not semantic.** `a + b` and `b + a` have different keys. Passes that want to see through commutativity have to canonicalize first, which is part of what `ExpressionSimplifier` does in chapter 16.
 
-## Exercises
-
-### Understand
-
-For x = NULL, evaluate x = x and then decide whether WHERE x = x keeps the row.
-
-### Practice
-
-1. **Observe.** Reproduce the type table. Bind `SELECT <expr> AS R FROM T` and read `outputColumns[0].dataType` for each expression.
-
-2. **Observe.** Change division to return `INT32` when both operands are integers. Run `npm run test:e2e`. Count the failures, and decide whether each is a test that pinned a deliberate decision or one that happened to depend on it.
-
-3. **Observe.** `SUM(I)` returns `INT64`. Write a query where that matters — the sum of `INT32` values genuinely exceeding 2³¹ — and confirm the answer is exact.
-
-4. **Extend (optional).** `D + I` is a `DATE`. What does the *execution* layer do with the fractional part if `I` is a float? Find the code, and decide whether the type rule or the evaluator should be the one to complain.
-
-5. **Extend (optional).** Compute `exprKey` for `a + b` and `b + a`. They differ. Write down what a pass would have to do to treat them as equal, and what it would break.
-
-### Hints and expected observations
-
-The comparison is unknown, represented by NULL; WHERE keeps only TRUE. A wider integer storage type increases range but does not prove precision through every conversion.
-
 ## Recap
 
 - Expression typing uses the storage `DataType` values. The shared inference helpers cover arithmetic and aggregates; binding also resolves literals, casts, and function signatures.

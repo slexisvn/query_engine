@@ -246,28 +246,6 @@ Relevant configuration, all overridable by environment variable in [`src/config.
 
 **`uniqueKeys` silently changes the build.** When the optimizer has proven the build key is unique, the build keeps only the first row per key and skips the rest of the bucket. If that proof is ever wrong, rows disappear from the result — this is a correctness dependency of the execution layer on the optimizer's [`unique-keys`](../../src/optimizer/unique-keys.ts) analysis.
 
-## Exercises
-
-### Understand
-
-A build bucket contains two rows with key 7. One probe row also has key 7. How many rows does an inner equality join emit?
-
-### Practice
-
-1. **Observe.** Run a join and confirm the physical plan says `HashJoin`. Then shrink both tables to three rows and confirm it says `NestedLoopJoin`. Find the threshold in the cost model that flips it.
-
-2. **Observe.** Force spilling: set `QE_MEMORY_LIMIT_BYTES` to something tiny (say 65536) and run a join over a few hundred thousand rows. Verify the result is identical to the unspilled run. This is the single most valuable test you can write against this operator.
-
-3. **Extend (optional).** Instrument `runtimeFilterRejections` and print it after a join with a highly selective build side. What fraction of probe rows never reach the hash table?
-
-4. **Extend (optional).** Delete the `depth` term from `partitionOf` so repartitioning uses the same hash at every level. Construct an input that spills, and observe what happens. Explain the behavior in terms of where the rows end up.
-
-5. **Observe.** `chooseJoinBuildSide` returns `'right'` for `SEMI` joins regardless of size. Construct a semi join whose right side is a hundred times larger than its left, and reason about what that costs. Is the constraint avoidable?
-
-### Hints and expected observations
-
-Two, assuming no residual predicate rejects either pair. Hashing finds candidates; equality checks confirm matches and duplicate keys preserve multiplicity.
-
 ## Recap
 
 - A hash join is a blocking **build** operator followed by a streaming **probe** operator. The build side is chosen by estimated size, unless join semantics force a side.

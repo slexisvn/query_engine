@@ -230,28 +230,6 @@ Every `set` and `invalidate` bumps a `generation` counter, which feeds two thing
 
 **Statistics collection reads the whole table.** The first query touching a table pays for a full scan of every column before its plan is chosen. On a large table that cost is real and it is not shown in `EXPLAIN ANALYZE`.
 
-## Exercises
-
-### Understand
-
-A statistic estimates 100 distinct values in 1,000 rows. Is that a guarantee that each value occurs ten times?
-
-### Practice
-
-1. **Observe.** Reproduce the HyperLogLog error table. Feed `hashValue(i)` for known counts and print the estimate. Then drop `QE_STATS_HLL_PRECISION` to 8 and rerun — how does the error scale with the register count?
-
-2. **Observe.** Reproduce the Space-Saving artifact on a unique column, then insert one value 40,000 times and confirm its count becomes exact. At what skew does the inherited count stop dominating?
-
-3. **Observe.** Fix the artifact. `buildMcv` has both the recorded counts and `nonNullCount`; devise a test that rejects a heap whose counts are all equal and near `nonNullCount / capacity`, then find a query whose estimate improves.
-
-4. **Extend (optional).** Print the histogram boundaries for a column with a heavy skew — 90% of rows at one value — and explain the bucket widths you see.
-
-5. **Extend (optional).** `deterministicRandom` seeds from the column index. Two columns with identical data therefore get *identical* samples. Construct that case, decide whether it can bias a correlation estimate, and argue your answer.
-
-### Hints and expected observations
-
-No. NDV gives the number of distinct values, not their frequencies, and an estimated NDV can itself be inaccurate. A hot key can dominate the table.
-
 ## Recap
 
 - Statistics are collected in **one pass** per table, on demand, before the first query that touches it is optimized.

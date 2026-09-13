@@ -259,28 +259,6 @@ Three things, and the code says so plainly rather than degrading quietly.
 
 **`Config` values are computed at module load.** `platform.ts` captures a reference to the environment object, not a copy of all its values; calling a helper later can see mutations to that object. Already-initialized `Config` fields do not refresh, because they are values rather than getters. Set variables before starting the process for predictable experiments. Tests that need a different setting assign to `Config` directly, which is what [`tests/e2e/column-encoding-differential.test.ts`](../../tests/e2e/column-encoding-differential.test.ts) does.
 
-## Exercises
-
-### Understand
-
-Why can the same execution operators use files in Node and a Map in the supplied browser backend?
-
-### Practice
-
-1. **Observe.** Reproduce all three opening results, each in its own `node` process. Then try importing both entry points in one process and predict which backend you get.
-
-2. **Extend (optional).** Write a third backend — one that keeps pages in a `Map` but spills to files — and pass it to `QueryEngine` in options. How many lines is it, and how many files did you have to change outside it?
-
-3. **Extend (optional).** Add a line to a core module that reads `process.env` directly. Run `node scripts/build.js` and inspect `dist/index.browser.js` for the reference, then load it in a browser and describe the failure.
-
-4. **Observe.** Run `npm run viz`, load the sample data, and run the book's query. Trace the visualizer's engine initialization and confirm it passes a `MemoryStorageBackend`. Follow one loaded table into its storage implementation; do not assume the page identifier or engine instance is exposed in the UI.
-
-5. **Observe.** `getCpuCount` returns `navigator.hardwareConcurrency`. Find every setting in `Config` that depends on it and say what each would do on a platform where it is absent.
-
-### Hints and expected observations
-
-They call a storage interface selected by the entry point or explicit options. The backend determines where pages and spill bytes live; an operator should not assume a filesystem.
-
 ## Recap
 
 - The engine core imports **no Node API**. Seventeen files in `src/` do, and every one is in `cli/`, `parallel/`, `distributed/`, `wasm/`, or one of the three platform-specific storage files.

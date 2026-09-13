@@ -243,33 +243,6 @@ The second occurrence exists because [`JoinReorder`](../../src/optimizer/passes/
 
 **`remaining` is not a failure.** A predicate left above the join is often correct and unavoidable — a `LEFT JOIN` with `WHERE o.x IS NULL` (the anti-join idiom) must keep its filter exactly where you wrote it, and the plan is right to look "unoptimized".
 
-## Exercises
-
-### Understand
-
-Using Alice, Bob, and Carol, why does filtering orders in a LEFT JOIN's ON clause preserve more customers than the same filter in WHERE?
-
-### Practice
-
-1. **Observe.** Reproduce the four plans in this chapter. Build the optimizer with only this pass registered so nothing else muddies the output:
-
-   ```javascript
-   const optimizer = new Optimizer().registerPass(new PredicatePushdown());
-   console.log(formatPlan(optimizer.optimize(engine.plan(engine.bind(engine.parseSQL(sql))), {})));
-   ```
-
-2. **Observe.** Replace `WHERE o.O_TOTALPRICE > 50` with `WHERE o.O_TOTALPRICE IS NULL` and confirm the join stays `LEFT`. Which function made that decision?
-
-3. **Observe.** Write a query where one conjunct of the `WHERE` clause reaches a scan and another is stranded above the join. Predict the plan before running it.
-
-4. **Extend (optional).** Delete the `isNullRejecting` check so every right-only predicate pushes and the join always demotes to `INNER`. Run `npm run test:e2e`. Which test catches you, and does its failure message actually explain what broke?
-
-5. **Extend (optional).** Comment out the second `PredicatePushdown` registration in `createDefaultOptimizer` and find a query whose plan gets worse. Hint: it needs a join order that only becomes favorable after `JoinReorder` runs.
-
-### Hints and expected observations
-
-ON decides which orders match, then the join pads unmatched customers. WHERE runs on that padded result and can reject the NULL rows. The executable semantics example checks both forms.
-
 ## Recap
 
 - Predicate pushdown moves filters down the plan so that operators above them see fewer rows. It is the highest-value rewrite in the pipeline.

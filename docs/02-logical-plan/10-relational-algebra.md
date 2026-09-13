@@ -216,28 +216,6 @@ That closure is the load-bearing part. The extra nineteen node types make the IR
 
 **Equivalence is about every possible database, not yours.** A rewrite that happens to give the same answer on a three-row table is not a law. This is why some passes look overcautious — chapter 17's null-rejection check is the canonical example.
 
-## Exercises
-
-### Understand
-
-For left keys [1, 2] and right keys [2, 3], list the key pairs from INNER JOIN and LEFT JOIN using equality.
-
-### Practice
-
-1. **Observe.** Reproduce the two three-table plans from the opening, and confirm the results match. Then change the first join in each to a `LEFT JOIN` and check whether the answers still agree. Explain what changed.
-
-2. **Observe.** `SELECT COUNT(*) FROM CUSTOMER c, ORDERS o` returns 12 and `SELECT COUNT(*) FROM CUSTOMER c JOIN ORDERS o ON c.C_CUSTKEY = o.O_CUSTKEY` returns 4. Print both plans. Which node differs, and which of the six laws relates them?
-
-3. **Observe.** Write a query whose plan contains all four operators, then annotate each printed line with its algebra symbol.
-
-4. **Extend (optional).** Law 5 requires that the predicate's columns survive the projection. Construct a query where they do not — filter on a column the projection drops — and confirm from the printed plan that the `Filter` stays above the `Project`. Then find the function in [`predicate-pushdown.ts`](../../src/optimizer/passes/predicate-pushdown.ts) that made that decision.
-
-5. **Extend (optional).** Add a node type of your own to [`PlanNodeType`](../../src/planner/logical-plan.ts) — say, a `Sample` that keeps every nth row. Write down its input schema, its output schema, and one equivalence law it obeys. You do not have to implement it; the point is that you can specify it in a paragraph, which is what closure buys you.
-
-### Hints and expected observations
-
-INNER yields (2,2). LEFT also yields (1,NULL). Swapping inputs of a LEFT join changes which unmatched rows survive, so inner-join reorder rules need explicit conditions.
-
 ## Recap
 
 - A **relation** is a bag of rows with a schema. SQL works in bags, not sets, so duplicates survive until a `Distinct` removes them.

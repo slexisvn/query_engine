@@ -215,28 +215,6 @@ The relevant settings, all in [`config.ts`](../../src/config.ts):
 
 **`clearAll` deletes everything the store holds, not one partition**, and [`SortOperator.stream`](../../src/execution/operators/sort.ts) calls it even on the non-spilled path. Two operators sharing a spill store would erase each other, which is why every builder allocates a fresh handle.
 
-## Exercises
-
-### Understand
-
-If three operators each have a 64 KiB local budget, does that cap the whole query at 64 KiB?
-
-### Practice
-
-1. **Observe.** The central experiment of this part. Pick a query with a total `ORDER BY`, run it with the default budget and with `QE_MEMORY_LIMIT_BYTES=65536`, and assert the two row arrays are identical. Then remove the tie-breaking column and see whether peer order changes. A difference is permitted, not guaranteed. Without `LIMIT`, compare bags and verify sortedness; if a limit cuts a peer group, use a tie-aware check or restore a unique tie-breaker.
-
-2. **Extend (optional).** Instrument `RowMemoryBudget.exceeded` to log the operator that asked. Run the running query at 30,000 customers with the small limit and report which operators spilled and in what order.
-
-3. **Observe.** Compute by hand the `rowCapacity` for a five-column row of `INT32, FLOAT64, VARCHAR, VARCHAR, DATE` at a 1 MB limit, then check it with `rowByteWidth`.
-
-4. **Extend (optional).** Set `QE_DEDUP_SPILL_PARTITIONS=10` and run a spilling `SELECT DISTINCT`. Confirm the answer is still correct, then explain — from the masking expression — why it is correct and what was wasted.
-
-5. **Extend (optional).** Give `RowMemoryBudget` a shared parent so that all operators in one query draw from a single pool. Run the running query with a small limit before and after. Report what changed, and whether any answer did.
-
-### Hints and expected observations
-
-No. Their local budgets can sum to 192 KiB, with additional allocations outside those estimates. A spill to an in-memory backend also retains serialized bytes in the process.
-
 ## Recap
 
 - [`RowMemoryBudget`](../../src/execution/memory-budget.ts) counts **rows** and converts to bytes with an estimated per-row width — 48 bytes of overhead plus each column's declared width, with variable-width values counted as a flat 32.

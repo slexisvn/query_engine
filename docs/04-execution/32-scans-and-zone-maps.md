@@ -216,28 +216,6 @@ Four regimes are visible. `O_ORDERKEY` is perfectly correlated with position, so
 
 **`min` and `max` are compared with the pruner's own ordering, not the column's.** [`isBefore`](../../src/storage/zone-map.ts) coerces to string when either side is a string and to number otherwise, and [`compareComparable`](../../src/execution/zone-map-pruner.ts) returns `NaN` for mixed types, which the evaluator treats as "all three truth values" — the safe answer. A column of mixed-type values therefore prunes nothing rather than pruning wrongly.
 
-## Exercises
-
-### Understand
-
-Three chunks have ranges [1,10], [11,20], and [21,30]. Which must be inspected for WHERE k BETWEEN 8 AND 12?
-
-### Practice
-
-1. **Observe.** Reproduce the chunk counts. Remember to warm statistics first. Then run the same six predicates with `QE_ZONE_MAP_PRUNING=0` and confirm the row counts are identical.
-
-2. **Observe.** Shuffle `ORDERS` before loading it so `O_ORDERKEY` is uncorrelated with position, and rerun. Explain the new numbers in one sentence.
-
-3. **Observe.** `O_CUSTKEY = 3` reads 20 chunks. Predict — before running it — how many chunks `O_CUSTKEY BETWEEN 3 AND 400` reads, then check.
-
-4. **Extend (optional).** Add a rule to `RANGE_RULES` or a compiler to `EXPR_COMPILERS` for an expression form that currently falls through to `anyTruth`. `LIKE '%suffix'` is not one of them; explain why not.
-
-5. **Extend (optional).** Break the pruner deliberately: change `=`'s `possiblyTrue` to `(lo, hi) => lo < 0 && hi > 0`. Find a query that now returns the wrong answer, and say which property of `canSkip` you violated.
-
-### Hints and expected observations
-
-The first two overlap the predicate range. Skip the third, then test individual rows in the surviving chunks. A zone map is not a row-level index.
-
 ## Recap
 
 - A **zone map** is a per-chunk, per-column `min`, `max`, and null flag, built once and cached. It lets a scan decide whether to read a chunk without reading it.

@@ -246,28 +246,6 @@ Why does the demotion matter? An inner join has more freedom than an outer one e
 
 **Column matching is by uppercased alias, and falls back to column name.** [`suppliesNull`](../../src/optimizer/passes/null-rejection.ts) checks a reference's `tableAlias` against the subtree's alias set, and when the reference has no alias it checks the column *name* against the subtree's column names instead. Two relations exposing the same column name are then indistinguishable on that path. [Chapter 8](../01-frontend/08-binder-scopes-and-names.md) explains how the binder's alias uniqueness keeps bound references qualified in the first place.
 
-## Exercises
-
-### Understand
-
-Given a = b and a = 7 in an inner join, what predicate can be inferred for b? Why keep the original conditions?
-
-### Practice
-
-1. **Observe.** Confirm the opening result three ways: inference alone (no change), pushdown then inference (both filters), and the full pipeline. Use the observer to see which stage and iteration each change happens in.
-
-2. **Observe.** Write a query where inference derives a `<` on a table you never filtered, and one where it derives nothing because the join predicate is `c.C_CUSTKEY = o.O_CUSTKEY + 1`. Explain the second from `inferNewPredicates`.
-
-3. **Extend (optional).** Revisit the chapter-15 divergence. Identify which filters may legally contribute facts at a join, then design deduplication around those facts. Explain why searching every descendant without respecting outer joins and other boundaries is insufficient.
-
-4. **Extend (optional).** `evaluateWithNulls` returns `'UNKNOWN'` for `BoundExprKind.CAST`. Design a conservative rule for a specific null-preserving cast. Account for the cast's result type, possible errors, and the distinction between a null value and a boolean truth value before implementing it.
-
-5. **Extend (optional).** Delete the `FULL` branch of `OuterToInnerJoin` and run `npm run test:e2e`. Correct results can survive the loss of this optimization. Write a plan-shape test that detects the missed demotion and a result test covering unmatched rows.
-
-### Hints and expected observations
-
-Infer b = 7. The additional condition may reduce work early, but inference must preserve the original relationship and respect null and join semantics.
-
 ## Recap
 
 - [`PredicateInference`](../../src/optimizer/passes/predicate-inference.ts) derives new predicates from **transitivity across equalities** — constants and comparisons — and from **common constraints across `OR` branches**, as `IN` lists and range bounds.

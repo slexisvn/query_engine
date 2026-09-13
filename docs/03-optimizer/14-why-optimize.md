@@ -129,28 +129,6 @@ It also means the gap on a two-table query with no filter is roughly nothing, wh
 
 **The timings in this chapter are one machine, one measurement each.** They were taken in separate Node processes, with the optimized case reported as the best of five runs. Running the slow plan first in the same process leaves the page cache and the garbage collector in a state that makes the fast plan look hundreds of times worse than it is — a repeat of the optimized measurement immediately after the slow one came back at 1,926 ms instead of 1.4 ms. Any benchmark that runs both plans in one process without that care will report numbers that are wrong in an interesting direction.
 
-## Exercises
-
-### Understand
-
-If a filter keeps 10 of 1,000 left rows before a nested loop against 100 right rows, how many candidate pairs are avoided?
-
-### Practice
-
-1. **Observe.** Reproduce the two timings. Build with `npm run build:ts`, register the three tables, and run the raw plan and the optimized plan through `_collectRows` in *separate processes*. Then run them in the same process, slow one first, and explain the difference in the second number.
-
-2. **Extend (optional).** Add a fourth table to the `FROM` list with no join condition at all and predict the unoptimized runtime before measuring it. How close were you?
-
-3. **Observe.** Print the plan after every pass with the observer from [chapter 2](../00-orientation/02-running-it-yourself.md) and count how many of the 24 registrations change the plan for this query. Then do it for `SELECT * FROM CUSTOMER`.
-
-4. **Observe.** Find a query where the optimized and unoptimized plans have the same runtime to within noise. Explain what it is about the query that leaves the optimizer nothing to do.
-
-5. **Extend (optional).** Remove `JoinReorder` from the pipeline with `engine.optimizer.removePass('JoinReorder')`, re-optimize this chapter's query, and time it. Warm statistics first, then remove the pass: statistics collection can rebuild the optimizer and discard an earlier removal. Bypass or clear the plan cache when comparing plans, as chapter 28 explains.
-
-### Hints and expected observations
-
-The counts fall from 100,000 to 1,000, avoiding 99,000 candidates. This is a work count for the stated loop, not a portable runtime prediction.
-
 ## Recap
 
 - The logical planner transcribes the query; it does not improve it. `FROM a, b, c` becomes nested **cross joins** with every predicate stacked in one filter above them.

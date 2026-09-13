@@ -240,28 +240,6 @@ A whole chunk within the window is kept by reference; a partial chunk gets a sel
 
 **The sort holds two copies of every key.** Keys are pushed into `this.keys` *and* their source values are pushed into `this.columns`, so a sort on a column that is also in the output stores it twice. That is a deliberate trade — no re-evaluation during comparison — but it doubles the resident footprint of the sort key.
 
-## Exercises
-
-### Understand
-
-For [9,1,7,3,5] ordered ascending with LIMIT 2 OFFSET 1, which rows are returned and how many best candidates must a top-N retain?
-
-### Practice
-
-1. **Observe.** Reproduce the limit sweep on 400,000 rows. Then set `QE_RADIX_SORT_MIN_ROWS=1` and rerun. Which row of the table changes most, and does the `LIMIT 10` case get faster or slower?
-
-2. **Extend (optional).** Instrument `SortOperator.consume` to count trims. Run `LIMIT 10` and `LIMIT 1000` over the same input and report both counts.
-
-3. **Extend (optional).** Change the trim threshold from `this.topN * 4` to `Math.max(this.topN * 4, 4 * DEFAULT_CHUNK_SIZE)` and rerun the sweep. Explain the new numbers, and say what you have given up.
-
-4. **Extend (optional).** Replace the top-N path with a bounded heap using `PriorityQueue`, keeping the best `N + OFFSET` rows under the complete sort comparator, then applying the offset. Measure `LIMIT 10` before and after, and check that ties still come back in the same order — or explain why they do not have to.
-
-5. **Observe.** Sort 100,000 rows on a `FLOAT64` column, then multiply every value by 1,000 and cast to integer and sort again. Report both times and confirm which path each took.
-
-### Hints and expected observations
-
-Return [3,5]. Retain the best three candidates before discarding the first. A heap implementation must follow direction, null ordering, and every sort key.
-
 ## Recap
 
 - `Sort` and `Top-N` are the same operator with a different limit argument, and both copy every value out of the columnar layout into plain arrays on the way in.

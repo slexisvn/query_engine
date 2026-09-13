@@ -274,28 +274,6 @@ A join that came from an original operator is rebuilt by **spreading that operat
 
 **Conflict detection is not a proof that the rewrite is safe — it is a proof that the *rules* were followed.** The tables encode a specific published set of identities. A join type added without entries in all three tables defaults to `NEVER`, which is conservative and therefore safe; one added with wrong entries is not.
 
-## Exercises
-
-### Understand
-
-In the small memo example, why can the optimizer retain the cheapest known plan for each relation subset instead of every construction history?
-
-### Practice
-
-1. **Observe.** Reproduce the opening pair. Build the right-deep plan by hand from the raw plan's nodes, run both through `_collectRows`, and confirm six rows versus four. Then remove `OR b.BX IS NULL` and confirm `JoinReorder` performs the rewrite itself.
-
-2. **Observe.** Add a table to a chain query one at a time and time `JoinReorder`. Where does the curve bend, and does it match the 14-relation threshold or the 120,000-pair budget?
-
-3. **Extend (optional).** Set `QE_JOIN_ORDER_MAX_PAIRS` to 100 and find a query where DPhyp gives up. Confirm from the plan that greedy produced a different, worse order.
-
-4. **Extend (optional).** Give two relations in one join block the same alias so `ambiguousAlias` fires. You will need a subquery. Confirm the plan is left untouched.
-
-5. **Extend (optional).** Change `ASSOCIATIVITY[LEFT][LEFT]` from `MIDDLE_MUST_BE_NULL_REJECTED` to `ALWAYS` and run `npm run test:e2e`. Which test catches you, and how many rows does it report?
-
-### Hints and expected observations
-
-Larger candidates reuse subplans under the modeled conditions. The memo's key must include any physical property that affects future cost; otherwise a locally dearer ordered plan could be discarded too early.
-
 ## Recap
 
 - `JoinReorder` replans a **join block** — a contiguous region of joins — as a whole, and **bails out entirely** on any of eight guard conditions rather than reordering partially.
